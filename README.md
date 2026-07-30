@@ -20,8 +20,9 @@ Microsoft SDKs and differential tests against Azure APIM.
   backend forwarding, and APIM-shaped failures
 - official Go APIM SDK `v1.1.1` against API `2021-08-01`, including a real
   `azidentity.ClientSecretCredential` flow through `entra-emulator`
-- official JavaScript `10.0.0`, Python `5.0.0`, and .NET `1.3.1` APIM SDK
-  custom-endpoint witnesses
+- official Go `v1.1.1`, JavaScript `10.0.0`, Python `5.0.0`, and .NET `1.3.1`
+  workflows that configure a service, protected API, operation, and subscription,
+  then call the API through the gateway
 
 The remaining P0 resource semantics and distribution work are still pending;
 see the live parity ledger.

@@ -1,6 +1,8 @@
 package sdk_test
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,6 +16,11 @@ func TestOfficialManagementSDKs(t *testing.T) {
 		t.Skip("set APIM_RUN_EXTERNAL_SDK_TESTS=1 to run external SDK witnesses")
 	}
 	emu := emulator.StartT(t, emulator.WithTLS())
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("sdk-backend"))
+	}))
+	defer backend.Close()
 	certificatePath := filepath.Join(t.TempDir(), "ca.pem")
 	if err := os.WriteFile(certificatePath, emu.CACertificate, 0o600); err != nil {
 		t.Fatal(err)
@@ -27,6 +34,7 @@ func TestOfficialManagementSDKs(t *testing.T) {
 		"APIM_SUBSCRIPTION_ID="+emu.SubscriptionID,
 		"APIM_RESOURCE_GROUP="+emu.ResourceGroup,
 		"APIM_SERVICE_NAME="+emu.ServiceName,
+		"APIM_BACKEND_URL="+backend.URL,
 		"NODE_EXTRA_CA_CERTS="+certificatePath,
 		"REQUESTS_CA_BUNDLE="+certificatePath,
 		"SSL_CERT_FILE="+certificatePath,

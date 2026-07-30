@@ -7,24 +7,51 @@ const credential = {
 };
 
 const endpoint = process.env.APIM_ENDPOINT;
+const resourceGroup = process.env.APIM_RESOURCE_GROUP;
+const serviceName = process.env.APIM_SERVICE_NAME;
 const client = new ApiManagementClient(
   credential,
   process.env.APIM_SUBSCRIPTION_ID,
   { endpoint },
 );
+await client.apiManagementService.beginCreateOrUpdateAndWait(resourceGroup, serviceName, {
+  location: "local",
+  sku: { name: "Developer", capacity: 1 },
+  publisherName: "JavaScript SDK",
+  publisherEmail: "javascript@example.test",
+});
 const result = await client.api.beginCreateOrUpdateAndWait(
-  process.env.APIM_RESOURCE_GROUP,
-  process.env.APIM_SERVICE_NAME,
+  resourceGroup,
+  serviceName,
   "javascript-sdk-api",
   {
     displayName: "JavaScript SDK API",
     path: "javascript-sdk",
-    serviceUrl: "http://127.0.0.1:1",
+    serviceUrl: process.env.APIM_BACKEND_URL,
     protocols: ["https"],
-    subscriptionRequired: false,
+    subscriptionRequired: true,
   },
 );
 if (result.name !== "javascript-sdk-api") {
   throw new Error(`unexpected API name: ${result.name}`);
+}
+await client.apiOperation.createOrUpdate(resourceGroup, serviceName, "javascript-sdk-api", "get", {
+  displayName: "Get",
+  method: "GET",
+  urlTemplate: "/items",
+});
+const scope = `/subscriptions/${process.env.APIM_SUBSCRIPTION_ID}/resourceGroups/${resourceGroup}/providers/Microsoft.ApiManagement/service/${serviceName}/apis/javascript-sdk-api`;
+await client.subscription.createOrUpdate(resourceGroup, serviceName, "javascript-sdk-subscription", {
+  displayName: "JavaScript SDK subscription",
+  scope,
+  state: "active",
+  primaryKey: "javascript-sdk-key",
+  secondaryKey: "javascript-sdk-secondary",
+});
+const gatewayResponse = await fetch(`${endpoint}/javascript-sdk/items`, {
+  headers: { "Ocp-Apim-Subscription-Key": "javascript-sdk-key" },
+});
+if (gatewayResponse.status !== 200 || (await gatewayResponse.text()) !== "sdk-backend") {
+  throw new Error(`gateway response: ${gatewayResponse.status}`);
 }
 console.log("JavaScript APIM SDK witness passed");

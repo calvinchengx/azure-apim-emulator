@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -59,6 +60,102 @@ func TestGoManagementSDKCreatesAPI(t *testing.T) {
 	}
 	if result.Name == nil || *result.Name != "sdk-api" {
 		t.Fatalf("SDK response name = %v", result.Name)
+	}
+}
+
+func TestGoManagementSDKConfiguresProtectedGateway(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("go-sdk-backend"))
+	}))
+	defer backend.Close()
+	srv := newTestServer(t, false, backend.Client())
+	front := httptest.NewTLSServer(srv.Handler())
+	defer front.Close()
+	configuration := cloud.Configuration{
+		ActiveDirectoryAuthorityHost: "https://login.microsoftonline.com/",
+		Services: map[cloud.ServiceName]cloud.ServiceConfiguration{
+			cloud.ResourceManager: {Endpoint: front.URL, Audience: "https://management.azure.com"},
+		},
+	}
+	options := &arm.ClientOptions{ClientOptions: azcore.ClientOptions{Cloud: configuration, Transport: front.Client()}}
+	credential := staticCredential{}
+	ctx := context.Background()
+
+	serviceClient, err := armapimanagement.NewServiceClient(defaultSubscription, credential, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	location, publisherName, publisherEmail := "local", "Go SDK", "go@example.test"
+	capacity, sku := int32(1), armapimanagement.SKUTypeDeveloper
+	servicePoller, err := serviceClient.BeginCreateOrUpdate(ctx, defaultResourceGroup, "emulator", armapimanagement.ServiceResource{
+		Location: &location,
+		SKU:      &armapimanagement.ServiceSKUProperties{Name: &sku, Capacity: &capacity},
+		Properties: &armapimanagement.ServiceProperties{
+			PublisherName: &publisherName, PublisherEmail: &publisherEmail,
+		},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := servicePoller.PollUntilDone(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	apiClient, err := armapimanagement.NewAPIClient(defaultSubscription, credential, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	displayName, path, required := "Go protected API", "go-sdk-full", true
+	protocol := armapimanagement.ProtocolHTTPS
+	apiPoller, err := apiClient.BeginCreateOrUpdate(ctx, defaultResourceGroup, "emulator", "go-sdk-full", armapimanagement.APICreateOrUpdateParameter{
+		Properties: &armapimanagement.APICreateOrUpdateProperties{
+			DisplayName: &displayName, Path: &path, ServiceURL: &backend.URL,
+			Protocols: []*armapimanagement.Protocol{&protocol}, SubscriptionRequired: &required,
+		},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := apiPoller.PollUntilDone(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	operationClient, err := armapimanagement.NewAPIOperationClient(defaultSubscription, credential, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	method, template := http.MethodGet, "/items"
+	if _, err := operationClient.CreateOrUpdate(ctx, defaultResourceGroup, "emulator", "go-sdk-full", "get", armapimanagement.OperationContract{
+		Properties: &armapimanagement.OperationContractProperties{DisplayName: &displayName, Method: &method, URLTemplate: &template},
+	}, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	subscriptionClient, err := armapimanagement.NewSubscriptionClient(defaultSubscription, credential, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scope := "/subscriptions/" + defaultSubscription + "/resourceGroups/" + defaultResourceGroup + "/providers/Microsoft.ApiManagement/service/emulator/apis/go-sdk-full"
+	primary, secondary, subscriptionName := "go-sdk-key", "go-sdk-secondary", "Go SDK subscription"
+	state := armapimanagement.SubscriptionStateActive
+	if _, err := subscriptionClient.CreateOrUpdate(ctx, defaultResourceGroup, "emulator", "go-sdk-subscription", armapimanagement.SubscriptionCreateParameters{
+		Properties: &armapimanagement.SubscriptionCreateParameterProperties{
+			DisplayName: &subscriptionName, Scope: &scope, State: &state, PrimaryKey: &primary, SecondaryKey: &secondary,
+		},
+	}, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	request, _ := http.NewRequest(http.MethodGet, front.URL+"/go-sdk-full/items", nil)
+	request.Header.Set("Ocp-Apim-Subscription-Key", primary)
+	response, err := front.Client().Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	body, _ := io.ReadAll(response.Body)
+	if response.StatusCode != http.StatusOK || string(body) != "go-sdk-backend" {
+		t.Fatalf("gateway = %d %q", response.StatusCode, body)
 	}
 }
 

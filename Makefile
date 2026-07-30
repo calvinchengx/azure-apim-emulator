@@ -17,7 +17,7 @@ setup-sdks:
 	dotnet restore e2e/dotnet/Witness.csproj
 
 test-sdks:
-	APIM_RUN_EXTERNAL_SDK_TESTS=1 go test -v ./e2e/sdk
+	APIM_RUN_EXTERNAL_SDK_TESTS=1 go test -count=1 -v ./e2e/sdk
 
 docs:
 	mkdocs build --strict

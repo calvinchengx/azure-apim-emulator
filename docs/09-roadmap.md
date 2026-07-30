@@ -21,6 +21,12 @@ Goal: prove the architecture before broad resource work.
 Exit: every SDK creates/configures a service and a subscription-protected API,
 then calls it through the gateway with Entra-authenticated management.
 
+Exit workflow status: the Go, JavaScript, Python, and .NET SDKs all configure
+the service, API, operation, and API-scoped subscription and call the protected
+gateway. The Go witness additionally covers real Entra-issued management
+tokens; equivalent Entra credentials for the other language witnesses remain
+part of the identity expansion.
+
 ## P1 - Core management and HTTP gateway
 
 - APIs, revisions, releases, versions, operations, schemas, tags, products,
