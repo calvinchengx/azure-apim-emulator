@@ -9,6 +9,8 @@ type Service struct {
 	Location          string
 	SKUName           string
 	SKUCapacity       int
+	PublisherName     string
+	PublisherEmail    string
 	ProvisioningState string
 	ETag              string
 }

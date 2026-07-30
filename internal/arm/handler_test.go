@@ -1,9 +1,11 @@
 package arm
 
 import (
+	"database/sql"
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -48,22 +50,31 @@ func TestTopLevelRoutingErrors(t *testing.T) {
 	if got := split("/"); got != nil {
 		t.Fatalf("split root = %v", got)
 	}
+	if got, ok := parse(split("/subscriptions/sub/providers/Microsoft.ApiManagement/service/svc/apis/a")); !ok || got.ServiceName != "svc" || len(got.Tail) != 2 {
+		t.Fatalf("subscription service route = %+v, %v", got, ok)
+	}
 }
 
 func TestServiceBranches(t *testing.T) {
 	handler, st := testHandler(t)
+	validService := `{"location":"local","sku":{},"properties":{"publisherName":"Local","publisherEmail":"local@example.test"}}`
 	assertStatus(t, handler, http.MethodGet, basePath+apiQuery, "", http.StatusNotFound)
 	assertStatus(t, handler, http.MethodPut, basePath+apiQuery, `{`, http.StatusBadRequest)
 	assertStatus(t, handler, http.MethodPut, basePath+apiQuery, `{"sku":{"name":"Developer"}}`, http.StatusBadRequest)
-	assertStatus(t, handler, http.MethodPut, basePath+apiQuery, `{"location":"local","sku":{}}`, http.StatusCreated)
+	assertStatus(t, handler, http.MethodPut, basePath+apiQuery, validService, http.StatusCreated)
+	assertStatus(t, handler, http.MethodPut, basePath+apiQuery, validService, http.StatusOK)
 	assertStatus(t, handler, http.MethodGet, basePath+apiQuery, "", http.StatusOK)
 	assertStatus(t, handler, http.MethodPost, basePath+apiQuery, `{}`, http.StatusMethodNotAllowed)
+	assertStatus(t, handler, http.MethodPatch, basePath+apiQuery, `{`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPatch, basePath+apiQuery, `{"sku":{"name":"Basic","capacity":2},"properties":{"publisherName":"Updated","publisherEmail":"updated@example.test"}}`, http.StatusOK)
 
 	handler.Activate = func() error { return errors.New("compile failed") }
-	assertStatus(t, handler, http.MethodPut, basePath+apiQuery, `{"location":"local"}`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPut, basePath+apiQuery, validService, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPatch, basePath+apiQuery, `{}`, http.StatusBadRequest)
 	handler.Activate = nil
 	assertStatus(t, handler, http.MethodDelete, basePath+apiQuery, "", http.StatusNoContent)
-	assertStatus(t, handler, http.MethodDelete, basePath+apiQuery, "", http.StatusNotFound)
+	assertStatus(t, handler, http.MethodDelete, basePath+apiQuery, "", http.StatusNoContent)
+	assertStatus(t, handler, http.MethodPatch, basePath+apiQuery, `{}`, http.StatusNotFound)
 
 	recorder := httptest.NewRecorder()
 	handler.storeError(recorder, errors.New("database"), "target")
@@ -71,6 +82,29 @@ func TestServiceBranches(t *testing.T) {
 		t.Fatalf("store error status = %d", recorder.Code)
 	}
 	_ = st
+}
+
+func TestServiceLists(t *testing.T) {
+	handler, st := testHandler(t)
+	seedService(t, st)
+	other := serviceModel()
+	other.SubscriptionID, other.ResourceGroup, other.Name = "other", "elsewhere", "other"
+	if _, err := st.UpsertService(other); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{
+		"/subscriptions/sub/resourceGroups/rg/providers/Microsoft.ApiManagement/service" + apiQuery,
+		"/subscriptions/sub/providers/Microsoft.ApiManagement/service" + apiQuery,
+	} {
+		recorder := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodGet, path, nil)
+		request.Header.Set("Authorization", "Bearer token")
+		handler.ServeHTTP(recorder, request)
+		if recorder.Code != http.StatusOK || strings.Count(recorder.Body.String(), `"type":"Microsoft.ApiManagement/service"`) != 1 {
+			t.Fatalf("list %s = %d %s", path, recorder.Code, recorder.Body.String())
+		}
+	}
+	assertStatus(t, handler, http.MethodPost, "/subscriptions/sub/providers/Microsoft.ApiManagement/service"+apiQuery, "", http.StatusMethodNotAllowed)
 }
 
 func TestAPIBranches(t *testing.T) {
@@ -147,10 +181,34 @@ func TestClosedStoreWriteErrors(t *testing.T) {
 	if err := st.Close(); err != nil {
 		t.Fatal(err)
 	}
-	assertStatus(t, handler, http.MethodPut, basePath+apiQuery, `{"location":"local"}`, http.StatusConflict)
+	assertStatus(t, handler, http.MethodPut, basePath+apiQuery, `{"location":"local","properties":{"publisherName":"Local","publisherEmail":"local@example.test"}}`, http.StatusConflict)
 	assertStatus(t, handler, http.MethodPut, basePath+"/apis/a/operations/get"+apiQuery, `{"properties":{"method":"GET","urlTemplate":"/"}}`, http.StatusConflict)
 	assertStatus(t, handler, http.MethodPut, basePath+"/apis/a/policies/policy"+apiQuery, `{"properties":{"value":"<policies/>"}}`, http.StatusConflict)
 	assertStatus(t, handler, http.MethodPut, basePath+"/products/p/apis/a"+apiQuery, `{}`, http.StatusConflict)
+	assertStatus(t, handler, http.MethodDelete, basePath+apiQuery, "", http.StatusConflict)
+	assertStatus(t, handler, http.MethodGet, "/subscriptions/sub/providers/Microsoft.ApiManagement/service"+apiQuery, "", http.StatusConflict)
+}
+
+func TestServiceStoreWriteErrors(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(dir, clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	seedService(t, st)
+	db, err := sql.Open("sqlite", filepath.Join(dir, "azure-apim-emulator.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`CREATE TRIGGER reject_service_update BEFORE UPDATE ON services BEGIN SELECT RAISE(FAIL, 'rejected'); END`); err != nil {
+		t.Fatal(err)
+	}
+	handler := &Handler{Store: st, Auth: auth.AllowAll{}}
+	body := `{"location":"local","properties":{"publisherName":"Local","publisherEmail":"local@example.test"}}`
+	assertStatus(t, handler, http.MethodPut, basePath+apiQuery, body, http.StatusConflict)
+	assertStatus(t, handler, http.MethodPatch, basePath+apiQuery, `{}`, http.StatusConflict)
 }
 
 func TestAbsoluteAndOperationHelpers(t *testing.T) {
@@ -181,7 +239,7 @@ func testHandler(t *testing.T) (*Handler, *store.Store) {
 }
 
 func serviceModel() model.Service {
-	return model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "svc", Location: "local", SKUName: "Developer", SKUCapacity: 1}
+	return model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "svc", Location: "local", SKUName: "Developer", SKUCapacity: 1, PublisherName: "Local", PublisherEmail: "local@example.test"}
 }
 
 func seedService(t *testing.T, st *store.Store) {

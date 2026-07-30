@@ -64,14 +64,30 @@ type route struct {
 }
 
 func parse(parts []string) (route, bool) {
-	if len(parts) < 8 || !equal(parts[0], "subscriptions") || !equal(parts[2], "resourceGroups") ||
-		!equal(parts[4], "providers") || !equal(parts[5], "Microsoft.ApiManagement") || !equal(parts[6], "service") {
-		return route{}, false
+	if len(parts) >= 5 && equal(parts[0], "subscriptions") && equal(parts[2], "providers") &&
+		equal(parts[3], "Microsoft.ApiManagement") && equal(parts[4], "service") {
+		result := route{SubscriptionID: parts[1]}
+		if len(parts) > 5 {
+			result.ServiceName, result.Tail = parts[5], parts[6:]
+		}
+		return result, true
 	}
-	return route{SubscriptionID: parts[1], ResourceGroup: parts[3], ServiceName: parts[7], Tail: parts[8:]}, true
+	if len(parts) >= 7 && equal(parts[0], "subscriptions") && equal(parts[2], "resourceGroups") &&
+		equal(parts[4], "providers") && equal(parts[5], "Microsoft.ApiManagement") && equal(parts[6], "service") {
+		result := route{SubscriptionID: parts[1], ResourceGroup: parts[3]}
+		if len(parts) > 7 {
+			result.ServiceName, result.Tail = parts[7], parts[8:]
+		}
+		return result, true
+	}
+	return route{}, false
 }
 
 func (h *Handler) service(w http.ResponseWriter, r *http.Request, rt route) {
+	if rt.ServiceName == "" {
+		h.listServices(w, r, rt)
+		return
+	}
 	value := model.Service{SubscriptionID: rt.SubscriptionID, ResourceGroup: rt.ResourceGroup, Name: rt.ServiceName}
 	switch r.Method {
 	case http.MethodGet:
@@ -88,16 +104,26 @@ func (h *Handler) service(w http.ResponseWriter, r *http.Request, rt route) {
 				Name     string `json:"name"`
 				Capacity int    `json:"capacity"`
 			} `json:"sku"`
+			Properties struct {
+				PublisherName  string `json:"publisherName"`
+				PublisherEmail string `json:"publisherEmail"`
+			} `json:"properties"`
 		}
 		if err := decode(r, &body); err != nil {
 			writeError(w, http.StatusBadRequest, "InvalidRequestContent", err.Error(), "")
 			return
 		}
-		if body.Location == "" {
-			writeError(w, http.StatusBadRequest, "ValidationError", "Location is required.", "location")
+		if body.Location == "" || body.Properties.PublisherName == "" || body.Properties.PublisherEmail == "" {
+			writeError(w, http.StatusBadRequest, "ValidationError", "location, properties.publisherName, and properties.publisherEmail are required.", "properties")
+			return
+		}
+		_, existingErr := h.Store.GetService(value.ID())
+		if existingErr != nil && !errors.Is(existingErr, store.ErrNotFound) {
+			h.storeError(w, existingErr, value.ID())
 			return
 		}
 		value.Location, value.SKUName, value.SKUCapacity = body.Location, body.SKU.Name, body.SKU.Capacity
+		value.PublisherName, value.PublisherEmail = body.Properties.PublisherName, body.Properties.PublisherEmail
 		if value.SKUName == "" {
 			value.SKUName = "Developer"
 		}
@@ -114,9 +140,59 @@ func (h *Handler) service(w http.ResponseWriter, r *http.Request, rt route) {
 			return
 		}
 		w.Header().Set("Azure-AsyncOperation", absolute(r, "/_emulator/arm/operations/"+store.NewOpaqueID()+"?api-version="+r.URL.Query().Get("api-version")))
-		writeResource(w, http.StatusCreated, serviceWire(got), got.ETag)
+		status := http.StatusCreated
+		if existingErr == nil {
+			status = http.StatusOK
+		}
+		writeResource(w, status, serviceWire(got), got.ETag)
+	case http.MethodPatch:
+		got, err := h.Store.GetService(value.ID())
+		if err != nil {
+			h.storeError(w, err, value.ID())
+			return
+		}
+		var body struct {
+			SKU struct {
+				Name     *string `json:"name"`
+				Capacity *int    `json:"capacity"`
+			} `json:"sku"`
+			Properties struct {
+				PublisherName  *string `json:"publisherName"`
+				PublisherEmail *string `json:"publisherEmail"`
+			} `json:"properties"`
+		}
+		if err := decode(r, &body); err != nil {
+			writeError(w, http.StatusBadRequest, "InvalidRequestContent", err.Error(), "")
+			return
+		}
+		if body.SKU.Name != nil {
+			got.SKUName = *body.SKU.Name
+		}
+		if body.SKU.Capacity != nil {
+			got.SKUCapacity = *body.SKU.Capacity
+		}
+		if body.Properties.PublisherName != nil {
+			got.PublisherName = *body.Properties.PublisherName
+		}
+		if body.Properties.PublisherEmail != nil {
+			got.PublisherEmail = *body.Properties.PublisherEmail
+		}
+		got, err = h.Store.UpsertService(got)
+		if err != nil {
+			h.storeError(w, err, value.ID())
+			return
+		}
+		if err := h.activate(); err != nil {
+			writeError(w, http.StatusBadRequest, "ConfigurationInvalid", err.Error(), value.ID())
+			return
+		}
+		writeResource(w, http.StatusOK, serviceWire(got), got.ETag)
 	case http.MethodDelete:
 		if err := h.Store.DeleteService(value.ID()); err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
 			h.storeError(w, err, value.ID())
 			return
 		}
@@ -128,6 +204,26 @@ func (h *Handler) service(w http.ResponseWriter, r *http.Request, rt route) {
 	default:
 		methodNotAllowed(w)
 	}
+}
+
+func (h *Handler) listServices(w http.ResponseWriter, r *http.Request, rt route) {
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w)
+		return
+	}
+	services, err := h.Store.ListServices()
+	if err != nil {
+		h.storeError(w, err, "")
+		return
+	}
+	values := make([]map[string]any, 0)
+	for _, service := range services {
+		if !equal(service.SubscriptionID, rt.SubscriptionID) || (rt.ResourceGroup != "" && !equal(service.ResourceGroup, rt.ResourceGroup)) {
+			continue
+		}
+		values = append(values, serviceWire(service))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"value": values})
 }
 
 func (h *Handler) api(w http.ResponseWriter, r *http.Request, rt route) {
@@ -341,7 +437,7 @@ func OperationStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func serviceWire(v model.Service) map[string]any {
-	return map[string]any{"id": v.ID(), "name": v.Name, "type": "Microsoft.ApiManagement/service", "location": v.Location, "sku": map[string]any{"name": v.SKUName, "capacity": v.SKUCapacity}, "properties": map[string]any{"provisioningState": v.ProvisioningState, "gatewayUrl": "https://" + v.Name + ".azure-api.localhost", "developerPortalUrl": "https://" + v.Name + ".portal.azure-api.localhost"}}
+	return map[string]any{"id": v.ID(), "name": v.Name, "type": "Microsoft.ApiManagement/service", "location": v.Location, "etag": v.ETag, "sku": map[string]any{"name": v.SKUName, "capacity": v.SKUCapacity}, "properties": map[string]any{"publisherName": v.PublisherName, "publisherEmail": v.PublisherEmail, "provisioningState": v.ProvisioningState, "gatewayUrl": "https://" + v.Name + ".azure-api.localhost", "developerPortalUrl": "https://" + v.Name + ".portal.azure-api.localhost"}}
 }
 func apiWire(v model.API) map[string]any {
 	return map[string]any{"id": v.ID(), "name": v.Name, "type": "Microsoft.ApiManagement/service/apis", "properties": map[string]any{"displayName": v.DisplayName, "path": v.Path, "serviceUrl": v.ServiceURL, "protocols": v.Protocols, "subscriptionRequired": v.SubscriptionRequired, "apiRevision": "1", "isCurrent": true}}

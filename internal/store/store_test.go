@@ -18,7 +18,7 @@ func TestStoreResourceLifecycle(t *testing.T) {
 	}
 	defer st.Close()
 
-	service := model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "svc", Location: "local", SKUName: "Developer", SKUCapacity: 1}
+	service := model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "svc", Location: "local", SKUName: "Developer", SKUCapacity: 1, PublisherName: "Local", PublisherEmail: "local@example.test"}
 	service, err = st.UpsertService(service)
 	if err != nil {
 		t.Fatal(err)
@@ -27,7 +27,7 @@ func TestStoreResourceLifecycle(t *testing.T) {
 		t.Fatalf("service = %+v", service)
 	}
 	gotService, err := st.GetService(service.ID())
-	if err != nil || gotService.Name != "svc" {
+	if err != nil || gotService.Name != "svc" || gotService.PublisherEmail != "local@example.test" {
 		t.Fatalf("GetService = %+v, %v", gotService, err)
 	}
 	if _, err := st.GetService("/missing"); !errors.Is(err, ErrNotFound) {
@@ -187,8 +187,8 @@ func TestScanFunctionsRejectMalformedRows(t *testing.T) {
 	}{
 		{
 			"services",
-			`CREATE TABLE services (id, subscription_id, resource_group, name, location, sku_name, sku_capacity, provisioning_state, etag)`,
-			`INSERT INTO services VALUES ('id', NULL, '', '', '', '', 0, '', '')`,
+			`CREATE TABLE services (id, subscription_id, resource_group, name, location, sku_name, sku_capacity, publisher_name, publisher_email, provisioning_state, etag)`,
+			`INSERT INTO services VALUES ('id', NULL, '', '', '', '', 0, '', '', '', '')`,
 			func(db *sql.DB) error {
 				_, err := (&Store{db: db}).ListServices()
 				return err

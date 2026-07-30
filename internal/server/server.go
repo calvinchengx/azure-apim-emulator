@@ -53,7 +53,7 @@ func New(cfg *config.Config, validator auth.RequestValidator, backendClient, jwk
 		Activate:       func() error { return runtime.Activate(st, cfg.StrictPolicies) },
 		ValidatePolicy: func(value string) error { _, err := policy.Compile(value, cfg.StrictPolicies); return err },
 	}
-	seed := model.Service{SubscriptionID: defaultSubscription, ResourceGroup: defaultResourceGroup, Name: cfg.DefaultService, Location: cfg.Location, SKUName: "Developer", SKUCapacity: 1}
+	seed := model.Service{SubscriptionID: defaultSubscription, ResourceGroup: defaultResourceGroup, Name: cfg.DefaultService, Location: cfg.Location, SKUName: "Developer", SKUCapacity: 1, PublisherName: "Local Emulator", PublisherEmail: "local@azure-apim-emulator.test"}
 	if _, err := st.GetService(seed.ID()); errors.Is(err, store.ErrNotFound) {
 		if _, err := st.UpsertService(seed); err != nil {
 			st.Close()

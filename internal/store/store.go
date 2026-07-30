@@ -61,8 +61,9 @@ func (s *Store) migrate() error {
 PRAGMA foreign_keys = ON;
 CREATE TABLE IF NOT EXISTS services (
   id TEXT PRIMARY KEY, subscription_id TEXT NOT NULL, resource_group TEXT NOT NULL,
-  name TEXT NOT NULL, location TEXT NOT NULL, sku_name TEXT NOT NULL,
-  sku_capacity INTEGER NOT NULL, provisioning_state TEXT NOT NULL, etag TEXT NOT NULL
+	  name TEXT NOT NULL, location TEXT NOT NULL, sku_name TEXT NOT NULL,
+	  sku_capacity INTEGER NOT NULL, publisher_name TEXT NOT NULL, publisher_email TEXT NOT NULL,
+	  provisioning_state TEXT NOT NULL, etag TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS apis (
   id TEXT PRIMARY KEY, service_id TEXT NOT NULL REFERENCES services(id) ON DELETE CASCADE,
@@ -119,12 +120,13 @@ func (s *Store) UpsertService(v model.Service) (model.Service, error) {
 		v.ProvisioningState = "Succeeded"
 	}
 	_, err := s.db.Exec(`INSERT INTO services
-    (id, subscription_id, resource_group, name, location, sku_name, sku_capacity, provisioning_state, etag)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(id) DO UPDATE SET location=excluded.location, sku_name=excluded.sku_name,
-      sku_capacity=excluded.sku_capacity, provisioning_state=excluded.provisioning_state, etag=excluded.etag`,
+	    (id, subscription_id, resource_group, name, location, sku_name, sku_capacity, publisher_name, publisher_email, provisioning_state, etag)
+	    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	    ON CONFLICT(id) DO UPDATE SET location=excluded.location, sku_name=excluded.sku_name,
+	      sku_capacity=excluded.sku_capacity, publisher_name=excluded.publisher_name,
+	      publisher_email=excluded.publisher_email, provisioning_state=excluded.provisioning_state, etag=excluded.etag`,
 		v.ID(), v.SubscriptionID, v.ResourceGroup, v.Name, v.Location, v.SKUName,
-		v.SKUCapacity, v.ProvisioningState, v.ETag)
+		v.SKUCapacity, v.PublisherName, v.PublisherEmail, v.ProvisioningState, v.ETag)
 	return v, err
 }
 
@@ -132,9 +134,9 @@ func (s *Store) UpsertService(v model.Service) (model.Service, error) {
 func (s *Store) GetService(id string) (model.Service, error) {
 	var v model.Service
 	err := s.db.QueryRow(`SELECT subscription_id, resource_group, name, location, sku_name,
-      sku_capacity, provisioning_state, etag FROM services WHERE lower(id)=lower(?)`, id).
+	      sku_capacity, publisher_name, publisher_email, provisioning_state, etag FROM services WHERE lower(id)=lower(?)`, id).
 		Scan(&v.SubscriptionID, &v.ResourceGroup, &v.Name, &v.Location, &v.SKUName,
-			&v.SKUCapacity, &v.ProvisioningState, &v.ETag)
+			&v.SKUCapacity, &v.PublisherName, &v.PublisherEmail, &v.ProvisioningState, &v.ETag)
 	if errors.Is(err, sql.ErrNoRows) {
 		err = ErrNotFound
 	}
@@ -157,7 +159,7 @@ func (s *Store) DeleteService(id string) error {
 // ListServices returns services in stable ID order.
 func (s *Store) ListServices() ([]model.Service, error) {
 	rows, err := s.db.Query(`SELECT subscription_id, resource_group, name, location, sku_name,
-      sku_capacity, provisioning_state, etag FROM services ORDER BY id`)
+	      sku_capacity, publisher_name, publisher_email, provisioning_state, etag FROM services ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
@@ -166,7 +168,8 @@ func (s *Store) ListServices() ([]model.Service, error) {
 	for rows.Next() {
 		var v model.Service
 		if err := rows.Scan(&v.SubscriptionID, &v.ResourceGroup, &v.Name, &v.Location,
-			&v.SKUName, &v.SKUCapacity, &v.ProvisioningState, &v.ETag); err != nil {
+			&v.SKUName, &v.SKUCapacity, &v.PublisherName, &v.PublisherEmail,
+			&v.ProvisioningState, &v.ETag); err != nil {
 			return nil, err
 		}
 		values = append(values, v)
