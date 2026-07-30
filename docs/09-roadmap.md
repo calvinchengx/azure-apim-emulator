@@ -9,11 +9,11 @@ without erasing completed evidence.
 Goal: prove the architecture before broad resource work.
 
 - [x] Go module, command, config, controllable clock, request IDs, SQLite migrations, TLS, and host routing.
-- [ ] Embeddable `pkg/emulator` test fixture.
+- [x] Embeddable `pkg/emulator` test fixture with isolated state, HTTP/TLS modes, trusted client, lifecycle cleanup, and configuration options.
 - [x] ARM auth against `entra-emulator` and canonical ARM errors for the implemented resources.
 - [ ] Pre-seeded service plus full service GET/PUT/PATCH/DELETE/list semantics. GET/PUT/DELETE and deterministic LRO polling are working.
 - [x] Minimal API, operation, policy, product, product/API link, and subscription resources.
-- [ ] Four-SDK custom-endpoint spike. Go `armapimanagement v1.1.1` is verified at `2021-08-01`; Python, JavaScript, and .NET remain.
+- [x] Four-SDK custom-endpoint spike: Go `armapimanagement v1.1.1`, JavaScript `@azure/arm-apimanagement 10.0.0`, Python `azure-mgmt-apimanagement 5.0.0`, and .NET `Azure.ResourceManager.ApiManagement 1.3.1`.
 - [x] HTTP route to fixture backend, subscription-key validation, `forward-request`, `set-header`, and `return-response`.
 - [ ] Policy XML round-trip, snapshot compiler, failed-compile protection, and structured trace. Compilation and immutable activation work; management GET and trace remain.
 - [ ] CI, coverage floor, GoReleaser skeleton, container, compose, and initial docs site.

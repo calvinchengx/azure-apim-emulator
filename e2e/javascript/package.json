@@ -1,0 +1,11 @@
+{
+  "name": "azure-apim-emulator-javascript-witness",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node witness.js"
+  },
+  "dependencies": {
+    "@azure/arm-apimanagement": "10.0.0"
+  }
+}

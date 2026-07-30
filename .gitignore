@@ -9,6 +9,10 @@ data/
 /dist/
 /bin/
 cover.out
+e2e/javascript/node_modules/
+e2e/python/.venv/
+e2e/dotnet/bin/
+e2e/dotnet/obj/
 test-results/
 playwright-report/
 
@@ -25,4 +29,3 @@ website/dist/
 website/src/content/docs/
 portal/test-results/
 portal/playwright-report/
-

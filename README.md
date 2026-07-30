@@ -20,9 +20,11 @@ Microsoft SDKs and differential tests against Azure APIM.
   backend forwarding, and APIM-shaped failures
 - official Go APIM SDK `v1.1.1` against API `2021-08-01`, including a real
   `azidentity.ClientSecretCredential` flow through `entra-emulator`
+- official JavaScript `10.0.0`, Python `5.0.0`, and .NET `1.3.1` APIM SDK
+  custom-endpoint witnesses
 
-Python, JavaScript, and .NET SDK witnesses and the remaining P0 resource
-semantics are still pending; see the live parity ledger.
+The remaining P0 resource semantics and distribution work are still pending;
+see the live parity ledger.
 
 ## Development
 
@@ -30,6 +32,7 @@ semantics are still pending; see the live parity ledger.
 APIM_DISABLE_AUTH=true go run ./cmd/azure-apim-emulator --disable-tls
 go test ./...
 make test-coverage
+make setup-sdks test-sdks
 ```
 
 The default listener is `http://localhost:8445` in this development mode. ARM
