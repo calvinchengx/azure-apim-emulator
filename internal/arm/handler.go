@@ -495,27 +495,123 @@ func applyOperationPayload(operation *model.Operation, body operationPayload) {
 }
 
 func (h *Handler) product(w http.ResponseWriter, r *http.Request, rt route) {
-	if len(rt.Tail) < 2 {
-		writeError(w, http.StatusNotFound, "ResourceNotFound", "Product identifier is required.", "")
+	service := model.Service{SubscriptionID: rt.SubscriptionID, ResourceGroup: rt.ResourceGroup, Name: rt.ServiceName}
+	if len(rt.Tail) == 1 {
+		if r.Method != http.MethodGet {
+			methodNotAllowed(w)
+			return
+		}
+		values, err := h.Store.ListProducts(service.ID())
+		if err != nil {
+			h.storeError(w, err, service.ID())
+			return
+		}
+		resources := make([]map[string]any, 0, len(values))
+		for _, value := range values {
+			resources = append(resources, productWire(value))
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"value": resources})
 		return
 	}
-	service := model.Service{SubscriptionID: rt.SubscriptionID, ResourceGroup: rt.ResourceGroup, Name: rt.ServiceName}
 	product := model.Product{ServiceID: service.ID(), Name: rt.Tail[1]}
-	if len(rt.Tail) == 2 && r.Method == http.MethodPut {
-		var body struct {
-			Properties struct {
-				DisplayName      string `json:"displayName"`
-				State            string `json:"state"`
-				ApprovalRequired bool   `json:"approvalRequired"`
-			} `json:"properties"`
+	if len(rt.Tail) == 2 {
+		h.productResource(w, r, product)
+		return
+	}
+	if len(rt.Tail) == 3 && equal(rt.Tail[2], "apis") {
+		if r.Method != http.MethodGet {
+			methodNotAllowed(w)
+			return
 		}
+		ids, err := h.Store.ListProductAPIs(product.ID())
+		if err != nil {
+			h.storeError(w, err, product.ID())
+			return
+		}
+		resources := make([]map[string]any, 0, len(ids))
+		for _, id := range ids {
+			api, err := h.Store.GetAPI(id)
+			if err != nil {
+				h.storeError(w, err, id)
+				return
+			}
+			resources = append(resources, apiWire(api))
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"value": resources})
+		return
+	}
+	if len(rt.Tail) == 4 && equal(rt.Tail[2], "apis") {
+		apiID := service.ID() + "/apis/" + rt.Tail[3]
+		switch r.Method {
+		case http.MethodPut:
+			if err := h.Store.LinkProductAPI(product.ID(), apiID); err != nil {
+				h.storeError(w, err, product.ID())
+				return
+			}
+			if err := h.activate(); err != nil {
+				writeError(w, http.StatusBadRequest, "ConfigurationInvalid", err.Error(), product.ID())
+				return
+			}
+			writeResource(w, http.StatusCreated, productAPIWire(product.ID(), rt.Tail[3]), "")
+		case http.MethodDelete:
+			if err := h.Store.UnlinkProductAPI(product.ID(), apiID); err != nil && !errors.Is(err, store.ErrNotFound) {
+				h.storeError(w, err, product.ID())
+				return
+			}
+			if err := h.activate(); err != nil {
+				writeError(w, http.StatusInternalServerError, "ConfigurationInvalid", err.Error(), product.ID())
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			methodNotAllowed(w)
+		}
+		return
+	}
+	writeError(w, http.StatusNotFound, "ResourceNotFound", "The requested product resource was not found.", r.URL.Path)
+}
+
+type productPayload struct {
+	Properties struct {
+		DisplayName      *string `json:"displayName"`
+		State            *string `json:"state"`
+		ApprovalRequired *bool   `json:"approvalRequired"`
+	} `json:"properties"`
+}
+
+func (h *Handler) productResource(w http.ResponseWriter, r *http.Request, product model.Product) {
+	switch r.Method {
+	case http.MethodGet:
+		got, err := h.Store.GetProduct(product.ID())
+		if err != nil {
+			h.storeError(w, err, product.ID())
+			return
+		}
+		writeResource(w, http.StatusOK, productWire(got), got.ETag)
+	case http.MethodPut, http.MethodPatch:
+		existing, existingErr := h.Store.GetProduct(product.ID())
+		if existingErr != nil && !errors.Is(existingErr, store.ErrNotFound) {
+			h.storeError(w, existingErr, product.ID())
+			return
+		}
+		if r.Method == http.MethodPatch {
+			if existingErr != nil {
+				h.storeError(w, existingErr, product.ID())
+				return
+			}
+			product = existing
+		} else {
+			product.State = "published"
+		}
+		var body productPayload
 		if err := decode(r, &body); err != nil {
 			writeError(w, http.StatusBadRequest, "InvalidRequestContent", err.Error(), "")
 			return
 		}
-		product.DisplayName, product.State, product.ApprovalRequired = body.Properties.DisplayName, body.Properties.State, body.Properties.ApprovalRequired
-		if product.State == "" {
-			product.State = "published"
+		applyProductPayload(&product, body)
+		if product.DisplayName == "" {
+			writeError(w, http.StatusBadRequest, "ValidationError", "displayName is required.", "properties.displayName")
+			return
 		}
 		got, err := h.Store.UpsertProduct(product)
 		if err != nil {
@@ -526,23 +622,36 @@ func (h *Handler) product(w http.ResponseWriter, r *http.Request, rt route) {
 			writeError(w, http.StatusBadRequest, "ConfigurationInvalid", err.Error(), product.ID())
 			return
 		}
-		writeResource(w, http.StatusCreated, productWire(got), got.ETag)
-		return
-	}
-	if len(rt.Tail) == 4 && equal(rt.Tail[2], "apis") && r.Method == http.MethodPut {
-		apiID := service.ID() + "/apis/" + rt.Tail[3]
-		if err := h.Store.LinkProductAPI(product.ID(), apiID); err != nil {
+		status := http.StatusOK
+		if r.Method == http.MethodPut && errors.Is(existingErr, store.ErrNotFound) {
+			status = http.StatusCreated
+		}
+		writeResource(w, status, productWire(got), got.ETag)
+	case http.MethodDelete:
+		if err := h.Store.DeleteProduct(product.ID()); err != nil && !errors.Is(err, store.ErrNotFound) {
 			h.storeError(w, err, product.ID())
 			return
 		}
 		if err := h.activate(); err != nil {
-			writeError(w, http.StatusBadRequest, "ConfigurationInvalid", err.Error(), product.ID())
+			writeError(w, http.StatusInternalServerError, "ConfigurationInvalid", err.Error(), product.ID())
 			return
 		}
-		writeResource(w, http.StatusCreated, map[string]any{"id": product.ID() + "/apis/" + rt.Tail[3], "name": rt.Tail[3], "type": "Microsoft.ApiManagement/service/products/apis"}, "")
-		return
+		w.WriteHeader(http.StatusNoContent)
+	default:
+		methodNotAllowed(w)
 	}
-	writeError(w, http.StatusNotFound, "ResourceNotFound", "The requested product resource was not found.", r.URL.Path)
+}
+
+func applyProductPayload(product *model.Product, body productPayload) {
+	if body.Properties.DisplayName != nil {
+		product.DisplayName = *body.Properties.DisplayName
+	}
+	if body.Properties.State != nil {
+		product.State = *body.Properties.State
+	}
+	if body.Properties.ApprovalRequired != nil {
+		product.ApprovalRequired = *body.Properties.ApprovalRequired
+	}
 }
 
 func (h *Handler) subscription(w http.ResponseWriter, r *http.Request, rt route) {
@@ -628,6 +737,9 @@ func operationWire(v model.Operation) map[string]any {
 }
 func productWire(v model.Product) map[string]any {
 	return map[string]any{"id": v.ID(), "name": v.Name, "type": "Microsoft.ApiManagement/service/products", "properties": map[string]any{"displayName": v.DisplayName, "state": v.State, "approvalRequired": v.ApprovalRequired, "subscriptionRequired": true}}
+}
+func productAPIWire(productID, apiName string) map[string]any {
+	return map[string]any{"id": productID + "/apis/" + apiName, "name": apiName, "type": "Microsoft.ApiManagement/service/products/apis"}
 }
 func subscriptionWire(v model.Subscription, secrets bool) map[string]any {
 	properties := map[string]any{"displayName": v.DisplayName, "scope": v.Scope, "state": v.State}

@@ -311,10 +311,69 @@ func (s *Store) UpsertProduct(v model.Product) (model.Product, error) {
 	return v, err
 }
 
+// GetProduct finds one product by ARM ID.
+func (s *Store) GetProduct(id string) (model.Product, error) {
+	var v model.Product
+	err := s.db.QueryRow(`SELECT service_id, name, display_name, state, approval_required, etag
+	    FROM products WHERE lower(id)=lower(?)`, id).
+		Scan(&v.ServiceID, &v.Name, &v.DisplayName, &v.State, &v.ApprovalRequired, &v.ETag)
+	if errors.Is(err, sql.ErrNoRows) {
+		return model.Product{}, ErrNotFound
+	}
+	return v, err
+}
+
+// ListProducts returns products belonging to a service in stable ID order.
+func (s *Store) ListProducts(serviceID string) ([]model.Product, error) {
+	values, err := scanProducts(s.db)
+	if err != nil {
+		return nil, err
+	}
+	filtered := make([]model.Product, 0)
+	for _, value := range values {
+		if equalID(value.ServiceID, serviceID) {
+			filtered = append(filtered, value)
+		}
+	}
+	return filtered, nil
+}
+
+// DeleteProduct removes a product and its associations.
+func (s *Store) DeleteProduct(id string) error {
+	return deleteScopedResource(s.db, "products", id)
+}
+
 // LinkProductAPI associates an API with a product.
 func (s *Store) LinkProductAPI(productID, apiID string) error {
 	_, err := s.db.Exec(`INSERT OR IGNORE INTO product_apis (product_id, api_id) VALUES (?, ?)`, productID, apiID)
 	return err
+}
+
+// UnlinkProductAPI removes an API association from a product.
+func (s *Store) UnlinkProductAPI(productID, apiID string) error {
+	result, err := s.db.Exec(`DELETE FROM product_apis WHERE lower(product_id)=lower(?) AND lower(api_id)=lower(?)`, productID, apiID)
+	if err != nil {
+		return err
+	}
+	count, _ := result.RowsAffected()
+	if count == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// ListProductAPIs returns API IDs associated with a product.
+func (s *Store) ListProductAPIs(productID string) ([]string, error) {
+	links, err := scanLinks(s.db)
+	if err != nil {
+		return nil, err
+	}
+	for owner, values := range links {
+		if equalID(owner, productID) {
+			return values, nil
+		}
+	}
+	return []string{}, nil
 }
 
 // UpsertSubscription creates or replaces a subscription, generating absent keys.

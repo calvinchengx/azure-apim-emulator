@@ -204,11 +204,31 @@ func TestProductAndSubscriptionBranches(t *testing.T) {
 	seedService(t, st)
 	_, _ = st.UpsertAPI(model.API{ServiceID: serviceModel().ID(), Name: "a", DisplayName: "A", Path: "a", ServiceURL: "https://backend"})
 
-	assertStatus(t, handler, http.MethodGet, basePath+"/products"+apiQuery, "", http.StatusNotFound)
+	assertStatus(t, handler, http.MethodGet, basePath+"/products"+apiQuery, "", http.StatusOK)
+	assertStatus(t, handler, http.MethodPost, basePath+"/products"+apiQuery, "", http.StatusMethodNotAllowed)
+	assertStatus(t, handler, http.MethodGet, basePath+"/products/missing"+apiQuery, "", http.StatusNotFound)
 	assertStatus(t, handler, http.MethodPut, basePath+"/products/p"+apiQuery, `{`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPut, basePath+"/products/invalid"+apiQuery, `{"properties":{}}`, http.StatusBadRequest)
 	assertStatus(t, handler, http.MethodPut, basePath+"/products/p"+apiQuery, `{"properties":{"displayName":"P"}}`, http.StatusCreated)
+	assertStatus(t, handler, http.MethodPut, basePath+"/products/p"+apiQuery, `{"properties":{"displayName":"P","state":"notPublished","approvalRequired":true}}`, http.StatusOK)
+	assertStatus(t, handler, http.MethodPatch, basePath+"/products/missing"+apiQuery, `{}`, http.StatusNotFound)
+	assertStatus(t, handler, http.MethodPatch, basePath+"/products/p"+apiQuery, `{`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPatch, basePath+"/products/p"+apiQuery, `{"properties":{"displayName":"Updated","state":"published","approvalRequired":false}}`, http.StatusOK)
+	assertStatus(t, handler, http.MethodGet, basePath+"/products/p"+apiQuery, "", http.StatusOK)
+	list := request(t, handler, http.MethodGet, basePath+"/products"+apiQuery, "")
+	if strings.Count(list.Body.String(), `"type":"Microsoft.ApiManagement/service/products"`) != 1 || !strings.Contains(list.Body.String(), `"displayName":"Updated"`) {
+		t.Fatalf("product list = %s", list.Body.String())
+	}
+	assertStatus(t, handler, http.MethodPost, basePath+"/products/p"+apiQuery, `{}`, http.StatusMethodNotAllowed)
+	assertStatus(t, handler, http.MethodGet, basePath+"/products/p/apis"+apiQuery, "", http.StatusOK)
+	assertStatus(t, handler, http.MethodPost, basePath+"/products/p/apis"+apiQuery, "", http.StatusMethodNotAllowed)
 	assertStatus(t, handler, http.MethodPut, basePath+"/products/p/apis/a"+apiQuery, `{}`, http.StatusCreated)
-	assertStatus(t, handler, http.MethodGet, basePath+"/products/p"+apiQuery, "", http.StatusNotFound)
+	list = request(t, handler, http.MethodGet, basePath+"/products/p/apis"+apiQuery, "")
+	if strings.Count(list.Body.String(), `"type":"Microsoft.ApiManagement/service/apis"`) != 1 {
+		t.Fatalf("product API list = %s", list.Body.String())
+	}
+	assertStatus(t, handler, http.MethodPost, basePath+"/products/p/apis/a"+apiQuery, `{}`, http.StatusMethodNotAllowed)
+	assertStatus(t, handler, http.MethodGet, basePath+"/products/p/unknown"+apiQuery, "", http.StatusNotFound)
 
 	assertStatus(t, handler, http.MethodGet, basePath+"/subscriptions/s"+apiQuery, "", http.StatusNotFound)
 	assertStatus(t, handler, http.MethodPut, basePath+"/subscriptions/s"+apiQuery, `{`, http.StatusBadRequest)
@@ -217,13 +237,43 @@ func TestProductAndSubscriptionBranches(t *testing.T) {
 	handler.Activate = func() error { return errors.New("activation") }
 	assertStatus(t, handler, http.MethodPut, basePath+"/products/p"+apiQuery, `{"properties":{"displayName":"P"}}`, http.StatusBadRequest)
 	assertStatus(t, handler, http.MethodPut, basePath+"/products/p/apis/a"+apiQuery, `{}`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodDelete, basePath+"/products/p/apis/a"+apiQuery, "", http.StatusInternalServerError)
+	assertStatus(t, handler, http.MethodDelete, basePath+"/products/p"+apiQuery, "", http.StatusInternalServerError)
 	assertStatus(t, handler, http.MethodPut, basePath+"/subscriptions/s"+apiQuery, `{"properties":{"displayName":"S","scope":"`+serviceModel().ID()+`"}}`, http.StatusBadRequest)
+	handler.Activate = nil
+	assertStatus(t, handler, http.MethodDelete, basePath+"/products/p/apis/a"+apiQuery, "", http.StatusNoContent)
+	assertStatus(t, handler, http.MethodDelete, basePath+"/products/p"+apiQuery, "", http.StatusNoContent)
+	assertStatus(t, handler, http.MethodDelete, basePath+"/products/p"+apiQuery, "", http.StatusNoContent)
 
 	secrets := subscriptionWire(model.Subscription{ServiceID: serviceModel().ID(), Name: "s", PrimaryKey: "one", SecondaryKey: "two"}, true)
 	properties := secrets["properties"].(map[string]any)
 	if properties["primaryKey"] != "one" || properties["secondaryKey"] != "two" {
 		t.Fatalf("subscription secrets = %v", properties)
 	}
+}
+
+func TestProductAPIListRejectsDanglingLink(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(dir, clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	seedService(t, st)
+	product, err := st.UpsertProduct(model.Product{ServiceID: serviceModel().ID(), Name: "p", DisplayName: "P"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", filepath.Join(dir, "azure-apim-emulator.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`PRAGMA foreign_keys=OFF; INSERT INTO product_apis (product_id, api_id) VALUES (?, ?)`, product.ID(), serviceModel().ID()+"/apis/missing"); err != nil {
+		t.Fatal(err)
+	}
+	handler := &Handler{Store: st, Auth: auth.AllowAll{}}
+	assertStatus(t, handler, http.MethodGet, basePath+"/products/p/apis"+apiQuery, "", http.StatusNotFound)
 }
 
 func TestForeignKeyStoreErrors(t *testing.T) {
@@ -259,6 +309,11 @@ func TestClosedStoreWriteErrors(t *testing.T) {
 	assertStatus(t, handler, http.MethodGet, basePath+"/apis/a/operations"+apiQuery, "", http.StatusConflict)
 	assertStatus(t, handler, http.MethodDelete, basePath+"/apis/a"+apiQuery, "", http.StatusConflict)
 	assertStatus(t, handler, http.MethodDelete, basePath+"/apis/a/operations/get"+apiQuery, "", http.StatusConflict)
+	assertStatus(t, handler, http.MethodGet, basePath+"/products"+apiQuery, "", http.StatusConflict)
+	assertStatus(t, handler, http.MethodPut, basePath+"/products/p"+apiQuery, `{"properties":{"displayName":"P"}}`, http.StatusConflict)
+	assertStatus(t, handler, http.MethodDelete, basePath+"/products/p"+apiQuery, "", http.StatusConflict)
+	assertStatus(t, handler, http.MethodGet, basePath+"/products/p/apis"+apiQuery, "", http.StatusConflict)
+	assertStatus(t, handler, http.MethodDelete, basePath+"/products/p/apis/a"+apiQuery, "", http.StatusConflict)
 }
 
 func TestServiceStoreWriteErrors(t *testing.T) {
