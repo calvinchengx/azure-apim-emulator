@@ -18,7 +18,7 @@ func TestStoreResourceLifecycle(t *testing.T) {
 	}
 	defer st.Close()
 
-	service := model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "svc", Location: "local", SKUName: "Developer", SKUCapacity: 1, PublisherName: "Local", PublisherEmail: "local@example.test"}
+	service := model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "svc", Location: "local", SKUName: "Developer", SKUCapacity: 1, PublisherName: "Local", PublisherEmail: "local@example.test", Document: map[string]any{"tags": map[string]any{"environment": "test"}}}
 	service, err = st.UpsertService(service)
 	if err != nil {
 		t.Fatal(err)
@@ -27,7 +27,7 @@ func TestStoreResourceLifecycle(t *testing.T) {
 		t.Fatalf("service = %+v", service)
 	}
 	gotService, err := st.GetService(service.ID())
-	if err != nil || gotService.Name != "svc" || gotService.PublisherEmail != "local@example.test" {
+	if err != nil || gotService.Name != "svc" || gotService.PublisherEmail != "local@example.test" || gotService.Document["tags"].(map[string]any)["environment"] != "test" {
 		t.Fatalf("GetService = %+v, %v", gotService, err)
 	}
 	if _, err := st.GetService("/missing"); !errors.Is(err, ErrNotFound) {
@@ -86,6 +86,9 @@ func TestStoreResourceLifecycle(t *testing.T) {
 	if len(services) != 1 || len(apis) != 1 || len(operations) != 1 || len(products) != 1 ||
 		len(links[product.ID()]) != 1 || len(subscriptions) != 1 || len(policies) != 1 {
 		t.Fatalf("runtime sizes = %d %d %d %d %#v %d %d", len(services), len(apis), len(operations), len(products), links, len(subscriptions), len(policies))
+	}
+	if services[0].Document["tags"].(map[string]any)["environment"] != "test" {
+		t.Fatalf("listed document = %#v", services[0].Document)
 	}
 	if err := st.DeleteService(service.ID()); err != nil {
 		t.Fatal(err)
@@ -199,7 +202,8 @@ func TestScanFunctionsRejectMalformedRows(t *testing.T) {
 	}{
 		{
 			"services",
-			`CREATE TABLE services (id, subscription_id, resource_group, name, location, sku_name, sku_capacity, publisher_name, publisher_email, provisioning_state, etag)`,
+			`CREATE TABLE services (id, subscription_id, resource_group, name, location, sku_name, sku_capacity, publisher_name, publisher_email, provisioning_state, etag);
+			 CREATE TABLE resource_documents (id, document_json)`,
 			`INSERT INTO services VALUES ('id', NULL, '', '', '', '', 0, '', '', '', '')`,
 			func(db *sql.DB) error {
 				_, err := (&Store{db: db}).ListServices()
@@ -261,6 +265,52 @@ func TestScanFunctionsRejectMalformedRows(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestUpsertServiceTransactionErrors(t *testing.T) {
+	t.Run("begin", func(t *testing.T) {
+		st, err := Open("", clock.New())
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = st.Close()
+		if _, err := st.UpsertService(model.Service{}); err == nil {
+			t.Fatal("closed store accepted service")
+		}
+	})
+
+	t.Run("document encoding", func(t *testing.T) {
+		st, err := Open("", clock.New())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer st.Close()
+		service := model.Service{Name: "bad", Document: map[string]any{"unsupported": func() {}}}
+		if _, err := st.UpsertService(service); err == nil {
+			t.Fatal("unsupported document was accepted")
+		}
+		if _, err := st.GetService(service.ID()); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("service transaction was not rolled back: %v", err)
+		}
+	})
+
+	t.Run("document write", func(t *testing.T) {
+		st, err := Open("", clock.New())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer st.Close()
+		if _, err := st.db.Exec(`CREATE TRIGGER reject_document BEFORE INSERT ON resource_documents BEGIN SELECT RAISE(FAIL, 'rejected'); END`); err != nil {
+			t.Fatal(err)
+		}
+		service := model.Service{Name: "bad", Document: map[string]any{"location": "local"}}
+		if _, err := st.UpsertService(service); err == nil {
+			t.Fatal("rejected document was accepted")
+		}
+		if _, err := st.GetService(service.ID()); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("service transaction was not rolled back: %v", err)
+		}
+	})
 }
 
 func TestScanFunctionsQueryErrors(t *testing.T) {

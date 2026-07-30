@@ -2,6 +2,7 @@ package arm
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -57,16 +58,33 @@ func TestTopLevelRoutingErrors(t *testing.T) {
 
 func TestServiceBranches(t *testing.T) {
 	handler, st := testHandler(t)
-	validService := `{"location":"local","sku":{},"properties":{"publisherName":"Local","publisherEmail":"local@example.test"}}`
+	validService := `{"location":"local","sku":{},"tags":{"environment":"test"},"zones":["1"],"identity":{"type":"SystemAssigned"},"properties":{"publisherName":"Local","publisherEmail":"local@example.test","customProperties":{"one":"1","remove":"x"},"publicNetworkAccess":"Enabled","hostnameConfigurations":[{"type":"Proxy","hostName":"api.example.test"}]}}`
 	assertStatus(t, handler, http.MethodGet, basePath+apiQuery, "", http.StatusNotFound)
 	assertStatus(t, handler, http.MethodPut, basePath+apiQuery, `{`, http.StatusBadRequest)
 	assertStatus(t, handler, http.MethodPut, basePath+apiQuery, `{"sku":{"name":"Developer"}}`, http.StatusBadRequest)
 	assertStatus(t, handler, http.MethodPut, basePath+apiQuery, validService, http.StatusCreated)
 	assertStatus(t, handler, http.MethodPut, basePath+apiQuery, validService, http.StatusOK)
-	assertStatus(t, handler, http.MethodGet, basePath+apiQuery, "", http.StatusOK)
+	recorder := request(t, handler, http.MethodGet, basePath+apiQuery, "")
+	var service map[string]any
+	if err := json.Unmarshal(recorder.Body.Bytes(), &service); err != nil {
+		t.Fatal(err)
+	}
+	properties := service["properties"].(map[string]any)
+	if service["tags"].(map[string]any)["environment"] != "test" || service["identity"].(map[string]any)["type"] != "SystemAssigned" || properties["publicNetworkAccess"] != "Enabled" {
+		t.Fatalf("service document was not preserved: %#v", service)
+	}
 	assertStatus(t, handler, http.MethodPost, basePath+apiQuery, `{}`, http.StatusMethodNotAllowed)
 	assertStatus(t, handler, http.MethodPatch, basePath+apiQuery, `{`, http.StatusBadRequest)
-	assertStatus(t, handler, http.MethodPatch, basePath+apiQuery, `{"sku":{"name":"Basic","capacity":2},"properties":{"publisherName":"Updated","publisherEmail":"updated@example.test"}}`, http.StatusOK)
+	assertStatus(t, handler, http.MethodPatch, basePath+apiQuery, `{"sku":{"name":"Basic","capacity":2},"tags":{"owner":"platform"},"properties":{"publisherName":"Updated","publisherEmail":"updated@example.test","customProperties":{"two":"2","remove":null}}}`, http.StatusOK)
+	recorder = request(t, handler, http.MethodGet, basePath+apiQuery, "")
+	if err := json.Unmarshal(recorder.Body.Bytes(), &service); err != nil {
+		t.Fatal(err)
+	}
+	properties = service["properties"].(map[string]any)
+	custom := properties["customProperties"].(map[string]any)
+	if custom["one"] != "1" || custom["two"] != "2" || custom["remove"] != nil || properties["publisherName"] != "Updated" {
+		t.Fatalf("service patch was not merged: %#v", service)
+	}
 
 	handler.Activate = func() error { return errors.New("compile failed") }
 	assertStatus(t, handler, http.MethodPut, basePath+apiQuery, validService, http.StatusBadRequest)
@@ -76,12 +94,22 @@ func TestServiceBranches(t *testing.T) {
 	assertStatus(t, handler, http.MethodDelete, basePath+apiQuery, "", http.StatusNoContent)
 	assertStatus(t, handler, http.MethodPatch, basePath+apiQuery, `{}`, http.StatusNotFound)
 
-	recorder := httptest.NewRecorder()
+	recorder = httptest.NewRecorder()
 	handler.storeError(recorder, errors.New("database"), "target")
 	if recorder.Code != http.StatusConflict {
 		t.Fatalf("store error status = %d", recorder.Code)
 	}
 	_ = st
+}
+
+func TestServiceDocumentHelpers(t *testing.T) {
+	target := map[string]any{"replace": "old", "object": map[string]any{"keep": true}, "remove": true}
+	mergeObject(target, map[string]any{"replace": map[string]any{"new": true}, "object": "scalar", "remove": nil})
+	clone := cloneObject(target)
+	clone["replace"].(map[string]any)["new"] = false
+	if _, ok := target["remove"]; ok || target["object"] != "scalar" || target["replace"].(map[string]any)["new"] != true {
+		t.Fatalf("merged target = %#v", target)
+	}
 }
 
 func TestServiceLists(t *testing.T) {
@@ -257,6 +285,15 @@ func seedService(t *testing.T, st *store.Store) {
 	if _, err := st.UpsertService(serviceModel()); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func request(t *testing.T, handler http.Handler, method, path, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(method, path, strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer token")
+	handler.ServeHTTP(recorder, req)
+	return recorder
 }
 
 func assertStatus(t *testing.T, handler http.Handler, method, path, body string, want int) {

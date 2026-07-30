@@ -13,6 +13,7 @@ type Service struct {
 	PublisherEmail    string
 	ProvisioningState string
 	ETag              string
+	Document          map[string]any
 }
 
 // ID returns the ARM resource ID.

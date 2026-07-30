@@ -65,6 +65,10 @@ CREATE TABLE IF NOT EXISTS services (
 	  sku_capacity INTEGER NOT NULL, publisher_name TEXT NOT NULL, publisher_email TEXT NOT NULL,
 	  provisioning_state TEXT NOT NULL, etag TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS resource_documents (
+  id TEXT PRIMARY KEY REFERENCES services(id) ON DELETE CASCADE,
+  document_json TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS apis (
   id TEXT PRIMARY KEY, service_id TEXT NOT NULL REFERENCES services(id) ON DELETE CASCADE,
   name TEXT NOT NULL, display_name TEXT NOT NULL, path TEXT NOT NULL,
@@ -119,7 +123,12 @@ func (s *Store) UpsertService(v model.Service) (model.Service, error) {
 	if v.ProvisioningState == "" {
 		v.ProvisioningState = "Succeeded"
 	}
-	_, err := s.db.Exec(`INSERT INTO services
+	tx, err := s.db.Begin()
+	if err != nil {
+		return v, err
+	}
+	defer tx.Rollback()
+	_, err = tx.Exec(`INSERT INTO services
 	    (id, subscription_id, resource_group, name, location, sku_name, sku_capacity, publisher_name, publisher_email, provisioning_state, etag)
 	    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	    ON CONFLICT(id) DO UPDATE SET location=excluded.location, sku_name=excluded.sku_name,
@@ -127,18 +136,37 @@ func (s *Store) UpsertService(v model.Service) (model.Service, error) {
 	      publisher_email=excluded.publisher_email, provisioning_state=excluded.provisioning_state, etag=excluded.etag`,
 		v.ID(), v.SubscriptionID, v.ResourceGroup, v.Name, v.Location, v.SKUName,
 		v.SKUCapacity, v.PublisherName, v.PublisherEmail, v.ProvisioningState, v.ETag)
-	return v, err
+	if err != nil {
+		return v, err
+	}
+	if v.Document != nil {
+		document, err := json.Marshal(v.Document)
+		if err != nil {
+			return v, err
+		}
+		if _, err := tx.Exec(`INSERT INTO resource_documents (id, document_json) VALUES (?, ?)
+		    ON CONFLICT(id) DO UPDATE SET document_json=excluded.document_json`, v.ID(), document); err != nil {
+			return v, err
+		}
+	}
+	return v, tx.Commit()
 }
 
 // GetService finds one service by ARM ID.
 func (s *Store) GetService(id string) (model.Service, error) {
 	var v model.Service
+	var document string
 	err := s.db.QueryRow(`SELECT subscription_id, resource_group, name, location, sku_name,
-	      sku_capacity, publisher_name, publisher_email, provisioning_state, etag FROM services WHERE lower(id)=lower(?)`, id).
+	      sku_capacity, publisher_name, publisher_email, provisioning_state, etag,
+	      COALESCE((SELECT document_json FROM resource_documents WHERE lower(resource_documents.id)=lower(services.id)), '')
+	      FROM services WHERE lower(id)=lower(?)`, id).
 		Scan(&v.SubscriptionID, &v.ResourceGroup, &v.Name, &v.Location, &v.SKUName,
-			&v.SKUCapacity, &v.PublisherName, &v.PublisherEmail, &v.ProvisioningState, &v.ETag)
+			&v.SKUCapacity, &v.PublisherName, &v.PublisherEmail, &v.ProvisioningState, &v.ETag, &document)
 	if errors.Is(err, sql.ErrNoRows) {
 		err = ErrNotFound
+	}
+	if err == nil && document != "" {
+		_ = json.Unmarshal([]byte(document), &v.Document)
 	}
 	return v, err
 }
@@ -159,7 +187,9 @@ func (s *Store) DeleteService(id string) error {
 // ListServices returns services in stable ID order.
 func (s *Store) ListServices() ([]model.Service, error) {
 	rows, err := s.db.Query(`SELECT subscription_id, resource_group, name, location, sku_name,
-	      sku_capacity, publisher_name, publisher_email, provisioning_state, etag FROM services ORDER BY id`)
+	      sku_capacity, publisher_name, publisher_email, provisioning_state, etag,
+	      COALESCE((SELECT document_json FROM resource_documents WHERE resource_documents.id=services.id), '')
+	      FROM services ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
@@ -167,10 +197,14 @@ func (s *Store) ListServices() ([]model.Service, error) {
 	var values []model.Service
 	for rows.Next() {
 		var v model.Service
+		var document string
 		if err := rows.Scan(&v.SubscriptionID, &v.ResourceGroup, &v.Name, &v.Location,
 			&v.SKUName, &v.SKUCapacity, &v.PublisherName, &v.PublisherEmail,
-			&v.ProvisioningState, &v.ETag); err != nil {
+			&v.ProvisioningState, &v.ETag, &document); err != nil {
 			return nil, err
+		}
+		if document != "" {
+			_ = json.Unmarshal([]byte(document), &v.Document)
 		}
 		values = append(values, v)
 	}

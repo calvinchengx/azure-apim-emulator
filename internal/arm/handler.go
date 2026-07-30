@@ -63,6 +63,18 @@ type route struct {
 	Tail                                       []string
 }
 
+type servicePayload struct {
+	Location string `json:"location"`
+	SKU      struct {
+		Name     string `json:"name"`
+		Capacity int    `json:"capacity"`
+	} `json:"sku"`
+	Properties struct {
+		PublisherName  string `json:"publisherName"`
+		PublisherEmail string `json:"publisherEmail"`
+	} `json:"properties"`
+}
+
 func parse(parts []string) (route, bool) {
 	if len(parts) >= 5 && equal(parts[0], "subscriptions") && equal(parts[2], "providers") &&
 		equal(parts[3], "Microsoft.ApiManagement") && equal(parts[4], "service") {
@@ -98,18 +110,9 @@ func (h *Handler) service(w http.ResponseWriter, r *http.Request, rt route) {
 		}
 		writeResource(w, http.StatusOK, serviceWire(got), got.ETag)
 	case http.MethodPut:
-		var body struct {
-			Location string `json:"location"`
-			SKU      struct {
-				Name     string `json:"name"`
-				Capacity int    `json:"capacity"`
-			} `json:"sku"`
-			Properties struct {
-				PublisherName  string `json:"publisherName"`
-				PublisherEmail string `json:"publisherEmail"`
-			} `json:"properties"`
-		}
-		if err := decode(r, &body); err != nil {
+		var body servicePayload
+		var document map[string]any
+		if err := decodeDocument(r, &body, &document); err != nil {
 			writeError(w, http.StatusBadRequest, "InvalidRequestContent", err.Error(), "")
 			return
 		}
@@ -123,7 +126,7 @@ func (h *Handler) service(w http.ResponseWriter, r *http.Request, rt route) {
 			return
 		}
 		value.Location, value.SKUName, value.SKUCapacity = body.Location, body.SKU.Name, body.SKU.Capacity
-		value.PublisherName, value.PublisherEmail = body.Properties.PublisherName, body.Properties.PublisherEmail
+		value.PublisherName, value.PublisherEmail, value.Document = body.Properties.PublisherName, body.Properties.PublisherEmail, document
 		if value.SKUName == "" {
 			value.SKUName = "Developer"
 		}
@@ -152,7 +155,8 @@ func (h *Handler) service(w http.ResponseWriter, r *http.Request, rt route) {
 			return
 		}
 		var body struct {
-			SKU struct {
+			Location string `json:"location"`
+			SKU      struct {
 				Name     *string `json:"name"`
 				Capacity *int    `json:"capacity"`
 			} `json:"sku"`
@@ -161,10 +165,15 @@ func (h *Handler) service(w http.ResponseWriter, r *http.Request, rt route) {
 				PublisherEmail *string `json:"publisherEmail"`
 			} `json:"properties"`
 		}
-		if err := decode(r, &body); err != nil {
+		var patch map[string]any
+		if err := decodeDocument(r, &body, &patch); err != nil {
 			writeError(w, http.StatusBadRequest, "InvalidRequestContent", err.Error(), "")
 			return
 		}
+		if got.Document == nil {
+			got.Document = serviceWire(got)
+		}
+		mergeObject(got.Document, patch)
 		if body.SKU.Name != nil {
 			got.SKUName = *body.SKU.Name
 		}
@@ -446,7 +455,28 @@ func OperationStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func serviceWire(v model.Service) map[string]any {
-	return map[string]any{"id": v.ID(), "name": v.Name, "type": "Microsoft.ApiManagement/service", "location": v.Location, "etag": v.ETag, "sku": map[string]any{"name": v.SKUName, "capacity": v.SKUCapacity}, "properties": map[string]any{"publisherName": v.PublisherName, "publisherEmail": v.PublisherEmail, "provisioningState": v.ProvisioningState, "gatewayUrl": "https://" + v.Name + ".azure-api.localhost", "developerPortalUrl": "https://" + v.Name + ".portal.azure-api.localhost"}}
+	result := cloneObject(v.Document)
+	result["id"] = v.ID()
+	result["name"] = v.Name
+	result["type"] = "Microsoft.ApiManagement/service"
+	result["location"] = v.Location
+	result["etag"] = v.ETag
+	result["sku"] = map[string]any{"name": v.SKUName, "capacity": v.SKUCapacity}
+	properties, ok := result["properties"].(map[string]any)
+	if !ok {
+		properties = map[string]any{}
+		result["properties"] = properties
+	}
+	properties["publisherName"] = v.PublisherName
+	properties["publisherEmail"] = v.PublisherEmail
+	properties["provisioningState"] = v.ProvisioningState
+	properties["gatewayUrl"] = "https://" + v.Name + ".azure-api.localhost"
+	properties["gatewayRegionalUrl"] = "https://" + v.Name + ".azure-api.localhost"
+	properties["developerPortalUrl"] = "https://" + v.Name + ".portal.azure-api.localhost"
+	properties["portalUrl"] = "https://" + v.Name + ".portal.azure-api.localhost"
+	properties["managementApiUrl"] = "https://" + v.Name + ".management.azure-api.localhost"
+	properties["scmUrl"] = "https://" + v.Name + ".scm.azure-api.localhost"
+	return result
 }
 func apiWire(v model.API) map[string]any {
 	return map[string]any{"id": v.ID(), "name": v.Name, "type": "Microsoft.ApiManagement/service/apis", "properties": map[string]any{"displayName": v.DisplayName, "path": v.Path, "serviceUrl": v.ServiceURL, "protocols": v.Protocols, "subscriptionRequired": v.SubscriptionRequired, "apiRevision": "1", "isCurrent": true}}
@@ -473,6 +503,40 @@ func decode(r *http.Request, value any) error {
 		return fmt.Errorf("malformed request body: %w", err)
 	}
 	return nil
+}
+func decodeDocument(r *http.Request, value any, document *map[string]any) error {
+	if err := json.NewDecoder(r.Body).Decode(document); err != nil {
+		return fmt.Errorf("malformed request body: %w", err)
+	}
+	encoded, _ := json.Marshal(*document)
+	_ = json.Unmarshal(encoded, value)
+	return nil
+}
+func mergeObject(target, patch map[string]any) {
+	for key, value := range patch {
+		if value == nil {
+			delete(target, key)
+			continue
+		}
+		patchObject, patchIsObject := value.(map[string]any)
+		targetObject, targetIsObject := target[key].(map[string]any)
+		if patchIsObject && targetIsObject {
+			mergeObject(targetObject, patchObject)
+			continue
+		}
+		target[key] = value
+	}
+}
+func cloneObject(source map[string]any) map[string]any {
+	result := make(map[string]any, len(source))
+	for key, value := range source {
+		if object, ok := value.(map[string]any); ok {
+			result[key] = cloneObject(object)
+			continue
+		}
+		result[key] = value
+	}
+	return result
 }
 func writeResource(w http.ResponseWriter, status int, value any, etag string) {
 	if etag != "" {
