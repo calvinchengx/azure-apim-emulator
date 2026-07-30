@@ -1,0 +1,20 @@
+{
+  "apiVersion": "2024-05-01",
+  "source": "https://github.com/Azure/azure-rest-api-specs/blob/main/specification/apimanagement/resource-manager/Microsoft.ApiManagement/ApiManagement/stable/2024-05-01/apimdeployment.json",
+  "resourceFields": ["etag", "id", "identity", "location", "name", "properties", "sku", "systemData", "tags", "type", "zones"],
+  "propertyFields": [
+    "additionalLocations", "apiVersionConstraint", "certificates", "configurationApi", "createdAtUtc",
+    "customProperties", "developerPortalStatus", "developerPortalUrl", "disableGateway", "enableClientCertificate",
+    "gatewayRegionalUrl", "gatewayUrl", "hostnameConfigurations", "legacyPortalStatus", "managementApiUrl",
+    "natGatewayState", "notificationSenderEmail", "outboundPublicIPAddresses", "platformVersion", "portalUrl",
+    "privateEndpointConnections", "privateIPAddresses", "provisioningState", "publicIPAddresses", "publicIpAddressId",
+    "publicNetworkAccess", "publisherEmail", "publisherName", "restore", "scmUrl", "targetProvisioningState",
+    "virtualNetworkConfiguration", "virtualNetworkType"
+  ],
+  "writablePropertyFields": [
+    "additionalLocations", "apiVersionConstraint", "certificates", "configurationApi", "customProperties",
+    "disableGateway", "enableClientCertificate", "hostnameConfigurations", "natGatewayState", "notificationSenderEmail",
+    "publicIpAddressId", "publicNetworkAccess", "publisherEmail", "publisherName", "restore",
+    "virtualNetworkConfiguration", "virtualNetworkType"
+  ]
+}

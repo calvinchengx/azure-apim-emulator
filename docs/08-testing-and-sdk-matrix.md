@@ -85,6 +85,13 @@ Differential fixtures record:
 Tests that incur cost or require scarce tiers are scheduled, budgeted, and kept
 outside ordinary pull-request CI. Sanitized golden outputs remain in the repository.
 
+The P0 service differential is non-destructive. Set
+`APIM_AZURE_SERVICE_URL` to an existing service resource URL and
+`APIM_AZURE_BEARER_TOKEN` to an authorized ARM token, then run
+`make test-differential`. The test reads Azure, checks the dated schema
+inventory, replays that document into an isolated emulator, and compares the
+writable projection without changing Azure.
+
 ## Deterministic controls
 
 `/_emulator` supports:

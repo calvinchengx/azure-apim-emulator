@@ -17,6 +17,7 @@ nav:
   - Portal and workspaces: 06-portal-workspaces-platform.md
   - Identity and networking: 07-identity-networking-observability.md
   - Testing and SDKs: 08-testing-and-sdk-matrix.md
+  - Generated service schema: generated/service-schema-2024-05-01.md
   - Roadmap: 09-roadmap.md
   - Risks: 10-risk-register.md
   - Clean-room grounding: 11-clean-room-grounding.md

@@ -12,7 +12,7 @@ Microsoft SDKs and differential tests against Azure APIM.
 
 - Go process, pure-Go SQLite, controllable clock, local TLS, and seeded service
 - ARM token validation against `entra-emulator`
-- service GET/PUT/DELETE with deterministic LRO polling
+- lossless service GET/PUT/PATCH/DELETE/list with deterministic LRO polling
 - API, operation, product, product/API link, subscription, and API-policy writes
 - XML compilation for `base`, `set-header`, `set-backend-service`,
   `rewrite-uri`, `forward-request`, and `return-response`
@@ -24,8 +24,9 @@ Microsoft SDKs and differential tests against Azure APIM.
   workflows that configure a service, protected API, operation, and subscription,
   then call the API through the gateway
 
-The remaining P0 resource semantics and distribution work are still pending;
-see the live parity ledger.
+The P0 Azure differential harness is ready; a live authorized Azure run remains
+before the service lifecycle can be classified as externally verified. See the
+live parity ledger.
 
 ## Development
 
@@ -34,6 +35,7 @@ APIM_DISABLE_AUTH=true go run ./cmd/azure-apim-emulator --disable-tls
 go test ./...
 make test-coverage
 make setup-sdks test-sdks
+make test-differential
 ```
 
 The default listener is `http://localhost:8445` in this development mode. ARM

@@ -11,7 +11,7 @@ Goal: prove the architecture before broad resource work.
 - [x] Go module, command, config, controllable clock, request IDs, SQLite migrations, TLS, and host routing.
 - [x] Embeddable `pkg/emulator` test fixture with isolated state, HTTP/TLS modes, trusted client, lifecycle cleanup, and configuration options.
 - [x] ARM auth against `entra-emulator` and canonical ARM errors for the implemented resources.
-- [ ] Pre-seeded service plus full service GET/PUT/PATCH/DELETE/list semantics. Core publisher/SKU fields, resource-group/subscription lists, idempotent deletion, create/update status, body ETags, and deterministic LRO polling are working; the complete service schema and Azure differential fixtures remain.
+- [ ] Pre-seeded service plus full service GET/PUT/PATCH/DELETE/list semantics. The complete stable `2024-05-01` document is retained losslessly; resource-group/subscription lists, recursive PATCH, idempotent deletion, create/update status, body ETags, deterministic LRO polling, a dated schema inventory, and a read-only differential harness are working. An authorized live Azure fixture remains before external verification.
 - [x] Minimal API, operation, policy, product, product/API link, and subscription resources.
 - [x] Four-SDK custom-endpoint spike: Go `armapimanagement v1.1.1`, JavaScript `@azure/arm-apimanagement 10.0.0`, Python `azure-mgmt-apimanagement 5.0.0`, and .NET `Azure.ResourceManager.ApiManagement 1.3.1`.
 - [x] HTTP route to fixture backend, subscription-key validation, `forward-request`, `set-header`, and `return-response`.

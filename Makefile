@@ -1,4 +1,4 @@
-.PHONY: build docs test test-coverage test-sdks setup-sdks verify
+.PHONY: build docs test test-coverage test-differential test-sdks setup-sdks verify
 
 build:
 	go build ./...
@@ -9,6 +9,9 @@ test:
 test-coverage:
 	go test -coverpkg=./... -coverprofile=cover.out ./...
 	go tool cover -func=cover.out | awk '/^total:/ { print; if ($$3 != "100.0%") exit 1 }'
+
+test-differential:
+	go test -count=1 -v ./e2e/differential
 
 setup-sdks:
 	npm install --prefix e2e/javascript
