@@ -1,0 +1,9 @@
+.git
+.github
+data
+dist
+cover.out
+e2e/javascript/node_modules
+e2e/python/.venv
+e2e/dotnet/bin
+e2e/dotnet/obj

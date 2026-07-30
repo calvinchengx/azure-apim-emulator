@@ -16,7 +16,7 @@ Goal: prove the architecture before broad resource work.
 - [x] Four-SDK custom-endpoint spike: Go `armapimanagement v1.1.1`, JavaScript `@azure/arm-apimanagement 10.0.0`, Python `azure-mgmt-apimanagement 5.0.0`, and .NET `Azure.ResourceManager.ApiManagement 1.3.1`.
 - [x] HTTP route to fixture backend, subscription-key validation, `forward-request`, `set-header`, and `return-response`.
 - [x] Policy XML round-trip, immutable snapshot compiler, last-known-good failed-compile protection, and bounded structured gateway traces.
-- [ ] CI, coverage floor, GoReleaser skeleton, container, compose, and initial docs site.
+- [x] CI, 100% coverage gate, GoReleaser skeleton, non-root distroless container, Compose, and initial MkDocs site.
 
 Exit: every SDK creates/configures a service and a subscription-protected API,
 then calls it through the gateway with Entra-authenticated management.

@@ -1,4 +1,4 @@
-.PHONY: build test test-coverage test-sdks setup-sdks verify
+.PHONY: build docs test test-coverage test-sdks setup-sdks verify
 
 build:
 	go build ./...
@@ -18,6 +18,9 @@ setup-sdks:
 
 test-sdks:
 	APIM_RUN_EXTERNAL_SDK_TESTS=1 go test -v ./e2e/sdk
+
+docs:
+	mkdocs build --strict
 
 verify: build test test-coverage
 	go vet ./...
