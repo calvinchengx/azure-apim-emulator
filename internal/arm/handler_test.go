@@ -138,16 +138,39 @@ func TestServiceLists(t *testing.T) {
 func TestAPIBranches(t *testing.T) {
 	handler, st := testHandler(t)
 	seedService(t, st)
-	assertStatus(t, handler, http.MethodGet, basePath+"/apis"+apiQuery, "", http.StatusNotFound)
+	assertStatus(t, handler, http.MethodGet, basePath+"/apis"+apiQuery, "", http.StatusOK)
+	assertStatus(t, handler, http.MethodPost, basePath+"/apis"+apiQuery, "", http.StatusMethodNotAllowed)
 	assertStatus(t, handler, http.MethodGet, basePath+"/apis/missing"+apiQuery, "", http.StatusNotFound)
 	assertStatus(t, handler, http.MethodPut, basePath+"/apis/a"+apiQuery, `{`, http.StatusBadRequest)
 	assertStatus(t, handler, http.MethodPut, basePath+"/apis/a"+apiQuery, `{"properties":{"displayName":"A"}}`, http.StatusBadRequest)
 	assertStatus(t, handler, http.MethodPut, basePath+"/apis/a"+apiQuery, `{"properties":{"displayName":"A","path":"a","serviceUrl":"https://backend"}}`, http.StatusCreated)
+	assertStatus(t, handler, http.MethodPut, basePath+"/apis/a"+apiQuery, `{"properties":{"displayName":"A","path":"a","serviceUrl":"https://backend","protocols":["https"],"subscriptionRequired":false}}`, http.StatusOK)
+	assertStatus(t, handler, http.MethodPatch, basePath+"/apis/missing"+apiQuery, `{}`, http.StatusNotFound)
+	assertStatus(t, handler, http.MethodPatch, basePath+"/apis/a"+apiQuery, `{`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPatch, basePath+"/apis/a"+apiQuery, `{"properties":{"displayName":"Updated","path":"updated","serviceUrl":"https://updated","protocols":["http","https"],"subscriptionRequired":true}}`, http.StatusOK)
 	assertStatus(t, handler, http.MethodGet, basePath+"/apis/a"+apiQuery, "", http.StatusOK)
+	list := request(t, handler, http.MethodGet, basePath+"/apis"+apiQuery, "")
+	if strings.Count(list.Body.String(), `"type":"Microsoft.ApiManagement/service/apis"`) != 1 || !strings.Contains(list.Body.String(), `"displayName":"Updated"`) {
+		t.Fatalf("API list = %s", list.Body.String())
+	}
+	assertStatus(t, handler, http.MethodPost, basePath+"/apis/a"+apiQuery, `{}`, http.StatusMethodNotAllowed)
 
+	assertStatus(t, handler, http.MethodGet, basePath+"/apis/a/operations"+apiQuery, "", http.StatusOK)
+	assertStatus(t, handler, http.MethodPost, basePath+"/apis/a/operations"+apiQuery, "", http.StatusMethodNotAllowed)
+	assertStatus(t, handler, http.MethodGet, basePath+"/apis/a/operations/missing"+apiQuery, "", http.StatusNotFound)
 	assertStatus(t, handler, http.MethodPut, basePath+"/apis/a/operations/get"+apiQuery, `{`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPut, basePath+"/apis/a/operations/get"+apiQuery, `{"properties":{"displayName":"Get"}}`, http.StatusBadRequest)
 	assertStatus(t, handler, http.MethodPut, basePath+"/apis/a/operations/get"+apiQuery, `{"properties":{"displayName":"Get","method":"GET","urlTemplate":"/"}}`, http.StatusCreated)
-	assertStatus(t, handler, http.MethodPost, basePath+"/apis/a/operations/get"+apiQuery, `{}`, http.StatusNotFound)
+	assertStatus(t, handler, http.MethodPut, basePath+"/apis/a/operations/get"+apiQuery, `{"properties":{"displayName":"Get","method":"GET","urlTemplate":"/"}}`, http.StatusOK)
+	assertStatus(t, handler, http.MethodPatch, basePath+"/apis/a/operations/missing"+apiQuery, `{}`, http.StatusNotFound)
+	assertStatus(t, handler, http.MethodPatch, basePath+"/apis/a/operations/get"+apiQuery, `{`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPatch, basePath+"/apis/a/operations/get"+apiQuery, `{"properties":{"displayName":"Updated","method":"POST","urlTemplate":"/updated"}}`, http.StatusOK)
+	assertStatus(t, handler, http.MethodGet, basePath+"/apis/a/operations/get"+apiQuery, "", http.StatusOK)
+	list = request(t, handler, http.MethodGet, basePath+"/apis/a/operations"+apiQuery, "")
+	if strings.Count(list.Body.String(), `"type":"Microsoft.ApiManagement/service/apis/operations"`) != 1 || !strings.Contains(list.Body.String(), `"method":"POST"`) {
+		t.Fatalf("operation list = %s", list.Body.String())
+	}
+	assertStatus(t, handler, http.MethodPost, basePath+"/apis/a/operations/get"+apiQuery, `{}`, http.StatusMethodNotAllowed)
 
 	assertStatus(t, handler, http.MethodPut, basePath+"/apis/a/policies/policy"+apiQuery, `{`, http.StatusBadRequest)
 	assertStatus(t, handler, http.MethodGet, basePath+"/apis/a/policies/policy"+apiQuery, "", http.StatusNotFound)
@@ -168,6 +191,12 @@ func TestAPIBranches(t *testing.T) {
 	assertStatus(t, handler, http.MethodPut, basePath+"/apis/a"+apiQuery, `{"properties":{"displayName":"A","path":"a","serviceUrl":"https://backend"}}`, http.StatusBadRequest)
 	assertStatus(t, handler, http.MethodPut, basePath+"/apis/a/operations/two"+apiQuery, `{"properties":{"displayName":"Two","method":"GET","urlTemplate":"/two"}}`, http.StatusBadRequest)
 	assertStatus(t, handler, http.MethodPut, basePath+"/apis/a/policies/policy"+apiQuery, `{"properties":{"value":"<policies/>"}}`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodDelete, basePath+"/apis/a/operations/get"+apiQuery, "", http.StatusInternalServerError)
+	assertStatus(t, handler, http.MethodDelete, basePath+"/apis/a"+apiQuery, "", http.StatusInternalServerError)
+	handler.Activate = nil
+	assertStatus(t, handler, http.MethodDelete, basePath+"/apis/a/operations/get"+apiQuery, "", http.StatusNoContent)
+	assertStatus(t, handler, http.MethodDelete, basePath+"/apis/a"+apiQuery, "", http.StatusNoContent)
+	assertStatus(t, handler, http.MethodDelete, basePath+"/apis/a"+apiQuery, "", http.StatusNoContent)
 }
 
 func TestProductAndSubscriptionBranches(t *testing.T) {
@@ -219,12 +248,17 @@ func TestClosedStoreWriteErrors(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertStatus(t, handler, http.MethodPut, basePath+apiQuery, `{"location":"local","properties":{"publisherName":"Local","publisherEmail":"local@example.test"}}`, http.StatusConflict)
+	assertStatus(t, handler, http.MethodPut, basePath+"/apis/a"+apiQuery, `{"properties":{"displayName":"A","serviceUrl":"https://backend"}}`, http.StatusConflict)
 	assertStatus(t, handler, http.MethodPut, basePath+"/apis/a/operations/get"+apiQuery, `{"properties":{"method":"GET","urlTemplate":"/"}}`, http.StatusConflict)
 	assertStatus(t, handler, http.MethodPut, basePath+"/apis/a/policies/policy"+apiQuery, `{"properties":{"value":"<policies/>"}}`, http.StatusConflict)
 	assertStatus(t, handler, http.MethodGet, basePath+"/apis/a/policies/policy"+apiQuery, "", http.StatusConflict)
 	assertStatus(t, handler, http.MethodPut, basePath+"/products/p/apis/a"+apiQuery, `{}`, http.StatusConflict)
 	assertStatus(t, handler, http.MethodDelete, basePath+apiQuery, "", http.StatusConflict)
 	assertStatus(t, handler, http.MethodGet, "/subscriptions/sub/providers/Microsoft.ApiManagement/service"+apiQuery, "", http.StatusConflict)
+	assertStatus(t, handler, http.MethodGet, basePath+"/apis"+apiQuery, "", http.StatusConflict)
+	assertStatus(t, handler, http.MethodGet, basePath+"/apis/a/operations"+apiQuery, "", http.StatusConflict)
+	assertStatus(t, handler, http.MethodDelete, basePath+"/apis/a"+apiQuery, "", http.StatusConflict)
+	assertStatus(t, handler, http.MethodDelete, basePath+"/apis/a/operations/get"+apiQuery, "", http.StatusConflict)
 }
 
 func TestServiceStoreWriteErrors(t *testing.T) {

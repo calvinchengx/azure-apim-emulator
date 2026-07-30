@@ -236,79 +236,48 @@ func (h *Handler) listServices(w http.ResponseWriter, r *http.Request, rt route)
 }
 
 func (h *Handler) api(w http.ResponseWriter, r *http.Request, rt route) {
-	if len(rt.Tail) < 2 {
-		writeError(w, http.StatusNotFound, "ResourceNotFound", "API identifier is required.", "")
-		return
-	}
 	service := model.Service{SubscriptionID: rt.SubscriptionID, ResourceGroup: rt.ResourceGroup, Name: rt.ServiceName}
+	if len(rt.Tail) == 1 {
+		if r.Method != http.MethodGet {
+			methodNotAllowed(w)
+			return
+		}
+		values, err := h.Store.ListAPIs(service.ID())
+		if err != nil {
+			h.storeError(w, err, service.ID())
+			return
+		}
+		resources := make([]map[string]any, 0, len(values))
+		for _, value := range values {
+			resources = append(resources, apiWire(value))
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"value": resources})
+		return
+	}
 	api := model.API{ServiceID: service.ID(), Name: rt.Tail[1]}
-	if len(rt.Tail) == 2 && r.Method == http.MethodGet {
-		got, err := h.Store.GetAPI(api.ID())
-		if err != nil {
-			h.storeError(w, err, api.ID())
-			return
-		}
-		writeResource(w, http.StatusOK, apiWire(got), got.ETag)
+	if len(rt.Tail) == 2 {
+		h.apiResource(w, r, api)
 		return
 	}
-	if len(rt.Tail) == 2 && r.Method == http.MethodPut {
-		var body struct {
-			Properties struct {
-				DisplayName          string   `json:"displayName"`
-				Path                 string   `json:"path"`
-				ServiceURL           string   `json:"serviceUrl"`
-				Protocols            []string `json:"protocols"`
-				SubscriptionRequired *bool    `json:"subscriptionRequired"`
-			} `json:"properties"`
-		}
-		if err := decode(r, &body); err != nil {
-			writeError(w, http.StatusBadRequest, "InvalidRequestContent", err.Error(), "")
+	if len(rt.Tail) == 3 && equal(rt.Tail[2], "operations") {
+		if r.Method != http.MethodGet {
+			methodNotAllowed(w)
 			return
 		}
-		api.DisplayName, api.Path, api.ServiceURL, api.Protocols = body.Properties.DisplayName, body.Properties.Path, body.Properties.ServiceURL, body.Properties.Protocols
-		api.SubscriptionRequired = true
-		if body.Properties.SubscriptionRequired != nil {
-			api.SubscriptionRequired = *body.Properties.SubscriptionRequired
-		}
-		if api.DisplayName == "" || api.ServiceURL == "" {
-			writeError(w, http.StatusBadRequest, "ValidationError", "displayName and serviceUrl are required.", "properties")
-			return
-		}
-		got, err := h.Store.UpsertAPI(api)
+		values, err := h.Store.ListOperations(api.ID())
 		if err != nil {
 			h.storeError(w, err, api.ID())
 			return
 		}
-		if err := h.activate(); err != nil {
-			writeError(w, http.StatusBadRequest, "ConfigurationInvalid", err.Error(), api.ID())
-			return
+		resources := make([]map[string]any, 0, len(values))
+		for _, value := range values {
+			resources = append(resources, operationWire(value))
 		}
-		writeResource(w, http.StatusCreated, apiWire(got), got.ETag)
+		writeJSON(w, http.StatusOK, map[string]any{"value": resources})
 		return
 	}
-	if len(rt.Tail) == 4 && equal(rt.Tail[2], "operations") && r.Method == http.MethodPut {
-		var body struct {
-			Properties struct {
-				DisplayName string `json:"displayName"`
-				Method      string `json:"method"`
-				URLTemplate string `json:"urlTemplate"`
-			} `json:"properties"`
-		}
-		if err := decode(r, &body); err != nil {
-			writeError(w, http.StatusBadRequest, "InvalidRequestContent", err.Error(), "")
-			return
-		}
-		operation := model.Operation{APIID: api.ID(), Name: rt.Tail[3], DisplayName: body.Properties.DisplayName, Method: body.Properties.Method, URLTemplate: body.Properties.URLTemplate}
-		got, err := h.Store.UpsertOperation(operation)
-		if err != nil {
-			h.storeError(w, err, api.ID())
-			return
-		}
-		if err := h.activate(); err != nil {
-			writeError(w, http.StatusBadRequest, "ConfigurationInvalid", err.Error(), api.ID())
-			return
-		}
-		writeResource(w, http.StatusCreated, operationWire(got), got.ETag)
+	if len(rt.Tail) == 4 && equal(rt.Tail[2], "operations") {
+		h.operationResource(w, r, model.Operation{APIID: api.ID(), Name: rt.Tail[3]})
 		return
 	}
 	if len(rt.Tail) == 4 && equal(rt.Tail[2], "policies") && equal(rt.Tail[3], "policy") && r.Method == http.MethodGet {
@@ -350,6 +319,179 @@ func (h *Handler) api(w http.ResponseWriter, r *http.Request, rt route) {
 		return
 	}
 	writeError(w, http.StatusNotFound, "ResourceNotFound", "The requested API resource was not found.", r.URL.Path)
+}
+
+type apiPayload struct {
+	Properties struct {
+		DisplayName          *string   `json:"displayName"`
+		Path                 *string   `json:"path"`
+		ServiceURL           *string   `json:"serviceUrl"`
+		Protocols            *[]string `json:"protocols"`
+		SubscriptionRequired *bool     `json:"subscriptionRequired"`
+	} `json:"properties"`
+}
+
+func (h *Handler) apiResource(w http.ResponseWriter, r *http.Request, api model.API) {
+	switch r.Method {
+	case http.MethodGet:
+		got, err := h.Store.GetAPI(api.ID())
+		if err != nil {
+			h.storeError(w, err, api.ID())
+			return
+		}
+		writeResource(w, http.StatusOK, apiWire(got), got.ETag)
+	case http.MethodPut, http.MethodPatch:
+		existing, existingErr := h.Store.GetAPI(api.ID())
+		if existingErr != nil && !errors.Is(existingErr, store.ErrNotFound) {
+			h.storeError(w, existingErr, api.ID())
+			return
+		}
+		if r.Method == http.MethodPatch {
+			if existingErr != nil {
+				h.storeError(w, existingErr, api.ID())
+				return
+			}
+			api = existing
+		} else {
+			api.SubscriptionRequired = true
+		}
+		var body apiPayload
+		if err := decode(r, &body); err != nil {
+			writeError(w, http.StatusBadRequest, "InvalidRequestContent", err.Error(), "")
+			return
+		}
+		applyAPIPayload(&api, body)
+		if api.DisplayName == "" || api.ServiceURL == "" {
+			writeError(w, http.StatusBadRequest, "ValidationError", "displayName and serviceUrl are required.", "properties")
+			return
+		}
+		got, err := h.Store.UpsertAPI(api)
+		if err != nil {
+			h.storeError(w, err, api.ID())
+			return
+		}
+		if err := h.activate(); err != nil {
+			writeError(w, http.StatusBadRequest, "ConfigurationInvalid", err.Error(), api.ID())
+			return
+		}
+		status := http.StatusOK
+		if r.Method == http.MethodPut && errors.Is(existingErr, store.ErrNotFound) {
+			status = http.StatusCreated
+		}
+		writeResource(w, status, apiWire(got), got.ETag)
+	case http.MethodDelete:
+		if err := h.Store.DeleteAPI(api.ID()); err != nil && !errors.Is(err, store.ErrNotFound) {
+			h.storeError(w, err, api.ID())
+			return
+		}
+		if err := h.activate(); err != nil {
+			writeError(w, http.StatusInternalServerError, "ConfigurationInvalid", err.Error(), api.ID())
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	default:
+		methodNotAllowed(w)
+	}
+}
+
+func applyAPIPayload(api *model.API, body apiPayload) {
+	if body.Properties.DisplayName != nil {
+		api.DisplayName = *body.Properties.DisplayName
+	}
+	if body.Properties.Path != nil {
+		api.Path = *body.Properties.Path
+	}
+	if body.Properties.ServiceURL != nil {
+		api.ServiceURL = *body.Properties.ServiceURL
+	}
+	if body.Properties.Protocols != nil {
+		api.Protocols = *body.Properties.Protocols
+	}
+	if body.Properties.SubscriptionRequired != nil {
+		api.SubscriptionRequired = *body.Properties.SubscriptionRequired
+	}
+}
+
+type operationPayload struct {
+	Properties struct {
+		DisplayName *string `json:"displayName"`
+		Method      *string `json:"method"`
+		URLTemplate *string `json:"urlTemplate"`
+	} `json:"properties"`
+}
+
+func (h *Handler) operationResource(w http.ResponseWriter, r *http.Request, operation model.Operation) {
+	id := operation.APIID + "/operations/" + operation.Name
+	switch r.Method {
+	case http.MethodGet:
+		got, err := h.Store.GetOperation(id)
+		if err != nil {
+			h.storeError(w, err, id)
+			return
+		}
+		writeResource(w, http.StatusOK, operationWire(got), got.ETag)
+	case http.MethodPut, http.MethodPatch:
+		existing, existingErr := h.Store.GetOperation(id)
+		if existingErr != nil && !errors.Is(existingErr, store.ErrNotFound) {
+			h.storeError(w, existingErr, id)
+			return
+		}
+		if r.Method == http.MethodPatch {
+			if existingErr != nil {
+				h.storeError(w, existingErr, id)
+				return
+			}
+			operation = existing
+		}
+		var body operationPayload
+		if err := decode(r, &body); err != nil {
+			writeError(w, http.StatusBadRequest, "InvalidRequestContent", err.Error(), "")
+			return
+		}
+		applyOperationPayload(&operation, body)
+		if operation.Method == "" || operation.URLTemplate == "" {
+			writeError(w, http.StatusBadRequest, "ValidationError", "method and urlTemplate are required.", "properties")
+			return
+		}
+		got, err := h.Store.UpsertOperation(operation)
+		if err != nil {
+			h.storeError(w, err, id)
+			return
+		}
+		if err := h.activate(); err != nil {
+			writeError(w, http.StatusBadRequest, "ConfigurationInvalid", err.Error(), id)
+			return
+		}
+		status := http.StatusOK
+		if r.Method == http.MethodPut && errors.Is(existingErr, store.ErrNotFound) {
+			status = http.StatusCreated
+		}
+		writeResource(w, status, operationWire(got), got.ETag)
+	case http.MethodDelete:
+		if err := h.Store.DeleteOperation(id); err != nil && !errors.Is(err, store.ErrNotFound) {
+			h.storeError(w, err, id)
+			return
+		}
+		if err := h.activate(); err != nil {
+			writeError(w, http.StatusInternalServerError, "ConfigurationInvalid", err.Error(), id)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	default:
+		methodNotAllowed(w)
+	}
+}
+
+func applyOperationPayload(operation *model.Operation, body operationPayload) {
+	if body.Properties.DisplayName != nil {
+		operation.DisplayName = *body.Properties.DisplayName
+	}
+	if body.Properties.Method != nil {
+		operation.Method = *body.Properties.Method
+	}
+	if body.Properties.URLTemplate != nil {
+		operation.URLTemplate = *body.Properties.URLTemplate
+	}
 }
 
 func (h *Handler) product(w http.ResponseWriter, r *http.Request, rt route) {

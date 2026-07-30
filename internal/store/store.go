@@ -173,15 +173,7 @@ func (s *Store) GetService(id string) (model.Service, error) {
 
 // DeleteService removes a service and its children.
 func (s *Store) DeleteService(id string) error {
-	result, err := s.db.Exec(`DELETE FROM services WHERE lower(id)=lower(?)`, id)
-	if err != nil {
-		return err
-	}
-	count, _ := result.RowsAffected()
-	if count == 0 {
-		return ErrNotFound
-	}
-	return nil
+	return deleteScopedResource(s.db, "services", id)
 }
 
 // ListServices returns services in stable ID order.
@@ -244,6 +236,26 @@ func (s *Store) GetAPI(id string) (model.API, error) {
 	return v, nil
 }
 
+// ListAPIs returns APIs belonging to a service in stable ID order.
+func (s *Store) ListAPIs(serviceID string) ([]model.API, error) {
+	values, err := scanAPIs(s.db)
+	if err != nil {
+		return nil, err
+	}
+	filtered := make([]model.API, 0)
+	for _, value := range values {
+		if equalID(value.ServiceID, serviceID) {
+			filtered = append(filtered, value)
+		}
+	}
+	return filtered, nil
+}
+
+// DeleteAPI removes an API and its children.
+func (s *Store) DeleteAPI(id string) error {
+	return deleteScopedResource(s.db, "apis", id)
+}
+
 // UpsertOperation creates or replaces an operation.
 func (s *Store) UpsertOperation(v model.Operation) (model.Operation, error) {
 	v.ETag = newETag()
@@ -254,6 +266,38 @@ func (s *Store) UpsertOperation(v model.Operation) (model.Operation, error) {
       url_template=excluded.url_template, etag=excluded.etag`, id, v.APIID, v.Name,
 		v.DisplayName, strings.ToUpper(v.Method), v.URLTemplate, v.ETag)
 	return v, err
+}
+
+// GetOperation finds one operation by ARM ID.
+func (s *Store) GetOperation(id string) (model.Operation, error) {
+	var v model.Operation
+	err := s.db.QueryRow(`SELECT api_id, name, display_name, method, url_template, etag
+	    FROM operations WHERE lower(id)=lower(?)`, id).
+		Scan(&v.APIID, &v.Name, &v.DisplayName, &v.Method, &v.URLTemplate, &v.ETag)
+	if errors.Is(err, sql.ErrNoRows) {
+		return model.Operation{}, ErrNotFound
+	}
+	return v, err
+}
+
+// ListOperations returns operations belonging to an API in stable ID order.
+func (s *Store) ListOperations(apiID string) ([]model.Operation, error) {
+	values, err := scanOperations(s.db)
+	if err != nil {
+		return nil, err
+	}
+	filtered := make([]model.Operation, 0)
+	for _, value := range values {
+		if equalID(value.APIID, apiID) {
+			filtered = append(filtered, value)
+		}
+	}
+	return filtered, nil
+}
+
+// DeleteOperation removes an operation.
+func (s *Store) DeleteOperation(id string) error {
+	return deleteScopedResource(s.db, "operations", id)
 }
 
 // UpsertProduct creates or replaces a product.
@@ -451,3 +495,25 @@ func scanPolicies(db *sql.DB) ([]model.Policy, error) {
 	}
 	return values, rows.Err()
 }
+
+func deleteScopedResource(db *sql.DB, table, id string) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`DELETE FROM policies WHERE lower(scope_id)=lower(?) OR lower(scope_id) LIKE lower(?)`, id, id+"/%"); err != nil {
+		return err
+	}
+	result, err := tx.Exec(`DELETE FROM `+table+` WHERE lower(id)=lower(?)`, id)
+	if err != nil {
+		return err
+	}
+	count, _ := result.RowsAffected()
+	if count == 0 {
+		return ErrNotFound
+	}
+	return tx.Commit()
+}
+
+func equalID(left, right string) bool { return strings.EqualFold(left, right) }

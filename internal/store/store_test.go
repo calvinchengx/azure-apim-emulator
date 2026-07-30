@@ -117,6 +117,104 @@ func TestOpenMemoryIsolationAndIDs(t *testing.T) {
 	}
 }
 
+func TestAPIAndOperationLifecycle(t *testing.T) {
+	st, err := Open("", clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	service, err := st.UpsertService(model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "svc"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	api, err := st.UpsertAPI(model.API{ServiceID: service.ID(), Name: "api", DisplayName: "API", ServiceURL: "https://backend"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := st.UpsertAPI(model.API{ServiceID: service.ID(), Name: "other", DisplayName: "Other", ServiceURL: "https://backend"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	operation, err := st.UpsertOperation(model.Operation{APIID: api.ID(), Name: "get", Method: "GET", URLTemplate: "/"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.UpsertOperation(model.Operation{APIID: other.ID(), Name: "other", Method: "GET", URLTemplate: "/"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.UpsertPolicy(model.Policy{ScopeID: api.ID(), Value: "<policies/>"}); err != nil {
+		t.Fatal(err)
+	}
+
+	apis, err := st.ListAPIs(strings.ToUpper(service.ID()))
+	if err != nil || len(apis) != 2 {
+		t.Fatalf("ListAPIs = %#v, %v", apis, err)
+	}
+	operations, err := st.ListOperations(strings.ToUpper(api.ID()))
+	if err != nil || len(operations) != 1 || operations[0].Name != "get" {
+		t.Fatalf("ListOperations = %#v, %v", operations, err)
+	}
+	got, err := st.GetOperation(strings.ToUpper(operation.APIID + "/operations/" + operation.Name))
+	if err != nil || got.Method != "GET" {
+		t.Fatalf("GetOperation = %#v, %v", got, err)
+	}
+	if _, err := st.GetOperation("/missing"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing operation = %v", err)
+	}
+	if err := st.DeleteAPI(api.ID()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.GetOperation(operation.APIID + "/operations/" + operation.Name); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("operation survived API deletion: %v", err)
+	}
+	if _, err := st.GetPolicy(api.ID()); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("policy survived API deletion: %v", err)
+	}
+	if err := st.DeleteOperation(other.ID() + "/operations/other"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.DeleteOperation(other.ID() + "/operations/other"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("second operation delete = %v", err)
+	}
+}
+
+func TestScopedDeleteRollsBackFailures(t *testing.T) {
+	st, err := Open("", clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	service, err := st.UpsertService(model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "svc"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	api, err := st.UpsertAPI(model.API{ServiceID: service.ID(), Name: "api", DisplayName: "API", ServiceURL: "https://backend"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.UpsertPolicy(model.Policy{ScopeID: api.ID(), Value: "<policies/>"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.db.Exec(`CREATE TRIGGER reject_policy_delete BEFORE DELETE ON policies BEGIN SELECT RAISE(FAIL, 'rejected'); END`); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.DeleteAPI(api.ID()); err == nil {
+		t.Fatal("policy delete failure was ignored")
+	}
+	if _, err := st.GetAPI(api.ID()); err != nil {
+		t.Fatalf("API was not rolled back: %v", err)
+	}
+	if _, err := st.db.Exec(`DROP TRIGGER reject_policy_delete; CREATE TRIGGER reject_api_delete BEFORE DELETE ON apis BEGIN SELECT RAISE(FAIL, 'rejected'); END`); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.DeleteAPI(api.ID()); err == nil {
+		t.Fatal("API delete failure was ignored")
+	}
+	if _, err := st.GetPolicy(api.ID()); err != nil {
+		t.Fatalf("policy deletion was not rolled back: %v", err)
+	}
+}
+
 func TestOpenAndOpaqueIDFailures(t *testing.T) {
 	oldOpen, oldRead := openDB, readRandom
 	t.Cleanup(func() {
