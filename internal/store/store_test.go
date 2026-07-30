@@ -450,6 +450,80 @@ func TestUpsertAPITransactionErrors(t *testing.T) {
 	})
 }
 
+func TestCloneAPIRevisionTransactions(t *testing.T) {
+	newSource := func(t *testing.T) (*Store, model.API) {
+		t.Helper()
+		st, err := Open("", clock.New())
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = st.Close() })
+		service, err := st.UpsertService(model.Service{Name: "svc"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		api, err := st.UpsertAPI(model.API{ServiceID: service.ID(), Name: "api", DisplayName: "API", ServiceURL: "https://backend"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := st.UpsertOperation(model.Operation{APIID: api.ID(), Name: "get", Method: "GET", URLTemplate: "/"}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := st.UpsertPolicy(model.Policy{ScopeID: api.ID(), Value: "<policies/>"}); err != nil {
+			t.Fatal(err)
+		}
+		return st, api
+	}
+
+	t.Run("default revision", func(t *testing.T) {
+		st, source := newSource(t)
+		target := source
+		target.Name, target.Revision = "api;rev=2", ""
+		cloned, err := st.CloneAPIRevision(source.ID(), target)
+		if err != nil || cloned.Revision != "2" || cloned.IsCurrent {
+			t.Fatalf("cloned API = %+v, %v", cloned, err)
+		}
+	})
+
+	t.Run("begin", func(t *testing.T) {
+		st, source := newSource(t)
+		_ = st.Close()
+		if _, err := st.CloneAPIRevision(source.ID(), source); err == nil {
+			t.Fatal("closed store cloned revision")
+		}
+	})
+
+	t.Run("api row", func(t *testing.T) {
+		st, source := newSource(t)
+		target := source
+		target.ServiceID, target.Name = "/missing", "api;rev=2"
+		if _, err := st.CloneAPIRevision(source.ID(), target); err == nil {
+			t.Fatal("invalid API row was cloned")
+		}
+	})
+
+	for _, test := range []struct{ name, trigger string }{
+		{"metadata", `CREATE TRIGGER reject_clone_metadata BEFORE INSERT ON api_revision_metadata WHEN NEW.revision='2' BEGIN SELECT RAISE(FAIL, 'rejected'); END`},
+		{"operations", `CREATE TRIGGER reject_clone_operation BEFORE INSERT ON operations WHEN NEW.api_id LIKE '%;rev=2' BEGIN SELECT RAISE(FAIL, 'rejected'); END`},
+		{"policy", `CREATE TRIGGER reject_clone_policy BEFORE INSERT ON policies WHEN NEW.scope_id LIKE '%;rev=2' BEGIN SELECT RAISE(FAIL, 'rejected'); END`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			st, source := newSource(t)
+			if _, err := st.db.Exec(test.trigger); err != nil {
+				t.Fatal(err)
+			}
+			target := source
+			target.Name, target.Revision = "api;rev=2", "2"
+			if _, err := st.CloneAPIRevision(source.ID(), target); err == nil {
+				t.Fatal("rejected revision clone succeeded")
+			}
+			if _, err := st.GetAPI(target.ID()); !errors.Is(err, ErrNotFound) {
+				t.Fatalf("revision clone was not rolled back: %v", err)
+			}
+		})
+	}
+}
+
 func TestScanFunctionsQueryErrors(t *testing.T) {
 	db, err := sql.Open("sqlite", "file:empty-scans?mode=memory&cache=shared")
 	if err != nil {

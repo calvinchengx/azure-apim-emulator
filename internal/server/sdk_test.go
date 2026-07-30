@@ -139,6 +139,28 @@ func TestGoManagementSDKConfiguresProtectedGateway(t *testing.T) {
 	}, nil); err != nil {
 		t.Fatal(err)
 	}
+	revision, revisionDescription := "2", "Go SDK cloned revision"
+	sourceAPIID := "/subscriptions/" + defaultSubscription + "/resourceGroups/" + defaultResourceGroup + "/providers/Microsoft.ApiManagement/service/emulator/apis/go-sdk-full;rev=1"
+	revisionPoller, err := apiClient.BeginCreateOrUpdate(ctx, defaultResourceGroup, "emulator", "go-sdk-full;rev=2", armapimanagement.APICreateOrUpdateParameter{
+		Properties: &armapimanagement.APICreateOrUpdateProperties{
+			SourceAPIID: &sourceAPIID, APIRevision: &revision, APIRevisionDescription: &revisionDescription,
+		},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := revisionPoller.PollUntilDone(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+	clonedOperation, err := operationClient.Get(ctx, defaultResourceGroup, "emulator", "go-sdk-full;rev=2", "get", nil)
+	if err != nil || clonedOperation.Properties == nil || clonedOperation.Properties.Method == nil || *clonedOperation.Properties.Method != method {
+		t.Fatalf("cloned revision operation = %+v, %v", clonedOperation, err)
+	}
+	revisionPager = revisionClient.NewListByServicePager(defaultResourceGroup, "emulator", "go-sdk-full", nil)
+	revisionPage, err = revisionPager.NextPage(ctx)
+	if err != nil || len(revisionPage.Value) != 2 {
+		t.Fatalf("cloned revision page = %+v, %v", revisionPage, err)
+	}
 
 	subscriptionClient, err := armapimanagement.NewSubscriptionClient(defaultSubscription, credential, options)
 	if err != nil {

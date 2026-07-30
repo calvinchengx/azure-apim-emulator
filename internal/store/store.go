@@ -248,6 +248,46 @@ func (s *Store) UpsertAPI(v model.API) (model.API, error) {
 	return v, tx.Commit()
 }
 
+// CloneAPIRevision atomically creates a revision and copies runtime-owned children.
+func (s *Store) CloneAPIRevision(sourceID string, v model.API) (model.API, error) {
+	if v.Revision == "" {
+		_, v.Revision = splitRevision(v.Name)
+	}
+	v.IsCurrent = false
+	v.ETag = newETag()
+	now := s.Clock.Now()
+	v.CreatedAt, v.UpdatedAt = now, now
+	protocols, _ := json.Marshal(v.Protocols)
+	tx, err := s.db.Begin()
+	if err != nil {
+		return v, err
+	}
+	defer tx.Rollback()
+	_, err = tx.Exec(`INSERT INTO apis
+	    (id, service_id, name, display_name, path, service_url, protocols_json, subscription_required, etag)
+	    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, v.ID(), v.ServiceID, v.Name, v.DisplayName,
+		strings.Trim(v.Path, "/"), v.ServiceURL, string(protocols), v.SubscriptionRequired, v.ETag)
+	if err != nil {
+		return v, err
+	}
+	if _, err := tx.Exec(`INSERT INTO api_revision_metadata
+	    (api_id, revision, description, is_current, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`,
+		v.ID(), v.Revision, v.RevisionDescription, false, now, now); err != nil {
+		return v, err
+	}
+	childETag := newETag()
+	if _, err := tx.Exec(`INSERT INTO operations (id, api_id, name, display_name, method, url_template, etag)
+	    SELECT ? || '/operations/' || name, ?, name, display_name, method, url_template, ?
+	    FROM operations WHERE lower(api_id)=lower(?)`, v.ID(), v.ID(), childETag, sourceID); err != nil {
+		return v, err
+	}
+	if _, err := tx.Exec(`INSERT INTO policies (scope_id, format, value, etag)
+	    SELECT ?, format, value, ? FROM policies WHERE lower(scope_id)=lower(?)`, v.ID(), newETag(), sourceID); err != nil {
+		return v, err
+	}
+	return v, tx.Commit()
+}
+
 // GetAPI finds one API by ARM ID.
 func (s *Store) GetAPI(id string) (model.API, error) {
 	var v model.API

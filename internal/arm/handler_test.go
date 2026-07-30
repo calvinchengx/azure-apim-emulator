@@ -185,12 +185,21 @@ func TestAPIBranches(t *testing.T) {
 	handler.ValidatePolicy = nil
 	assertStatus(t, handler, http.MethodPut, basePath+"/apis/a/policies/policy"+apiQuery, `{"properties":{"format":"rawxml","value":"<policies/>"}}`, http.StatusCreated)
 	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodGet, basePath+"/apis/a/policies/policy"+apiQuery, nil)
-	request.Header.Set("Authorization", "Bearer token")
-	handler.ServeHTTP(recorder, request)
+	req := httptest.NewRequest(http.MethodGet, basePath+"/apis/a/policies/policy"+apiQuery, nil)
+	req.Header.Set("Authorization", "Bearer token")
+	handler.ServeHTTP(recorder, req)
 	if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), `\u003cpolicies/\u003e`) || recorder.Header().Get("ETag") == "" {
 		t.Fatalf("policy GET = %d %s", recorder.Code, recorder.Body.String())
 	}
+	sourceID := serviceModel().ID() + "/apis/a;rev=1"
+	assertStatus(t, handler, http.MethodPut, basePath+"/apis/a;rev=3"+apiQuery, `{"properties":{"sourceApiId":"`+sourceID+`","apiRevision":"3","apiRevisionDescription":"Cloned revision"}}`, http.StatusCreated)
+	assertStatus(t, handler, http.MethodGet, basePath+"/apis/a;rev=3/operations/get"+apiQuery, "", http.StatusOK)
+	assertStatus(t, handler, http.MethodGet, basePath+"/apis/a;rev=3/policies/policy"+apiQuery, "", http.StatusOK)
+	revisions = request(t, handler, http.MethodGet, basePath+"/apis/a/revisions"+apiQuery, "")
+	if !strings.Contains(revisions.Body.String(), `"count":3`) || !strings.Contains(revisions.Body.String(), `"description":"Cloned revision"`) {
+		t.Fatalf("cloned API revision list = %s", revisions.Body.String())
+	}
+	assertStatus(t, handler, http.MethodPut, basePath+"/apis/a;rev=4"+apiQuery, `{"properties":{"sourceApiId":"/missing","apiRevision":"4"}}`, http.StatusNotFound)
 	assertStatus(t, handler, http.MethodGet, basePath+"/apis/a/policies/missing"+apiQuery, "", http.StatusNotFound)
 
 	handler.Activate = func() error { return errors.New("activation") }

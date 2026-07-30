@@ -349,6 +349,7 @@ type apiPayload struct {
 		APIRevision            *string   `json:"apiRevision"`
 		APIRevisionDescription *string   `json:"apiRevisionDescription"`
 		IsCurrent              *bool     `json:"isCurrent"`
+		SourceAPIID            *string   `json:"sourceApiId"`
 	} `json:"properties"`
 }
 
@@ -382,12 +383,31 @@ func (h *Handler) apiResource(w http.ResponseWriter, r *http.Request, api model.
 			writeError(w, http.StatusBadRequest, "InvalidRequestContent", err.Error(), "")
 			return
 		}
+		cloneSourceID := ""
+		if r.Method == http.MethodPut && errors.Is(existingErr, store.ErrNotFound) && body.Properties.SourceAPIID != nil {
+			targetName := api.Name
+			source, sourceID, err := h.revisionSource(*body.Properties.SourceAPIID)
+			if err != nil {
+				h.storeError(w, err, *body.Properties.SourceAPIID)
+				return
+			}
+			api = source
+			api.Name, api.Revision, api.RevisionDescription = targetName, "", ""
+			api.IsCurrent, api.CreatedAt, api.UpdatedAt, api.ETag = false, 0, 0, ""
+			cloneSourceID = sourceID
+		}
 		applyAPIPayload(&api, body)
 		if api.DisplayName == "" || api.ServiceURL == "" {
 			writeError(w, http.StatusBadRequest, "ValidationError", "displayName and serviceUrl are required.", "properties")
 			return
 		}
-		got, err := h.Store.UpsertAPI(api)
+		var got model.API
+		var err error
+		if cloneSourceID != "" {
+			got, err = h.Store.CloneAPIRevision(cloneSourceID, api)
+		} else {
+			got, err = h.Store.UpsertAPI(api)
+		}
 		if err != nil {
 			h.storeError(w, err, api.ID())
 			return
@@ -414,6 +434,15 @@ func (h *Handler) apiResource(w http.ResponseWriter, r *http.Request, api model.
 	default:
 		methodNotAllowed(w)
 	}
+}
+
+func (h *Handler) revisionSource(id string) (model.API, string, error) {
+	value, err := h.Store.GetAPI(id)
+	if errors.Is(err, store.ErrNotFound) && strings.HasSuffix(strings.ToLower(id), ";rev=1") {
+		id = id[:len(id)-6]
+		value, err = h.Store.GetAPI(id)
+	}
+	return value, id, err
 }
 
 func applyAPIPayload(api *model.API, body apiPayload) {
