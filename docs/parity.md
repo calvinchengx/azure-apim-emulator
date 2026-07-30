@@ -10,7 +10,7 @@ Snapshot date: 2026-07-31
 |---|---|---:|---|
 | process/config/TLS/store/clock | implemented | P0 | Go tests, GoReleaser matrix, container and Compose smoke tests |
 | service ARM lifecycle and LROs | partial | P0 | lossless `2024-05-01` schema inventory, GET/PUT/PATCH/DELETE/list, completed LRO, 100% local statement coverage, and read-only differential harness; authorized Azure evidence pending |
-| APIs/operations/products/subscriptions | partial | P0-P1 | API, operation, product, product/API-link, and subscription GET/PUT/PATCH/DELETE/list lifecycles; secret retrieval and primary/secondary rotation pass all four SDKs and gateway invalidation tests; broader schemas pending |
+| APIs/operations/products/subscriptions | partial | P0-P1 | API, operation, product, product/API-link, and subscription lifecycles; secret rotation passes all four SDKs; revision metadata/listing passes the Go SDK and non-current revisions are excluded from public gateway routes; source cloning, releases, versions, and broader schemas pending |
 | stable `2024-05-01` operation inventory | planned | P1-P7 | generated spec audit and SDK/differential tests |
 | official management SDKs | sdk-verified | P0-P1 | Go `v1.1.1`, JavaScript `10.0.0`, Python `5.0.0`, and .NET `1.3.1` service/API/operation/subscription plus protected-gateway workflows |
 | preview `2025-09-01-preview` | planned | P8 | isolated preview suite |

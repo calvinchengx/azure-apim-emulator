@@ -42,6 +42,9 @@ func TestStoreResourceLifecycle(t *testing.T) {
 	if api.ETag == "" {
 		t.Fatal("API ETag missing")
 	}
+	if api.Revision != "1" || !api.IsCurrent || api.CreatedAt == 0 || api.UpdatedAt == 0 {
+		t.Fatalf("API revision metadata = %+v", api)
+	}
 	gotAPI, err := st.GetAPI(api.ID())
 	if err != nil || gotAPI.Path != "api" || len(gotAPI.Protocols) != 1 {
 		t.Fatalf("GetAPI = %+v, %v", gotAPI, err)
@@ -273,7 +276,7 @@ func TestClosedStoreErrors(t *testing.T) {
 }
 
 func TestRuntimeDataStopsAtEachQueryFailure(t *testing.T) {
-	tables := []string{"apis", "operations", "products", "product_apis", "subscriptions"}
+	tables := []string{"apis", "api_revision_metadata", "operations", "products", "product_apis", "subscriptions"}
 	for _, table := range tables {
 		t.Run(table, func(t *testing.T) {
 			st, err := Open("", clock.New())
@@ -310,7 +313,8 @@ func TestScanFunctionsRejectMalformedRows(t *testing.T) {
 		},
 		{
 			"apis",
-			`CREATE TABLE apis (id, service_id, name, display_name, path, service_url, protocols_json, subscription_required, etag)`,
+			`CREATE TABLE apis (id, service_id, name, display_name, path, service_url, protocols_json, subscription_required, etag);
+			 CREATE TABLE api_revision_metadata (api_id, revision, description, is_current, created_at, updated_at)`,
 			`INSERT INTO apis VALUES ('id', NULL, '', '', '', '', '[]', 0, '')`,
 			func(db *sql.DB) error { _, err := scanAPIs(db); return err },
 		},
@@ -407,6 +411,41 @@ func TestUpsertServiceTransactionErrors(t *testing.T) {
 		}
 		if _, err := st.GetService(service.ID()); !errors.Is(err, ErrNotFound) {
 			t.Fatalf("service transaction was not rolled back: %v", err)
+		}
+	})
+}
+
+func TestUpsertAPITransactionErrors(t *testing.T) {
+	t.Run("begin", func(t *testing.T) {
+		st, err := Open("", clock.New())
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = st.Close()
+		if _, err := st.UpsertAPI(model.API{}); err == nil {
+			t.Fatal("closed store accepted API")
+		}
+	})
+
+	t.Run("metadata", func(t *testing.T) {
+		st, err := Open("", clock.New())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer st.Close()
+		service, err := st.UpsertService(model.Service{Name: "svc"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := st.db.Exec(`CREATE TRIGGER reject_api_metadata BEFORE INSERT ON api_revision_metadata BEGIN SELECT RAISE(FAIL, 'rejected'); END`); err != nil {
+			t.Fatal(err)
+		}
+		api := model.API{ServiceID: service.ID(), Name: "api"}
+		if _, err := st.UpsertAPI(api); err == nil {
+			t.Fatal("rejected API metadata was accepted")
+		}
+		if _, err := st.GetAPI(api.ID()); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("API transaction was not rolled back: %v", err)
 		}
 	})
 }

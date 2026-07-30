@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/calvinchengx/azure-apim-emulator/internal/auth"
 	"github.com/calvinchengx/azure-apim-emulator/internal/model"
@@ -276,6 +277,23 @@ func (h *Handler) api(w http.ResponseWriter, r *http.Request, rt route) {
 		writeJSON(w, http.StatusOK, map[string]any{"value": resources})
 		return
 	}
+	if len(rt.Tail) == 3 && equal(rt.Tail[2], "revisions") {
+		if r.Method != http.MethodGet {
+			methodNotAllowed(w)
+			return
+		}
+		values, err := h.Store.ListAPIRevisions(service.ID(), api.Name)
+		if err != nil {
+			h.storeError(w, err, api.ID())
+			return
+		}
+		resources := make([]map[string]any, 0, len(values))
+		for _, value := range values {
+			resources = append(resources, apiRevisionWire(value))
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"value": resources, "count": len(resources)})
+		return
+	}
 	if len(rt.Tail) == 4 && equal(rt.Tail[2], "operations") {
 		h.operationResource(w, r, model.Operation{APIID: api.ID(), Name: rt.Tail[3]})
 		return
@@ -323,11 +341,14 @@ func (h *Handler) api(w http.ResponseWriter, r *http.Request, rt route) {
 
 type apiPayload struct {
 	Properties struct {
-		DisplayName          *string   `json:"displayName"`
-		Path                 *string   `json:"path"`
-		ServiceURL           *string   `json:"serviceUrl"`
-		Protocols            *[]string `json:"protocols"`
-		SubscriptionRequired *bool     `json:"subscriptionRequired"`
+		DisplayName            *string   `json:"displayName"`
+		Path                   *string   `json:"path"`
+		ServiceURL             *string   `json:"serviceUrl"`
+		Protocols              *[]string `json:"protocols"`
+		SubscriptionRequired   *bool     `json:"subscriptionRequired"`
+		APIRevision            *string   `json:"apiRevision"`
+		APIRevisionDescription *string   `json:"apiRevisionDescription"`
+		IsCurrent              *bool     `json:"isCurrent"`
 	} `json:"properties"`
 }
 
@@ -354,6 +375,7 @@ func (h *Handler) apiResource(w http.ResponseWriter, r *http.Request, api model.
 			api = existing
 		} else {
 			api.SubscriptionRequired = true
+			api.IsCurrent = !strings.Contains(strings.ToLower(api.Name), ";rev=")
 		}
 		var body apiPayload
 		if err := decode(r, &body); err != nil {
@@ -409,6 +431,15 @@ func applyAPIPayload(api *model.API, body apiPayload) {
 	}
 	if body.Properties.SubscriptionRequired != nil {
 		api.SubscriptionRequired = *body.Properties.SubscriptionRequired
+	}
+	if body.Properties.APIRevision != nil {
+		api.Revision = *body.Properties.APIRevision
+	}
+	if body.Properties.APIRevisionDescription != nil {
+		api.RevisionDescription = *body.Properties.APIRevisionDescription
+	}
+	if body.Properties.IsCurrent != nil {
+		api.IsCurrent = *body.Properties.IsCurrent
 	}
 }
 
@@ -840,7 +871,14 @@ func serviceWire(v model.Service) map[string]any {
 	return result
 }
 func apiWire(v model.API) map[string]any {
-	return map[string]any{"id": v.ID(), "name": v.Name, "type": "Microsoft.ApiManagement/service/apis", "properties": map[string]any{"displayName": v.DisplayName, "path": v.Path, "serviceUrl": v.ServiceURL, "protocols": v.Protocols, "subscriptionRequired": v.SubscriptionRequired, "apiRevision": "1", "isCurrent": true}}
+	return map[string]any{"id": v.ID(), "name": v.Name, "type": "Microsoft.ApiManagement/service/apis", "properties": map[string]any{"displayName": v.DisplayName, "path": v.Path, "serviceUrl": v.ServiceURL, "protocols": v.Protocols, "subscriptionRequired": v.SubscriptionRequired, "apiRevision": v.Revision, "apiRevisionDescription": v.RevisionDescription, "isCurrent": v.IsCurrent}}
+}
+func apiRevisionWire(v model.API) map[string]any {
+	base, _ := splitAPIRevision(v.Name)
+	apiID := model.API{ServiceID: v.ServiceID, Name: base + ";rev=" + v.Revision}.ID()
+	return map[string]any{"apiId": apiID, "apiRevision": v.Revision, "description": v.RevisionDescription,
+		"createdDateTime": time.Unix(v.CreatedAt, 0).UTC().Format(time.RFC3339),
+		"updatedDateTime": time.Unix(v.UpdatedAt, 0).UTC().Format(time.RFC3339), "isOnline": true, "isCurrent": v.IsCurrent}
 }
 func operationWire(v model.Operation) map[string]any {
 	return map[string]any{"id": v.APIID + "/operations/" + v.Name, "name": v.Name, "type": "Microsoft.ApiManagement/service/apis/operations", "properties": map[string]any{"displayName": v.DisplayName, "method": v.Method, "urlTemplate": v.URLTemplate}}
@@ -944,3 +982,10 @@ func split(path string) []string {
 	return strings.Split(value, "/")
 }
 func equal(a, b string) bool { return strings.EqualFold(a, b) }
+func splitAPIRevision(name string) (string, string) {
+	index := strings.LastIndex(strings.ToLower(name), ";rev=")
+	if index < 0 {
+		return name, "1"
+	}
+	return name[:index], name[index+5:]
+}

@@ -242,6 +242,7 @@ func TestActivateFailuresAndSubscriptionStates(t *testing.T) {
 	service, _ = st.UpsertService(service)
 	apiA, _ := st.UpsertAPI(model.API{ServiceID: service.ID(), Name: "a", Path: "short"})
 	apiB, _ := st.UpsertAPI(model.API{ServiceID: service.ID(), Name: "b", Path: "much/longer"})
+	_, _ = st.UpsertAPI(model.API{ServiceID: service.ID(), Name: "a;rev=2", Path: "private", Revision: "2", IsCurrent: false})
 	_, _ = st.UpsertSubscription(model.Subscription{ServiceID: service.ID(), Name: "inactive", Scope: apiA.ID(), State: "suspended", PrimaryKey: "inactive"})
 	product, _ := st.UpsertProduct(model.Product{ServiceID: service.ID(), Name: "p"})
 	_ = st.LinkProductAPI(product.ID(), apiB.ID())

@@ -153,6 +153,12 @@ func TestAPIBranches(t *testing.T) {
 	if strings.Count(list.Body.String(), `"type":"Microsoft.ApiManagement/service/apis"`) != 1 || !strings.Contains(list.Body.String(), `"displayName":"Updated"`) {
 		t.Fatalf("API list = %s", list.Body.String())
 	}
+	assertStatus(t, handler, http.MethodPut, basePath+"/apis/a;rev=2"+apiQuery, `{"properties":{"displayName":"Revision 2","path":"updated","serviceUrl":"https://revision","protocols":["https"],"subscriptionRequired":true,"apiRevision":"2","apiRevisionDescription":"Second revision","isCurrent":false}}`, http.StatusCreated)
+	revisions := request(t, handler, http.MethodGet, basePath+"/apis/a/revisions"+apiQuery, "")
+	if !strings.Contains(revisions.Body.String(), `"count":2`) || !strings.Contains(revisions.Body.String(), `"apiRevision":"2"`) || !strings.Contains(revisions.Body.String(), `"description":"Second revision"`) || strings.Count(revisions.Body.String(), `"isCurrent":true`) != 1 {
+		t.Fatalf("API revisions = %s", revisions.Body.String())
+	}
+	assertStatus(t, handler, http.MethodPost, basePath+"/apis/a/revisions"+apiQuery, "", http.StatusMethodNotAllowed)
 	assertStatus(t, handler, http.MethodPost, basePath+"/apis/a"+apiQuery, `{}`, http.StatusMethodNotAllowed)
 
 	assertStatus(t, handler, http.MethodGet, basePath+"/apis/a/operations"+apiQuery, "", http.StatusOK)
@@ -347,6 +353,7 @@ func TestClosedStoreWriteErrors(t *testing.T) {
 	assertStatus(t, handler, http.MethodGet, "/subscriptions/sub/providers/Microsoft.ApiManagement/service"+apiQuery, "", http.StatusConflict)
 	assertStatus(t, handler, http.MethodGet, basePath+"/apis"+apiQuery, "", http.StatusConflict)
 	assertStatus(t, handler, http.MethodGet, basePath+"/apis/a/operations"+apiQuery, "", http.StatusConflict)
+	assertStatus(t, handler, http.MethodGet, basePath+"/apis/a/revisions"+apiQuery, "", http.StatusConflict)
 	assertStatus(t, handler, http.MethodDelete, basePath+"/apis/a"+apiQuery, "", http.StatusConflict)
 	assertStatus(t, handler, http.MethodDelete, basePath+"/apis/a/operations/get"+apiQuery, "", http.StatusConflict)
 	assertStatus(t, handler, http.MethodGet, basePath+"/products"+apiQuery, "", http.StatusConflict)

@@ -75,6 +75,11 @@ CREATE TABLE IF NOT EXISTS apis (
   service_url TEXT NOT NULL, protocols_json TEXT NOT NULL,
   subscription_required INTEGER NOT NULL, etag TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS api_revision_metadata (
+  api_id TEXT PRIMARY KEY REFERENCES apis(id) ON DELETE CASCADE,
+  revision TEXT NOT NULL, description TEXT NOT NULL, is_current INTEGER NOT NULL,
+  created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS operations (
   id TEXT PRIMARY KEY, api_id TEXT NOT NULL REFERENCES apis(id) ON DELETE CASCADE,
   name TEXT NOT NULL, display_name TEXT NOT NULL, method TEXT NOT NULL,
@@ -206,8 +211,22 @@ func (s *Store) ListServices() ([]model.Service, error) {
 // UpsertAPI creates or replaces an API.
 func (s *Store) UpsertAPI(v model.API) (model.API, error) {
 	v.ETag = newETag()
+	if v.Revision == "" {
+		_, v.Revision = splitRevision(v.Name)
+		v.IsCurrent = !strings.Contains(strings.ToLower(v.Name), ";rev=")
+	}
+	now := s.Clock.Now()
+	if v.CreatedAt == 0 {
+		v.CreatedAt = now
+	}
+	v.UpdatedAt = now
 	protocols, _ := json.Marshal(v.Protocols)
-	_, err := s.db.Exec(`INSERT INTO apis
+	tx, err := s.db.Begin()
+	if err != nil {
+		return v, err
+	}
+	defer tx.Rollback()
+	_, err = tx.Exec(`INSERT INTO apis
     (id, service_id, name, display_name, path, service_url, protocols_json, subscription_required, etag)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET display_name=excluded.display_name, path=excluded.path,
@@ -215,7 +234,18 @@ func (s *Store) UpsertAPI(v model.API) (model.API, error) {
       subscription_required=excluded.subscription_required, etag=excluded.etag`,
 		v.ID(), v.ServiceID, v.Name, v.DisplayName, strings.Trim(v.Path, "/"), v.ServiceURL,
 		string(protocols), v.SubscriptionRequired, v.ETag)
-	return v, err
+	if err != nil {
+		return v, err
+	}
+	_, err = tx.Exec(`INSERT INTO api_revision_metadata
+	    (api_id, revision, description, is_current, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)
+	    ON CONFLICT(api_id) DO UPDATE SET revision=excluded.revision, description=excluded.description,
+	      is_current=excluded.is_current, updated_at=excluded.updated_at`,
+		v.ID(), v.Revision, v.RevisionDescription, v.IsCurrent, v.CreatedAt, v.UpdatedAt)
+	if err != nil {
+		return v, err
+	}
+	return v, tx.Commit()
 }
 
 // GetAPI finds one API by ARM ID.
@@ -223,9 +253,16 @@ func (s *Store) GetAPI(id string) (model.API, error) {
 	var v model.API
 	var protocols string
 	err := s.db.QueryRow(`SELECT service_id, name, display_name, path, service_url,
-      protocols_json, subscription_required, etag FROM apis WHERE lower(id)=lower(?)`, id).
+	      protocols_json, subscription_required, etag,
+	      COALESCE((SELECT revision FROM api_revision_metadata WHERE lower(api_id)=lower(apis.id)), '1'),
+	      COALESCE((SELECT description FROM api_revision_metadata WHERE lower(api_id)=lower(apis.id)), ''),
+	      COALESCE((SELECT is_current FROM api_revision_metadata WHERE lower(api_id)=lower(apis.id)), 1),
+	      COALESCE((SELECT created_at FROM api_revision_metadata WHERE lower(api_id)=lower(apis.id)), 0),
+	      COALESCE((SELECT updated_at FROM api_revision_metadata WHERE lower(api_id)=lower(apis.id)), 0)
+	      FROM apis WHERE lower(id)=lower(?)`, id).
 		Scan(&v.ServiceID, &v.Name, &v.DisplayName, &v.Path, &v.ServiceURL,
-			&protocols, &v.SubscriptionRequired, &v.ETag)
+			&protocols, &v.SubscriptionRequired, &v.ETag, &v.Revision, &v.RevisionDescription,
+			&v.IsCurrent, &v.CreatedAt, &v.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return model.API{}, ErrNotFound
 	}
@@ -245,6 +282,23 @@ func (s *Store) ListAPIs(serviceID string) ([]model.API, error) {
 	filtered := make([]model.API, 0)
 	for _, value := range values {
 		if equalID(value.ServiceID, serviceID) {
+			filtered = append(filtered, value)
+		}
+	}
+	return filtered, nil
+}
+
+// ListAPIRevisions returns every revision belonging to a logical API.
+func (s *Store) ListAPIRevisions(serviceID, apiName string) ([]model.API, error) {
+	values, err := s.ListAPIs(serviceID)
+	if err != nil {
+		return nil, err
+	}
+	wanted, _ := splitRevision(apiName)
+	filtered := make([]model.API, 0)
+	for _, value := range values {
+		base, _ := splitRevision(value.Name)
+		if equalID(base, wanted) {
 			filtered = append(filtered, value)
 		}
 	}
@@ -501,7 +555,13 @@ func (s *Store) RuntimeData() ([]model.Service, []model.API, []model.Operation, 
 }
 
 func scanAPIs(db *sql.DB) ([]model.API, error) {
-	rows, err := db.Query(`SELECT service_id, name, display_name, path, service_url, protocols_json, subscription_required, etag FROM apis ORDER BY id`)
+	rows, err := db.Query(`SELECT service_id, name, display_name, path, service_url, protocols_json, subscription_required, etag,
+	    COALESCE((SELECT revision FROM api_revision_metadata WHERE api_id=apis.id), '1'),
+	    COALESCE((SELECT description FROM api_revision_metadata WHERE api_id=apis.id), ''),
+	    COALESCE((SELECT is_current FROM api_revision_metadata WHERE api_id=apis.id), 1),
+	    COALESCE((SELECT created_at FROM api_revision_metadata WHERE api_id=apis.id), 0),
+	    COALESCE((SELECT updated_at FROM api_revision_metadata WHERE api_id=apis.id), 0)
+	    FROM apis ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
@@ -510,7 +570,9 @@ func scanAPIs(db *sql.DB) ([]model.API, error) {
 	for rows.Next() {
 		var v model.API
 		var protocols string
-		if err := rows.Scan(&v.ServiceID, &v.Name, &v.DisplayName, &v.Path, &v.ServiceURL, &protocols, &v.SubscriptionRequired, &v.ETag); err != nil {
+		if err := rows.Scan(&v.ServiceID, &v.Name, &v.DisplayName, &v.Path, &v.ServiceURL, &protocols,
+			&v.SubscriptionRequired, &v.ETag, &v.Revision, &v.RevisionDescription, &v.IsCurrent,
+			&v.CreatedAt, &v.UpdatedAt); err != nil {
 			return nil, err
 		}
 		_ = json.Unmarshal([]byte(protocols), &v.Protocols)
@@ -625,3 +687,11 @@ func deleteScopedResource(db *sql.DB, table, id string) error {
 }
 
 func equalID(left, right string) bool { return strings.EqualFold(left, right) }
+
+func splitRevision(name string) (string, string) {
+	index := strings.LastIndex(strings.ToLower(name), ";rev=")
+	if index < 0 {
+		return name, "1"
+	}
+	return name[:index], name[index+5:]
+}

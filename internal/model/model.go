@@ -31,6 +31,11 @@ type API struct {
 	ServiceURL           string
 	Protocols            []string
 	SubscriptionRequired bool
+	Revision             string
+	RevisionDescription  string
+	IsCurrent            bool
+	CreatedAt            int64
+	UpdatedAt            int64
 	ETag                 string
 }
 

@@ -119,6 +119,15 @@ func TestGoManagementSDKConfiguresProtectedGateway(t *testing.T) {
 	if _, err := apiPoller.PollUntilDone(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
+	revisionClient, err := armapimanagement.NewAPIRevisionClient(defaultSubscription, credential, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	revisionPager := revisionClient.NewListByServicePager(defaultResourceGroup, "emulator", "go-sdk-full", nil)
+	revisionPage, err := revisionPager.NextPage(ctx)
+	if err != nil || len(revisionPage.Value) != 1 || revisionPage.Value[0].APIRevision == nil || *revisionPage.Value[0].APIRevision != "1" || revisionPage.Value[0].IsCurrent == nil || !*revisionPage.Value[0].IsCurrent {
+		t.Fatalf("API revision page = %+v, %v", revisionPage, err)
+	}
 
 	operationClient, err := armapimanagement.NewAPIOperationClient(defaultSubscription, credential, options)
 	if err != nil {

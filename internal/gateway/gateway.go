@@ -121,6 +121,9 @@ func (r *Runtime) Activate(st *store.Store, strict bool) error {
 		snapshot.Services[strings.ToLower(item.Name)] = &Service{Name: item.Name}
 	}
 	for _, api := range apis {
+		if !api.IsCurrent {
+			continue
+		}
 		serviceName := serviceNameFromID(api.ServiceID)
 		service := snapshot.Services[strings.ToLower(serviceName)]
 		if service == nil {
