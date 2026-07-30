@@ -655,35 +655,145 @@ func applyProductPayload(product *model.Product, body productPayload) {
 }
 
 func (h *Handler) subscription(w http.ResponseWriter, r *http.Request, rt route) {
-	if len(rt.Tail) != 2 || r.Method != http.MethodPut {
+	service := model.Service{SubscriptionID: rt.SubscriptionID, ResourceGroup: rt.ResourceGroup, Name: rt.ServiceName}
+	if len(rt.Tail) == 1 {
+		if r.Method != http.MethodGet {
+			methodNotAllowed(w)
+			return
+		}
+		values, err := h.Store.ListSubscriptions(service.ID())
+		if err != nil {
+			h.storeError(w, err, service.ID())
+			return
+		}
+		resources := make([]map[string]any, 0, len(values))
+		for _, value := range values {
+			resources = append(resources, subscriptionWire(value, false))
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"value": resources})
+		return
+	}
+	value := model.Subscription{ServiceID: service.ID(), Name: rt.Tail[1]}
+	if len(rt.Tail) == 2 {
+		h.subscriptionResource(w, r, value)
+		return
+	}
+	if len(rt.Tail) != 3 || r.Method != http.MethodPost {
 		writeError(w, http.StatusNotFound, "ResourceNotFound", "The requested subscription resource was not found.", r.URL.Path)
 		return
 	}
-	service := model.Service{SubscriptionID: rt.SubscriptionID, ResourceGroup: rt.ResourceGroup, Name: rt.ServiceName}
-	var body struct {
-		Properties struct {
-			DisplayName  string `json:"displayName"`
-			Scope        string `json:"scope"`
-			State        string `json:"state"`
-			PrimaryKey   string `json:"primaryKey"`
-			SecondaryKey string `json:"secondaryKey"`
-		} `json:"properties"`
+	switch rt.Tail[2] {
+	case "listSecrets":
+		got, err := h.Store.GetSubscription(value.ID())
+		if err != nil {
+			h.storeError(w, err, value.ID())
+			return
+		}
+		writeResource(w, http.StatusOK, subscriptionSecretsWire(got), got.ETag)
+	case "regeneratePrimaryKey", "regenerateSecondaryKey":
+		got, err := h.Store.RegenerateSubscriptionKey(value.ID(), rt.Tail[2] == "regeneratePrimaryKey")
+		if err != nil {
+			h.storeError(w, err, value.ID())
+			return
+		}
+		if err := h.activate(); err != nil {
+			writeError(w, http.StatusInternalServerError, "ConfigurationInvalid", err.Error(), value.ID())
+			return
+		}
+		w.Header().Set("ETag", got.ETag)
+		w.WriteHeader(http.StatusNoContent)
+	default:
+		writeError(w, http.StatusNotFound, "ResourceNotFound", "The requested subscription action was not found.", r.URL.Path)
 	}
-	if err := decode(r, &body); err != nil {
-		writeError(w, http.StatusBadRequest, "InvalidRequestContent", err.Error(), "")
-		return
+}
+
+type subscriptionPayload struct {
+	Properties struct {
+		DisplayName  *string `json:"displayName"`
+		Scope        *string `json:"scope"`
+		State        *string `json:"state"`
+		PrimaryKey   *string `json:"primaryKey"`
+		SecondaryKey *string `json:"secondaryKey"`
+	} `json:"properties"`
+}
+
+func (h *Handler) subscriptionResource(w http.ResponseWriter, r *http.Request, value model.Subscription) {
+	switch r.Method {
+	case http.MethodGet:
+		got, err := h.Store.GetSubscription(value.ID())
+		if err != nil {
+			h.storeError(w, err, value.ID())
+			return
+		}
+		writeResource(w, http.StatusOK, subscriptionWire(got, false), got.ETag)
+	case http.MethodPut, http.MethodPatch:
+		existing, existingErr := h.Store.GetSubscription(value.ID())
+		if existingErr != nil && !errors.Is(existingErr, store.ErrNotFound) {
+			h.storeError(w, existingErr, value.ID())
+			return
+		}
+		if r.Method == http.MethodPatch && errors.Is(existingErr, store.ErrNotFound) {
+			h.storeError(w, existingErr, value.ID())
+			return
+		}
+		if existingErr == nil {
+			value = existing
+		}
+		var body subscriptionPayload
+		if err := decode(r, &body); err != nil {
+			writeError(w, http.StatusBadRequest, "InvalidRequestContent", err.Error(), "")
+			return
+		}
+		applySubscriptionPayload(&value, body)
+		if value.DisplayName == "" || value.Scope == "" {
+			writeError(w, http.StatusBadRequest, "ValidationError", "displayName and scope are required.", "properties")
+			return
+		}
+		got, err := h.Store.UpsertSubscription(value)
+		if err != nil {
+			h.storeError(w, err, value.ID())
+			return
+		}
+		if err := h.activate(); err != nil {
+			writeError(w, http.StatusBadRequest, "ConfigurationInvalid", err.Error(), value.ID())
+			return
+		}
+		status := http.StatusOK
+		if r.Method == http.MethodPut && errors.Is(existingErr, store.ErrNotFound) {
+			status = http.StatusCreated
+		}
+		writeResource(w, status, subscriptionWire(got, false), got.ETag)
+	case http.MethodDelete:
+		if err := h.Store.DeleteSubscription(value.ID()); err != nil && !errors.Is(err, store.ErrNotFound) {
+			h.storeError(w, err, value.ID())
+			return
+		}
+		if err := h.activate(); err != nil {
+			writeError(w, http.StatusInternalServerError, "ConfigurationInvalid", err.Error(), value.ID())
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	default:
+		methodNotAllowed(w)
 	}
-	value := model.Subscription{ServiceID: service.ID(), Name: rt.Tail[1], DisplayName: body.Properties.DisplayName, Scope: body.Properties.Scope, State: body.Properties.State, PrimaryKey: body.Properties.PrimaryKey, SecondaryKey: body.Properties.SecondaryKey}
-	got, err := h.Store.UpsertSubscription(value)
-	if err != nil {
-		h.storeError(w, err, value.ID())
-		return
+}
+
+func applySubscriptionPayload(value *model.Subscription, body subscriptionPayload) {
+	if body.Properties.DisplayName != nil {
+		value.DisplayName = *body.Properties.DisplayName
 	}
-	if err := h.activate(); err != nil {
-		writeError(w, http.StatusBadRequest, "ConfigurationInvalid", err.Error(), value.ID())
-		return
+	if body.Properties.Scope != nil {
+		value.Scope = *body.Properties.Scope
 	}
-	writeResource(w, http.StatusCreated, subscriptionWire(got, false), got.ETag)
+	if body.Properties.State != nil {
+		value.State = *body.Properties.State
+	}
+	if body.Properties.PrimaryKey != nil {
+		value.PrimaryKey = *body.Properties.PrimaryKey
+	}
+	if body.Properties.SecondaryKey != nil {
+		value.SecondaryKey = *body.Properties.SecondaryKey
+	}
 }
 
 func (h *Handler) activate() error {
@@ -747,6 +857,9 @@ func subscriptionWire(v model.Subscription, secrets bool) map[string]any {
 		properties["primaryKey"], properties["secondaryKey"] = v.PrimaryKey, v.SecondaryKey
 	}
 	return map[string]any{"id": v.ID(), "name": v.Name, "type": "Microsoft.ApiManagement/service/subscriptions", "properties": properties}
+}
+func subscriptionSecretsWire(v model.Subscription) map[string]any {
+	return map[string]any{"primaryKey": v.PrimaryKey, "secondaryKey": v.SecondaryKey}
 }
 func policyWire(scopeID string, value model.Policy) map[string]any {
 	return map[string]any{"id": scopeID + "/policies/policy", "name": "policy", "type": "Microsoft.ApiManagement/service/apis/policies", "properties": map[string]any{"format": value.Format, "value": value.Value}}

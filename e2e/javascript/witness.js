@@ -48,8 +48,17 @@ await client.subscription.createOrUpdate(resourceGroup, serviceName, "javascript
   primaryKey: "javascript-sdk-key",
   secondaryKey: "javascript-sdk-secondary",
 });
+const originalSecrets = await client.subscription.listSecrets(resourceGroup, serviceName, "javascript-sdk-subscription");
+if (originalSecrets.primaryKey !== "javascript-sdk-key" || originalSecrets.secondaryKey !== "javascript-sdk-secondary") {
+  throw new Error("JavaScript SDK subscription secrets did not round-trip");
+}
+await client.subscription.regeneratePrimaryKey(resourceGroup, serviceName, "javascript-sdk-subscription");
+const rotatedSecrets = await client.subscription.listSecrets(resourceGroup, serviceName, "javascript-sdk-subscription");
+if (rotatedSecrets.primaryKey === "javascript-sdk-key" || rotatedSecrets.secondaryKey !== "javascript-sdk-secondary") {
+  throw new Error("JavaScript SDK subscription key did not rotate");
+}
 const gatewayResponse = await fetch(`${endpoint}/javascript-sdk/items`, {
-  headers: { "Ocp-Apim-Subscription-Key": "javascript-sdk-key" },
+  headers: { "Ocp-Apim-Subscription-Key": rotatedSecrets.primaryKey },
 });
 if (gatewayResponse.status !== 200 || (await gatewayResponse.text()) !== "sdk-backend") {
   throw new Error(`gateway response: ${gatewayResponse.status}`);

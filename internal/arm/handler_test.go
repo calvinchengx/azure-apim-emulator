@@ -230,9 +230,46 @@ func TestProductAndSubscriptionBranches(t *testing.T) {
 	assertStatus(t, handler, http.MethodPost, basePath+"/products/p/apis/a"+apiQuery, `{}`, http.StatusMethodNotAllowed)
 	assertStatus(t, handler, http.MethodGet, basePath+"/products/p/unknown"+apiQuery, "", http.StatusNotFound)
 
+	assertStatus(t, handler, http.MethodGet, basePath+"/subscriptions"+apiQuery, "", http.StatusOK)
+	assertStatus(t, handler, http.MethodPost, basePath+"/subscriptions"+apiQuery, "", http.StatusMethodNotAllowed)
 	assertStatus(t, handler, http.MethodGet, basePath+"/subscriptions/s"+apiQuery, "", http.StatusNotFound)
 	assertStatus(t, handler, http.MethodPut, basePath+"/subscriptions/s"+apiQuery, `{`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPut, basePath+"/subscriptions/invalid"+apiQuery, `{"properties":{}}`, http.StatusBadRequest)
 	assertStatus(t, handler, http.MethodPut, basePath+"/subscriptions/s"+apiQuery, `{"properties":{"displayName":"S","scope":"`+serviceModel().ID()+`"}}`, http.StatusCreated)
+	got := request(t, handler, http.MethodGet, basePath+"/subscriptions/s"+apiQuery, "")
+	if strings.Contains(got.Body.String(), "primaryKey") || got.Header().Get("ETag") == "" {
+		t.Fatalf("subscription GET leaked secrets or omitted ETag: %s", got.Body.String())
+	}
+	assertStatus(t, handler, http.MethodPut, basePath+"/subscriptions/s"+apiQuery, `{"properties":{"displayName":"S","scope":"`+serviceModel().ID()+`","state":"suspended","primaryKey":"primary","secondaryKey":"secondary"}}`, http.StatusOK)
+	assertStatus(t, handler, http.MethodPatch, basePath+"/subscriptions/missing"+apiQuery, `{}`, http.StatusNotFound)
+	assertStatus(t, handler, http.MethodPatch, basePath+"/subscriptions/s"+apiQuery, `{`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPatch, basePath+"/subscriptions/s"+apiQuery, `{"properties":{"displayName":"Updated","scope":"`+serviceModel().ID()+`/apis/a","state":"active","primaryKey":"primary","secondaryKey":"secondary"}}`, http.StatusOK)
+	list = request(t, handler, http.MethodGet, basePath+"/subscriptions"+apiQuery, "")
+	if strings.Count(list.Body.String(), `"type":"Microsoft.ApiManagement/service/subscriptions"`) != 1 || strings.Contains(list.Body.String(), "primaryKey") {
+		t.Fatalf("subscription list = %s", list.Body.String())
+	}
+	secretsBefore := request(t, handler, http.MethodPost, basePath+"/subscriptions/s/listSecrets"+apiQuery, "")
+	var before map[string]any
+	if err := json.Unmarshal(secretsBefore.Body.Bytes(), &before); err != nil || before["primaryKey"] != "primary" || before["secondaryKey"] != "secondary" {
+		t.Fatalf("subscription secrets = %#v, %v", before, err)
+	}
+	assertStatus(t, handler, http.MethodPost, basePath+"/subscriptions/s/regeneratePrimaryKey"+apiQuery, "", http.StatusNoContent)
+	secretsAfterPrimary := request(t, handler, http.MethodPost, basePath+"/subscriptions/s/listSecrets"+apiQuery, "")
+	var afterPrimary map[string]any
+	if err := json.Unmarshal(secretsAfterPrimary.Body.Bytes(), &afterPrimary); err != nil || afterPrimary["primaryKey"] == "primary" || afterPrimary["secondaryKey"] != "secondary" {
+		t.Fatalf("primary regeneration = %#v, %v", afterPrimary, err)
+	}
+	assertStatus(t, handler, http.MethodPost, basePath+"/subscriptions/s/regenerateSecondaryKey"+apiQuery, "", http.StatusNoContent)
+	secretsAfterSecondary := request(t, handler, http.MethodPost, basePath+"/subscriptions/s/listSecrets"+apiQuery, "")
+	var afterSecondary map[string]any
+	if err := json.Unmarshal(secretsAfterSecondary.Body.Bytes(), &afterSecondary); err != nil || afterSecondary["primaryKey"] != afterPrimary["primaryKey"] || afterSecondary["secondaryKey"] == "secondary" {
+		t.Fatalf("secondary regeneration = %#v, %v", afterSecondary, err)
+	}
+	assertStatus(t, handler, http.MethodGet, basePath+"/subscriptions/s/listSecrets"+apiQuery, "", http.StatusNotFound)
+	assertStatus(t, handler, http.MethodPost, basePath+"/subscriptions/s/unknown"+apiQuery, "", http.StatusNotFound)
+	assertStatus(t, handler, http.MethodPost, basePath+"/subscriptions/missing/listSecrets"+apiQuery, "", http.StatusNotFound)
+	assertStatus(t, handler, http.MethodPost, basePath+"/subscriptions/missing/regeneratePrimaryKey"+apiQuery, "", http.StatusNotFound)
+	assertStatus(t, handler, http.MethodPost, basePath+"/subscriptions/s"+apiQuery, "", http.StatusMethodNotAllowed)
 
 	handler.Activate = func() error { return errors.New("activation") }
 	assertStatus(t, handler, http.MethodPut, basePath+"/products/p"+apiQuery, `{"properties":{"displayName":"P"}}`, http.StatusBadRequest)
@@ -240,10 +277,13 @@ func TestProductAndSubscriptionBranches(t *testing.T) {
 	assertStatus(t, handler, http.MethodDelete, basePath+"/products/p/apis/a"+apiQuery, "", http.StatusInternalServerError)
 	assertStatus(t, handler, http.MethodDelete, basePath+"/products/p"+apiQuery, "", http.StatusInternalServerError)
 	assertStatus(t, handler, http.MethodPut, basePath+"/subscriptions/s"+apiQuery, `{"properties":{"displayName":"S","scope":"`+serviceModel().ID()+`"}}`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPost, basePath+"/subscriptions/s/regeneratePrimaryKey"+apiQuery, "", http.StatusInternalServerError)
+	assertStatus(t, handler, http.MethodDelete, basePath+"/subscriptions/s"+apiQuery, "", http.StatusInternalServerError)
 	handler.Activate = nil
 	assertStatus(t, handler, http.MethodDelete, basePath+"/products/p/apis/a"+apiQuery, "", http.StatusNoContent)
 	assertStatus(t, handler, http.MethodDelete, basePath+"/products/p"+apiQuery, "", http.StatusNoContent)
 	assertStatus(t, handler, http.MethodDelete, basePath+"/products/p"+apiQuery, "", http.StatusNoContent)
+	assertStatus(t, handler, http.MethodDelete, basePath+"/subscriptions/s"+apiQuery, "", http.StatusNoContent)
 
 	secrets := subscriptionWire(model.Subscription{ServiceID: serviceModel().ID(), Name: "s", PrimaryKey: "one", SecondaryKey: "two"}, true)
 	properties := secrets["properties"].(map[string]any)
@@ -280,7 +320,7 @@ func TestForeignKeyStoreErrors(t *testing.T) {
 	handler, _ := testHandler(t)
 	assertStatus(t, handler, http.MethodPut, basePath+"/apis/a"+apiQuery, `{"properties":{"displayName":"A","serviceUrl":"https://backend"}}`, http.StatusConflict)
 	assertStatus(t, handler, http.MethodPut, basePath+"/products/p"+apiQuery, `{"properties":{"displayName":"P"}}`, http.StatusConflict)
-	assertStatus(t, handler, http.MethodPut, basePath+"/subscriptions/s"+apiQuery, `{"properties":{"displayName":"S"}}`, http.StatusConflict)
+	assertStatus(t, handler, http.MethodPut, basePath+"/subscriptions/s"+apiQuery, `{"properties":{"displayName":"S","scope":"/scope"}}`, http.StatusConflict)
 	assertStatus(t, handler, http.MethodPut, basePath+"/apis/a/operations/get"+apiQuery, `{"properties":{"method":"GET","urlTemplate":"/"}}`, http.StatusConflict)
 	assertStatus(t, handler, http.MethodPut, basePath+"/products/p/apis/a"+apiQuery, `{}`, http.StatusConflict)
 }
@@ -314,6 +354,11 @@ func TestClosedStoreWriteErrors(t *testing.T) {
 	assertStatus(t, handler, http.MethodDelete, basePath+"/products/p"+apiQuery, "", http.StatusConflict)
 	assertStatus(t, handler, http.MethodGet, basePath+"/products/p/apis"+apiQuery, "", http.StatusConflict)
 	assertStatus(t, handler, http.MethodDelete, basePath+"/products/p/apis/a"+apiQuery, "", http.StatusConflict)
+	assertStatus(t, handler, http.MethodGet, basePath+"/subscriptions"+apiQuery, "", http.StatusConflict)
+	assertStatus(t, handler, http.MethodPut, basePath+"/subscriptions/s"+apiQuery, `{"properties":{"displayName":"S","scope":"scope"}}`, http.StatusConflict)
+	assertStatus(t, handler, http.MethodPost, basePath+"/subscriptions/s/listSecrets"+apiQuery, "", http.StatusConflict)
+	assertStatus(t, handler, http.MethodPost, basePath+"/subscriptions/s/regeneratePrimaryKey"+apiQuery, "", http.StatusConflict)
+	assertStatus(t, handler, http.MethodDelete, basePath+"/subscriptions/s"+apiQuery, "", http.StatusConflict)
 }
 
 func TestServiceStoreWriteErrors(t *testing.T) {

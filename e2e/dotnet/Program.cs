@@ -59,13 +59,24 @@ var subscriptionData = new ApiManagementSubscriptionCreateOrUpdateContent
     PrimaryKey = "dotnet-sdk-key",
     SecondaryKey = "dotnet-sdk-secondary",
 };
-await service.GetApiManagementSubscriptions().CreateOrUpdateAsync(
+var subscription = await service.GetApiManagementSubscriptions().CreateOrUpdateAsync(
     WaitUntil.Completed, "dotnet-sdk-subscription", subscriptionData);
+var originalSecrets = (await subscription.Value.GetSecretsAsync()).Value;
+if (originalSecrets.PrimaryKey != "dotnet-sdk-key" || originalSecrets.SecondaryKey != "dotnet-sdk-secondary")
+{
+    throw new InvalidOperationException(".NET SDK subscription secrets did not round-trip");
+}
+await subscription.Value.RegeneratePrimaryKeyAsync();
+var rotatedSecrets = (await subscription.Value.GetSecretsAsync()).Value;
+if (rotatedSecrets.PrimaryKey == "dotnet-sdk-key" || rotatedSecrets.SecondaryKey != "dotnet-sdk-secondary")
+{
+    throw new InvalidOperationException(".NET SDK subscription key did not rotate");
+}
 using var gatewayClient = new HttpClient(new HttpClientHandler
 {
     ServerCertificateCustomValidationCallback = HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
 });
-gatewayClient.DefaultRequestHeaders.Add("Ocp-Apim-Subscription-Key", "dotnet-sdk-key");
+gatewayClient.DefaultRequestHeaders.Add("Ocp-Apim-Subscription-Key", rotatedSecrets.PrimaryKey);
 var gatewayResponse = await gatewayClient.GetAsync(new Uri(endpoint, "/dotnet-sdk/items"));
 var gatewayBody = await gatewayResponse.Content.ReadAsStringAsync();
 if (gatewayResponse.StatusCode != System.Net.HttpStatusCode.OK || gatewayBody != "sdk-backend")

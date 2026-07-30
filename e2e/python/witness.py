@@ -65,9 +65,22 @@ client.subscription.create_or_update(
         "secondary_key": "python-sdk-secondary",
     },
 )
+original_secrets = client.subscription.list_secrets(
+    resource_group, service_name, "python-sdk-subscription"
+)
+if original_secrets.primary_key != "python-sdk-key" or original_secrets.secondary_key != "python-sdk-secondary":
+    raise RuntimeError("Python SDK subscription secrets did not round-trip")
+client.subscription.regenerate_primary_key(
+    resource_group, service_name, "python-sdk-subscription"
+)
+rotated_secrets = client.subscription.list_secrets(
+    resource_group, service_name, "python-sdk-subscription"
+)
+if rotated_secrets.primary_key == "python-sdk-key" or rotated_secrets.secondary_key != "python-sdk-secondary":
+    raise RuntimeError("Python SDK subscription key did not rotate")
 gateway_response = requests.get(
     f"{os.environ['APIM_ENDPOINT']}/python-sdk/items",
-    headers={"Ocp-Apim-Subscription-Key": "python-sdk-key"},
+    headers={"Ocp-Apim-Subscription-Key": rotated_secrets.primary_key},
     verify=os.environ["REQUESTS_CA_BUNDLE"],
 )
 if gateway_response.status_code != 200 or gateway_response.text != "sdk-backend":

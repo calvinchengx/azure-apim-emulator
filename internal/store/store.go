@@ -398,6 +398,55 @@ func (s *Store) UpsertSubscription(v model.Subscription) (model.Subscription, er
 	return v, err
 }
 
+// GetSubscription finds one subscription by ARM ID.
+func (s *Store) GetSubscription(id string) (model.Subscription, error) {
+	var v model.Subscription
+	err := s.db.QueryRow(`SELECT service_id, name, display_name, scope, state, primary_key, secondary_key, etag
+	    FROM subscriptions WHERE lower(id)=lower(?)`, id).
+		Scan(&v.ServiceID, &v.Name, &v.DisplayName, &v.Scope, &v.State, &v.PrimaryKey, &v.SecondaryKey, &v.ETag)
+	if errors.Is(err, sql.ErrNoRows) {
+		return model.Subscription{}, ErrNotFound
+	}
+	return v, err
+}
+
+// ListSubscriptions returns subscriptions belonging to a service in stable ID order.
+func (s *Store) ListSubscriptions(serviceID string) ([]model.Subscription, error) {
+	values, err := scanSubscriptions(s.db)
+	if err != nil {
+		return nil, err
+	}
+	filtered := make([]model.Subscription, 0)
+	for _, value := range values {
+		if equalID(value.ServiceID, serviceID) {
+			filtered = append(filtered, value)
+		}
+	}
+	return filtered, nil
+}
+
+// DeleteSubscription removes a subscription.
+func (s *Store) DeleteSubscription(id string) error {
+	return deleteScopedResource(s.db, "subscriptions", id)
+}
+
+// RegenerateSubscriptionKey replaces one key and advances the subscription ETag.
+func (s *Store) RegenerateSubscriptionKey(id string, primary bool) (model.Subscription, error) {
+	column := "secondary_key"
+	if primary {
+		column = "primary_key"
+	}
+	result, err := s.db.Exec(`UPDATE subscriptions SET `+column+`=?, etag=? WHERE lower(id)=lower(?)`, NewOpaqueID(), newETag(), id)
+	if err != nil {
+		return model.Subscription{}, err
+	}
+	count, _ := result.RowsAffected()
+	if count == 0 {
+		return model.Subscription{}, ErrNotFound
+	}
+	return s.GetSubscription(id)
+}
+
 // UpsertPolicy stores policy XML for a scope.
 func (s *Store) UpsertPolicy(v model.Policy) (model.Policy, error) {
 	v.ETag = newETag()

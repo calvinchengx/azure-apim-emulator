@@ -145,10 +145,32 @@ func TestGoManagementSDKConfiguresProtectedGateway(t *testing.T) {
 	}, nil); err != nil {
 		t.Fatal(err)
 	}
-
+	secrets, err := subscriptionClient.ListSecrets(ctx, defaultResourceGroup, "emulator", "go-sdk-subscription", nil)
+	if err != nil || secrets.PrimaryKey == nil || *secrets.PrimaryKey != primary || secrets.SecondaryKey == nil || *secrets.SecondaryKey != secondary {
+		t.Fatalf("subscription secrets = %+v, %v", secrets, err)
+	}
+	if _, err := subscriptionClient.RegeneratePrimaryKey(ctx, defaultResourceGroup, "emulator", "go-sdk-subscription", nil); err != nil {
+		t.Fatal(err)
+	}
+	rotated, err := subscriptionClient.ListSecrets(ctx, defaultResourceGroup, "emulator", "go-sdk-subscription", nil)
+	if err != nil || rotated.PrimaryKey == nil || *rotated.PrimaryKey == primary || rotated.SecondaryKey == nil || *rotated.SecondaryKey != secondary {
+		t.Fatalf("rotated subscription secrets = %+v, %v", rotated, err)
+	}
 	request, _ := http.NewRequest(http.MethodGet, front.URL+"/go-sdk-full/items", nil)
 	request.Header.Set("Ocp-Apim-Subscription-Key", primary)
 	response, err := front.Client().Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("retired subscription key status = %d", response.StatusCode)
+	}
+	primary = *rotated.PrimaryKey
+
+	request, _ = http.NewRequest(http.MethodGet, front.URL+"/go-sdk-full/items", nil)
+	request.Header.Set("Ocp-Apim-Subscription-Key", primary)
+	response, err = front.Client().Do(request)
 	if err != nil {
 		t.Fatal(err)
 	}
