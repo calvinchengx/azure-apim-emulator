@@ -1,0 +1,99 @@
+# 03 - Management plane and resource model
+
+## Contract source
+
+The canonical contract is the public `Microsoft.ApiManagement` specification in
+`Azure/azure-rest-api-specs`. Stable `2024-05-01` is implemented first, while
+the service accepts older versions required by supported SDKs. Preview versions
+live behind explicit compatibility flags.
+
+## ARM routing
+
+Support resource IDs under:
+
+```text
+/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/
+  providers/Microsoft.ApiManagement/service/{serviceName}/...
+```
+
+Subscription IDs and resource groups are logical namespaces. The emulator does
+not require a separate Resource Manager emulator, but implements the APIM
+provider paths, provider metadata needed by clients, standard ARM headers, and
+APIM operations reached by official SDKs.
+
+## Service lifecycle decision
+
+- Seed a configurable default service at startup for immediate local use.
+- `PUT` creates or updates services through a deterministic asynchronous operation.
+- `GET`, `PATCH`, `DELETE`, list, check-name, locations, SKUs, and deleted-service workflows follow their documented contracts.
+- LROs honor `Azure-AsyncOperation`, `Location`, `Retry-After`, terminal states, error bodies, cancellation where documented, and the controllable clock.
+- Infrastructure-heavy properties are validated and persisted; their local behavioral effect is owned by networking, tier, or gateway modules.
+- A missing service is never created by `GET`. Optional lazy creation occurs only on a child write when explicitly enabled for developer convenience.
+
+## Resource coverage
+
+The canonical model must cover every stable APIM resource family, including:
+
+- services, locations, regions, SKUs, certificates, hostname configurations, identities, private endpoints, and network status
+- APIs, revisions, releases, versions, version sets, operations, policies, schemas, tags, and documentation
+- products, groups, users, subscriptions, client applications, and product/API/group links
+- named values, backends, backend pools, caches, loggers, diagnostics, and policy fragments
+- OAuth authorization servers, OpenID Connect providers, identity providers, authorization providers, authorizations, and access policies
+- gateways, gateway APIs, hostname bindings, certificate authorities, configuration connections, and workspace gateways
+- workspaces and all workspace-scoped child resources
+- portal content types/items, revisions, configuration, delegation, sign-in, and sign-up settings
+- notifications, email templates, issues, comments, attachments, reports, tenant access, and miscellaneous documented tools
+
+The parity ledger is generated from the specification operation inventory so a
+new upstream operation appears as a failing audit rather than an unnoticed gap.
+
+## Canonical model and API projections
+
+Store one canonical resource model and implement explicit version projections:
+
+```text
+wire request -> version decoder -> canonical command -> domain/store
+domain result -> version encoder -> wire response
+```
+
+Unknown JSON properties are preserved where ARM round-trips them. Read-only
+properties supplied by clients are ignored or rejected exactly as Azure does.
+Null, omitted, and empty values remain distinct where the specification or
+observed behavior distinguishes them.
+
+## Common ARM semantics
+
+Implement centrally and test across resources:
+
+- case rules for resource groups, service names, IDs, and child names
+- resource ID normalization without corrupting user-visible IDs
+- `ETag`, `If-Match`, `If-None-Match`, wildcard preconditions, and conflicts
+- OData `$filter`, `$top`, `$skip`, paging, stable ordering, `nextLink`, and count
+- PUT replacement versus merge behavior and PATCH field presence
+- standard ARM error envelopes, nested details, target fields, and request IDs
+- LRO polling, deletion, retry headers, and idempotency
+- import/export content formats, linked content retrieval, size limits, and validation
+- secret-list operations that intentionally differ from ordinary GET
+
+## API import and export
+
+Support OpenAPI 2/3/3.1 as documented, WSDL/SOAP, GraphQL schema, WADL where
+still accepted, OData metadata, and protobuf/gRPC definitions. Import is a
+compiler front end that produces APIs, operations, schemas, representations,
+parameters, and protocol metadata transactionally. Original documents are
+retained for matching export modes and forensic comparison.
+
+Linked imports use a controlled HTTP fetcher with timeouts, size limits,
+redirect policy, TLS configuration, and emulator SSRF warnings. Tests use local
+fixture servers.
+
+## SDK endpoint and authentication
+
+Management clients point to `https://management.azure.localhost:{port}` while
+requesting the normal ARM audience. `entra-emulator` issues the token and the
+management plane validates signature, issuer, audience, lifetime, and principal.
+
+Default local authorization grants a valid ARM token full APIM access. Optional
+RBAC mode evaluates built-in/custom role assignments at subscription, resource
+group, service, and workspace scopes, including deny behavior observable by SDKs.
+

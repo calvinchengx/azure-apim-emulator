@@ -1,0 +1,28 @@
+# Runtime state
+data/
+*.db
+*.db-shm
+*.db-wal
+*.log
+
+# Build and test output
+/dist/
+/bin/
+cover.out
+test-results/
+playwright-report/
+
+# Go and local tooling
+vendor/
+.env
+.DS_Store
+.claude/
+.nwave/
+
+# Node projects
+node_modules/
+website/dist/
+website/src/content/docs/
+portal/test-results/
+portal/playwright-report/
+
