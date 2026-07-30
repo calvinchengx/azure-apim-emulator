@@ -1,0 +1,203 @@
+package arm
+
+import (
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"github.com/calvinchengx/azure-apim-emulator/internal/auth"
+	"github.com/calvinchengx/azure-apim-emulator/internal/clock"
+	"github.com/calvinchengx/azure-apim-emulator/internal/model"
+	"github.com/calvinchengx/azure-apim-emulator/internal/store"
+)
+
+const (
+	basePath = "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.ApiManagement/service/svc"
+	apiQuery = "?api-version=2024-05-01"
+)
+
+type rejectingAuth struct{}
+
+func (rejectingAuth) ValidateRequest(*http.Request) (*auth.Principal, error) {
+	return nil, errors.New("rejected")
+}
+
+func TestTopLevelRoutingErrors(t *testing.T) {
+	handler, _ := testHandler(t)
+	tests := []struct {
+		name, method, path string
+		auth               auth.RequestValidator
+		want               int
+	}{
+		{"auth", http.MethodGet, basePath + apiQuery, rejectingAuth{}, http.StatusUnauthorized},
+		{"version", http.MethodGet, basePath + "?api-version=old", auth.AllowAll{}, http.StatusBadRequest},
+		{"bad path", http.MethodGet, "/not-arm" + apiQuery, auth.AllowAll{}, http.StatusNotFound},
+		{"unknown child", http.MethodGet, basePath + "/unknown/x" + apiQuery, auth.AllowAll{}, http.StatusNotFound},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			handler.Auth = test.auth
+			assertStatus(t, handler, test.method, test.path, "", test.want)
+		})
+	}
+	if _, ok := parse(nil); ok {
+		t.Fatal("empty path parsed")
+	}
+	if got := split("/"); got != nil {
+		t.Fatalf("split root = %v", got)
+	}
+}
+
+func TestServiceBranches(t *testing.T) {
+	handler, st := testHandler(t)
+	assertStatus(t, handler, http.MethodGet, basePath+apiQuery, "", http.StatusNotFound)
+	assertStatus(t, handler, http.MethodPut, basePath+apiQuery, `{`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPut, basePath+apiQuery, `{"sku":{"name":"Developer"}}`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPut, basePath+apiQuery, `{"location":"local","sku":{}}`, http.StatusCreated)
+	assertStatus(t, handler, http.MethodGet, basePath+apiQuery, "", http.StatusOK)
+	assertStatus(t, handler, http.MethodPost, basePath+apiQuery, `{}`, http.StatusMethodNotAllowed)
+
+	handler.Activate = func() error { return errors.New("compile failed") }
+	assertStatus(t, handler, http.MethodPut, basePath+apiQuery, `{"location":"local"}`, http.StatusBadRequest)
+	handler.Activate = nil
+	assertStatus(t, handler, http.MethodDelete, basePath+apiQuery, "", http.StatusNoContent)
+	assertStatus(t, handler, http.MethodDelete, basePath+apiQuery, "", http.StatusNotFound)
+
+	recorder := httptest.NewRecorder()
+	handler.storeError(recorder, errors.New("database"), "target")
+	if recorder.Code != http.StatusConflict {
+		t.Fatalf("store error status = %d", recorder.Code)
+	}
+	_ = st
+}
+
+func TestAPIBranches(t *testing.T) {
+	handler, st := testHandler(t)
+	seedService(t, st)
+	assertStatus(t, handler, http.MethodGet, basePath+"/apis"+apiQuery, "", http.StatusNotFound)
+	assertStatus(t, handler, http.MethodGet, basePath+"/apis/missing"+apiQuery, "", http.StatusNotFound)
+	assertStatus(t, handler, http.MethodPut, basePath+"/apis/a"+apiQuery, `{`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPut, basePath+"/apis/a"+apiQuery, `{"properties":{"displayName":"A"}}`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPut, basePath+"/apis/a"+apiQuery, `{"properties":{"displayName":"A","path":"a","serviceUrl":"https://backend"}}`, http.StatusCreated)
+	assertStatus(t, handler, http.MethodGet, basePath+"/apis/a"+apiQuery, "", http.StatusOK)
+
+	assertStatus(t, handler, http.MethodPut, basePath+"/apis/a/operations/get"+apiQuery, `{`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPut, basePath+"/apis/a/operations/get"+apiQuery, `{"properties":{"displayName":"Get","method":"GET","urlTemplate":"/"}}`, http.StatusCreated)
+	assertStatus(t, handler, http.MethodPost, basePath+"/apis/a/operations/get"+apiQuery, `{}`, http.StatusNotFound)
+
+	assertStatus(t, handler, http.MethodPut, basePath+"/apis/a/policies/policy"+apiQuery, `{`, http.StatusBadRequest)
+	handler.ValidatePolicy = func(string) error { return errors.New("invalid policy") }
+	assertStatus(t, handler, http.MethodPut, basePath+"/apis/a/policies/policy"+apiQuery, `{"properties":{"format":"rawxml","value":"x"}}`, http.StatusBadRequest)
+	handler.ValidatePolicy = nil
+	assertStatus(t, handler, http.MethodPut, basePath+"/apis/a/policies/policy"+apiQuery, `{"properties":{"format":"rawxml","value":"<policies/>"}}`, http.StatusCreated)
+
+	handler.Activate = func() error { return errors.New("activation") }
+	assertStatus(t, handler, http.MethodPut, basePath+"/apis/a"+apiQuery, `{"properties":{"displayName":"A","path":"a","serviceUrl":"https://backend"}}`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPut, basePath+"/apis/a/operations/two"+apiQuery, `{"properties":{"displayName":"Two","method":"GET","urlTemplate":"/two"}}`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPut, basePath+"/apis/a/policies/policy"+apiQuery, `{"properties":{"value":"<policies/>"}}`, http.StatusBadRequest)
+}
+
+func TestProductAndSubscriptionBranches(t *testing.T) {
+	handler, st := testHandler(t)
+	seedService(t, st)
+	_, _ = st.UpsertAPI(model.API{ServiceID: serviceModel().ID(), Name: "a", DisplayName: "A", Path: "a", ServiceURL: "https://backend"})
+
+	assertStatus(t, handler, http.MethodGet, basePath+"/products"+apiQuery, "", http.StatusNotFound)
+	assertStatus(t, handler, http.MethodPut, basePath+"/products/p"+apiQuery, `{`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPut, basePath+"/products/p"+apiQuery, `{"properties":{"displayName":"P"}}`, http.StatusCreated)
+	assertStatus(t, handler, http.MethodPut, basePath+"/products/p/apis/a"+apiQuery, `{}`, http.StatusCreated)
+	assertStatus(t, handler, http.MethodGet, basePath+"/products/p"+apiQuery, "", http.StatusNotFound)
+
+	assertStatus(t, handler, http.MethodGet, basePath+"/subscriptions/s"+apiQuery, "", http.StatusNotFound)
+	assertStatus(t, handler, http.MethodPut, basePath+"/subscriptions/s"+apiQuery, `{`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPut, basePath+"/subscriptions/s"+apiQuery, `{"properties":{"displayName":"S","scope":"`+serviceModel().ID()+`"}}`, http.StatusCreated)
+
+	handler.Activate = func() error { return errors.New("activation") }
+	assertStatus(t, handler, http.MethodPut, basePath+"/products/p"+apiQuery, `{"properties":{"displayName":"P"}}`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPut, basePath+"/products/p/apis/a"+apiQuery, `{}`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPut, basePath+"/subscriptions/s"+apiQuery, `{"properties":{"displayName":"S","scope":"`+serviceModel().ID()+`"}}`, http.StatusBadRequest)
+
+	secrets := subscriptionWire(model.Subscription{ServiceID: serviceModel().ID(), Name: "s", PrimaryKey: "one", SecondaryKey: "two"}, true)
+	properties := secrets["properties"].(map[string]any)
+	if properties["primaryKey"] != "one" || properties["secondaryKey"] != "two" {
+		t.Fatalf("subscription secrets = %v", properties)
+	}
+}
+
+func TestForeignKeyStoreErrors(t *testing.T) {
+	handler, _ := testHandler(t)
+	assertStatus(t, handler, http.MethodPut, basePath+"/apis/a"+apiQuery, `{"properties":{"displayName":"A","serviceUrl":"https://backend"}}`, http.StatusConflict)
+	assertStatus(t, handler, http.MethodPut, basePath+"/products/p"+apiQuery, `{"properties":{"displayName":"P"}}`, http.StatusConflict)
+	assertStatus(t, handler, http.MethodPut, basePath+"/subscriptions/s"+apiQuery, `{"properties":{"displayName":"S"}}`, http.StatusConflict)
+	assertStatus(t, handler, http.MethodPut, basePath+"/apis/a/operations/get"+apiQuery, `{"properties":{"method":"GET","urlTemplate":"/"}}`, http.StatusConflict)
+	assertStatus(t, handler, http.MethodPut, basePath+"/products/p/apis/a"+apiQuery, `{}`, http.StatusConflict)
+}
+
+func TestServiceDeleteActivationFailure(t *testing.T) {
+	handler, st := testHandler(t)
+	seedService(t, st)
+	handler.Activate = func() error { return errors.New("activation") }
+	assertStatus(t, handler, http.MethodDelete, basePath+apiQuery, "", http.StatusInternalServerError)
+}
+
+func TestClosedStoreWriteErrors(t *testing.T) {
+	handler, st := testHandler(t)
+	if err := st.Close(); err != nil {
+		t.Fatal(err)
+	}
+	assertStatus(t, handler, http.MethodPut, basePath+apiQuery, `{"location":"local"}`, http.StatusConflict)
+	assertStatus(t, handler, http.MethodPut, basePath+"/apis/a/operations/get"+apiQuery, `{"properties":{"method":"GET","urlTemplate":"/"}}`, http.StatusConflict)
+	assertStatus(t, handler, http.MethodPut, basePath+"/apis/a/policies/policy"+apiQuery, `{"properties":{"value":"<policies/>"}}`, http.StatusConflict)
+	assertStatus(t, handler, http.MethodPut, basePath+"/products/p/apis/a"+apiQuery, `{}`, http.StatusConflict)
+}
+
+func TestAbsoluteAndOperationHelpers(t *testing.T) {
+	request := httptest.NewRequest(http.MethodGet, "https://host/path", nil)
+	request.Host = "host.test"
+	if got := absolute(request, "/next"); got != "https://host.test/next" {
+		t.Fatalf("TLS absolute = %q", got)
+	}
+	request.Header.Set("X-Forwarded-Proto", "custom")
+	if got := absolute(request, "/next"); got != "custom://host.test/next" {
+		t.Fatalf("forwarded absolute = %q", got)
+	}
+	recorder := httptest.NewRecorder()
+	OperationStatus(recorder, request)
+	if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), "Succeeded") {
+		t.Fatalf("operation = %d %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func testHandler(t *testing.T) (*Handler, *store.Store) {
+	t.Helper()
+	st, err := store.Open("", clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	return &Handler{Store: st, Auth: auth.AllowAll{}}, st
+}
+
+func serviceModel() model.Service {
+	return model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "svc", Location: "local", SKUName: "Developer", SKUCapacity: 1}
+}
+
+func seedService(t *testing.T, st *store.Store) {
+	t.Helper()
+	if _, err := st.UpsertService(serviceModel()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func assertStatus(t *testing.T, handler http.Handler, method, path, body string, want int) {
+	t.Helper()
+	request := httptest.NewRequest(method, path, strings.NewReader(body))
+	request.Header.Set("Authorization", "Bearer token")
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != want {
+		t.Fatalf("%s %s = %d, want %d: %s", method, path, recorder.Code, want, recorder.Body.String())
+	}
+}

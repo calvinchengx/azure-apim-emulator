@@ -8,15 +8,15 @@ without erasing completed evidence.
 
 Goal: prove the architecture before broad resource work.
 
-- Go module, command, config, controllable clock, request IDs, SQLite migrations, TLS, and host routing.
-- Embeddable `pkg/emulator` test fixture.
-- ARM auth against `entra-emulator` and canonical ARM errors.
-- Pre-seeded service plus service GET/PUT/PATCH/DELETE/list using deterministic LROs.
-- Minimal API, operation, policy, product, and subscription resources.
-- Four-SDK custom-endpoint spike using pinned Python, JavaScript, .NET, and Go clients.
-- HTTP route to fixture backend, subscription-key validation, `forward-request`, `set-header`, and `return-response`.
-- Policy XML round-trip, snapshot compiler, failed-compile rollback, and structured trace.
-- CI, coverage floor, GoReleaser skeleton, container, compose, and initial docs site.
+- [x] Go module, command, config, controllable clock, request IDs, SQLite migrations, TLS, and host routing.
+- [ ] Embeddable `pkg/emulator` test fixture.
+- [x] ARM auth against `entra-emulator` and canonical ARM errors for the implemented resources.
+- [ ] Pre-seeded service plus full service GET/PUT/PATCH/DELETE/list semantics. GET/PUT/DELETE and deterministic LRO polling are working.
+- [x] Minimal API, operation, policy, product, product/API link, and subscription resources.
+- [ ] Four-SDK custom-endpoint spike. Go `armapimanagement v1.1.1` is verified at `2021-08-01`; Python, JavaScript, and .NET remain.
+- [x] HTTP route to fixture backend, subscription-key validation, `forward-request`, `set-header`, and `return-response`.
+- [ ] Policy XML round-trip, snapshot compiler, failed-compile protection, and structured trace. Compilation and immutable activation work; management GET and trace remain.
+- [ ] CI, coverage floor, GoReleaser skeleton, container, compose, and initial docs site.
 
 Exit: every SDK creates/configures a service and a subscription-protected API,
 then calls it through the gateway with Entra-authenticated management.
@@ -127,4 +127,3 @@ previews have isolated versioned coverage.
 
 Exit: a release may claim full parity only for the exact dated compatibility
 snapshot whose evidence is published. Later upstream changes reopen the ledger.
-

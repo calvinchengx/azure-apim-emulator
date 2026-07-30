@@ -79,9 +79,8 @@ claim that local infrastructure is a security or availability boundary.
 ## Quality bars
 
 - Race-clean Go tests and deterministic clocks.
-- At least 90 percent statement coverage once implementation begins; critical policy and routing packages require branch-oriented tests beyond the aggregate floor.
+- 100 percent aggregate statement coverage for committed Go code; critical policy and routing packages also require branch-oriented tests beyond the aggregate metric.
 - No silent fallback for unsupported policies, expressions, protocols, or API versions.
 - Bounded memory under streaming workloads; bodies are buffered only when policy semantics require it.
 - Original policy and API documents remain retrievable byte-for-byte where Azure preserves them.
 - Every bug fixed from an Azure comparison gains a permanent golden or differential fixture.
-

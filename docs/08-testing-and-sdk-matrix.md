@@ -101,11 +101,10 @@ These routes are local tooling and never impersonate Azure APIs.
 
 ## Coverage gates
 
-- 90 percent aggregate statement coverage after P0
+- 100 percent aggregate statement coverage for committed Go code
 - 100 percent operation inventory classification
 - 100 percent policy inventory classification
 - every `verified` parity item links to an automated differential fixture
 - race detector on core packages
 - cross-platform build and smoke tests
 - portal Playwright tests at desktop and mobile widths
-

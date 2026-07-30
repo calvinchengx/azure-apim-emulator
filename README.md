@@ -8,9 +8,36 @@ Microsoft SDKs and differential tests against Azure APIM.
 
 ## Status
 
-**Design phase.** This repository currently contains the implementation charter,
-architecture, compatibility contract, subsystem plans, test strategy, parity
-ledger, and delivery roadmap. No APIM endpoint is implemented yet.
+**P0 implementation is underway.** The first vertical slice is working:
+
+- Go process, pure-Go SQLite, controllable clock, local TLS, and seeded service
+- ARM token validation against `entra-emulator`
+- service GET/PUT/DELETE with deterministic LRO polling
+- API, operation, product, product/API link, subscription, and API-policy writes
+- XML compilation for `base`, `set-header`, `set-backend-service`,
+  `rewrite-uri`, `forward-request`, and `return-response`
+- immutable gateway snapshots, operation routing, subscription keys, streaming
+  backend forwarding, and APIM-shaped failures
+- official Go APIM SDK `v1.1.1` against API `2021-08-01`, including a real
+  `azidentity.ClientSecretCredential` flow through `entra-emulator`
+
+Python, JavaScript, and .NET SDK witnesses and the remaining P0 resource
+semantics are still pending; see the live parity ledger.
+
+## Development
+
+```bash
+APIM_DISABLE_AUTH=true go run ./cmd/azure-apim-emulator --disable-tls
+go test ./...
+make test-coverage
+```
+
+The default listener is `http://localhost:8445` in this development mode. ARM
+requests use `management.azure.localhost`; gateway requests use
+`{service}.azure-api.localhost` or plain localhost for the seeded service.
+`make test-coverage` enforces 100% aggregate statement coverage across the
+current Go implementation. Run the full build, race, coverage, and vet suite
+with `make verify`.
 
 ## Compatibility target
 
@@ -75,4 +102,3 @@ Apache-2.0, matching the emulator family. Implementation will be clean-room,
 grounded only in public specifications, public Microsoft documentation,
 open-source Microsoft projects, official SDK behavior, and black-box behavioral
 study of services the project is authorized to test.
-

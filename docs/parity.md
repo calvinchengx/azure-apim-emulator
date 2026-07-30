@@ -8,14 +8,14 @@ Snapshot date: 2026-07-30
 
 | Capability track | State | Target phase | Verification witness |
 |---|---|---:|---|
-| process/config/TLS/store/clock | planned | P0 | Go integration and distribution smoke |
-| service ARM lifecycle and LROs | planned | P0 | four official SDKs plus Azure differential |
-| APIs/operations/products/subscriptions | planned | P0-P1 | SDK workflow and gateway call |
+| process/config/TLS/store/clock | implemented | P0 | Go tests; distribution smoke pending |
+| service ARM lifecycle and LROs | partial | P0 | GET/PUT/DELETE and completed LRO; PATCH/list and Azure differential pending |
+| APIs/operations/products/subscriptions | partial | P0-P1 | vertical-slice integration test; broader CRUD pending |
 | stable `2024-05-01` operation inventory | planned | P1-P7 | generated spec audit and SDK/differential tests |
-| older SDK API versions | planned | P0-P1 | pinned Go/JS/.NET/Python clients |
+| older SDK API versions | sdk-verified | P0-P1 | Go SDK `v1.1.1` at `2021-08-01`; other clients pending |
 | preview `2025-09-01-preview` | planned | P8 | isolated preview suite |
-| HTTP gateway and routing | planned | P0-P1 | backend recorder and Azure differential |
-| policy XML/inheritance | planned | P0-P2 | compiler fixtures and Azure traces |
+| HTTP gateway and routing | implemented | P0-P1 | operation template, subscription, backend recorder integration test |
+| policy XML/inheritance | partial | P0-P2 | API-scope XML compiler; broader scope inheritance pending |
 | policy inventory | planned | P1-P2 | generated reference audit |
 | C# expression member inventory | planned | P2 | .NET vectors and Azure differential fuzzing |
 | developer portal | planned | P3 | portal API fixtures and Playwright journeys |
@@ -30,6 +30,7 @@ Snapshot date: 2026-07-30
 | diagnostics/analytics/monitoring | planned | P1/P7 | telemetry schema/correlation fixtures |
 | authorization providers/integrations | planned | P7 | adapter and Azure differential suites |
 | AI gateway and MCP | planned | P8 | deterministic providers and opt-in real suites |
+| Entra ARM authentication | sdk-verified | P0 | Go SDK + `azidentity` + in-process `entra-emulator` |
 | full dated stable parity audit | planned | P9 | published evidence snapshot |
 
 ## Claim policy
@@ -38,4 +39,3 @@ The project may say a capability is supported when it is `implemented`, but it
 may say it matches Azure only at `verified`. A release may claim full parity only
 for the dated stable snapshot in which every inventory entry is classified and
 verified or carries a narrowly documented infrastructure substitution.
-

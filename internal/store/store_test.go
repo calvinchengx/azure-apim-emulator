@@ -1,0 +1,273 @@
+package store
+
+import (
+	"database/sql"
+	"errors"
+	"fmt"
+	"strings"
+	"testing"
+
+	"github.com/calvinchengx/azure-apim-emulator/internal/clock"
+	"github.com/calvinchengx/azure-apim-emulator/internal/model"
+)
+
+func TestStoreResourceLifecycle(t *testing.T) {
+	st, err := Open(t.TempDir(), clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	service := model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "svc", Location: "local", SKUName: "Developer", SKUCapacity: 1}
+	service, err = st.UpsertService(service)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if service.ETag == "" || service.ProvisioningState != "Succeeded" {
+		t.Fatalf("service = %+v", service)
+	}
+	gotService, err := st.GetService(service.ID())
+	if err != nil || gotService.Name != "svc" {
+		t.Fatalf("GetService = %+v, %v", gotService, err)
+	}
+	if _, err := st.GetService("/missing"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing service = %v", err)
+	}
+
+	api := model.API{ServiceID: service.ID(), Name: "api", DisplayName: "API", Path: "/api/", ServiceURL: "https://backend.test", Protocols: []string{"https"}, SubscriptionRequired: true}
+	api, err = st.UpsertAPI(api)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if api.ETag == "" {
+		t.Fatal("API ETag missing")
+	}
+	gotAPI, err := st.GetAPI(api.ID())
+	if err != nil || gotAPI.Path != "api" || len(gotAPI.Protocols) != 1 {
+		t.Fatalf("GetAPI = %+v, %v", gotAPI, err)
+	}
+	if _, err := st.GetAPI("/missing"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing API = %v", err)
+	}
+
+	if _, err := st.UpsertOperation(model.Operation{APIID: api.ID(), Name: "get", DisplayName: "Get", Method: "get", URLTemplate: "/{id}"}); err != nil {
+		t.Fatal(err)
+	}
+	product, err := st.UpsertProduct(model.Product{ServiceID: service.ID(), Name: "product", DisplayName: "Product", State: "published"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.LinkProductAPI(product.ID(), api.ID()); err != nil {
+		t.Fatal(err)
+	}
+	subscription, err := st.UpsertSubscription(model.Subscription{ServiceID: service.ID(), Name: "sub", DisplayName: "Sub", Scope: product.ID()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if subscription.PrimaryKey == "" || subscription.SecondaryKey == "" || subscription.State != "active" {
+		t.Fatalf("subscription = %+v", subscription)
+	}
+	if _, err := st.UpsertPolicy(model.Policy{ScopeID: api.ID(), Format: "rawxml", Value: "<policies/>"}); err != nil {
+		t.Fatal(err)
+	}
+
+	services, apis, operations, products, links, subscriptions, policies, err := st.RuntimeData()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(services) != 1 || len(apis) != 1 || len(operations) != 1 || len(products) != 1 ||
+		len(links[product.ID()]) != 1 || len(subscriptions) != 1 || len(policies) != 1 {
+		t.Fatalf("runtime sizes = %d %d %d %d %#v %d %d", len(services), len(apis), len(operations), len(products), links, len(subscriptions), len(policies))
+	}
+	if err := st.DeleteService(service.ID()); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.DeleteService(service.ID()); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("second delete = %v", err)
+	}
+}
+
+func TestOpenMemoryIsolationAndIDs(t *testing.T) {
+	a, err := Open("", clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.Close()
+	b, err := Open("", clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+	if NewOpaqueID() == NewOpaqueID() {
+		t.Fatal("opaque IDs collided")
+	}
+	if values, err := b.ListServices(); err != nil || len(values) != 0 {
+		t.Fatalf("isolated store = %v, %v", values, err)
+	}
+}
+
+func TestOpenAndOpaqueIDFailures(t *testing.T) {
+	oldOpen, oldRead := openDB, readRandom
+	t.Cleanup(func() {
+		openDB = oldOpen
+		readRandom = oldRead
+	})
+
+	want := errors.New("open failed")
+	openDB = func(string, string) (*sql.DB, error) { return nil, want }
+	if _, err := Open("", clock.New()); !errors.Is(err, want) {
+		t.Fatalf("Open error = %v", err)
+	}
+
+	readRandom = func([]byte) (int, error) { return 0, want }
+	defer func() {
+		if recovered := recover(); !errors.Is(recovered.(error), want) {
+			t.Fatalf("panic = %v", recovered)
+		}
+	}()
+	NewOpaqueID()
+}
+
+func TestClosedStoreErrors(t *testing.T) {
+	st, err := Open("", clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Close(); err != nil {
+		t.Fatal(err)
+	}
+	service := model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "svc"}
+	api := model.API{ServiceID: service.ID(), Name: "api"}
+	for name, call := range map[string]func() error{
+		"delete": func() error { return st.DeleteService(service.ID()) },
+		"list": func() error {
+			_, err := st.ListServices()
+			return err
+		},
+		"get API": func() error {
+			_, err := st.GetAPI(api.ID())
+			return err
+		},
+		"runtime": func() error {
+			_, _, _, _, _, _, _, err := st.RuntimeData()
+			return err
+		},
+	} {
+		if err := call(); err == nil {
+			t.Errorf("%s succeeded on closed store", name)
+		}
+	}
+}
+
+func TestRuntimeDataStopsAtEachQueryFailure(t *testing.T) {
+	tables := []string{"apis", "operations", "products", "product_apis", "subscriptions"}
+	for _, table := range tables {
+		t.Run(table, func(t *testing.T) {
+			st, err := Open("", clock.New())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer st.Close()
+			if _, err := st.db.Exec("DROP TABLE " + table); err != nil {
+				t.Fatal(err)
+			}
+			if _, _, _, _, _, _, _, err := st.RuntimeData(); err == nil {
+				t.Fatal("RuntimeData succeeded with missing table")
+			}
+		})
+	}
+}
+
+func TestScanFunctionsRejectMalformedRows(t *testing.T) {
+	tests := []struct {
+		name   string
+		schema string
+		insert string
+		scan   func(*sql.DB) error
+	}{
+		{
+			"services",
+			`CREATE TABLE services (id, subscription_id, resource_group, name, location, sku_name, sku_capacity, provisioning_state, etag)`,
+			`INSERT INTO services VALUES ('id', NULL, '', '', '', '', 0, '', '')`,
+			func(db *sql.DB) error {
+				_, err := (&Store{db: db}).ListServices()
+				return err
+			},
+		},
+		{
+			"apis",
+			`CREATE TABLE apis (id, service_id, name, display_name, path, service_url, protocols_json, subscription_required, etag)`,
+			`INSERT INTO apis VALUES ('id', NULL, '', '', '', '', '[]', 0, '')`,
+			func(db *sql.DB) error { _, err := scanAPIs(db); return err },
+		},
+		{
+			"operations",
+			`CREATE TABLE operations (id, api_id, name, display_name, method, url_template, etag)`,
+			`INSERT INTO operations VALUES ('id', NULL, '', '', '', '', '')`,
+			func(db *sql.DB) error { _, err := scanOperations(db); return err },
+		},
+		{
+			"products",
+			`CREATE TABLE products (id, service_id, name, display_name, state, approval_required, etag)`,
+			`INSERT INTO products VALUES ('id', NULL, '', '', '', 0, '')`,
+			func(db *sql.DB) error { _, err := scanProducts(db); return err },
+		},
+		{
+			"links",
+			`CREATE TABLE product_apis (product_id, api_id)`,
+			`INSERT INTO product_apis VALUES (NULL, '')`,
+			func(db *sql.DB) error { _, err := scanLinks(db); return err },
+		},
+		{
+			"subscriptions",
+			`CREATE TABLE subscriptions (id, service_id, name, display_name, scope, state, primary_key, secondary_key, etag)`,
+			`INSERT INTO subscriptions VALUES ('id', NULL, '', '', '', '', '', '', '')`,
+			func(db *sql.DB) error { _, err := scanSubscriptions(db); return err },
+		},
+		{
+			"policies",
+			`CREATE TABLE policies (scope_id, format, value, etag)`,
+			`INSERT INTO policies VALUES (NULL, '', '', '')`,
+			func(db *sql.DB) error { _, err := scanPolicies(db); return err },
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			db, err := sql.Open("sqlite", "file:"+strings.ReplaceAll(t.Name(), "/", "-")+"?mode=memory&cache=shared")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+			if _, err := db.Exec(test.schema); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := db.Exec(test.insert); err != nil {
+				t.Fatal(err)
+			}
+			if err := test.scan(db); err == nil {
+				t.Fatal("malformed row was accepted")
+			}
+		})
+	}
+}
+
+func TestScanFunctionsQueryErrors(t *testing.T) {
+	db, err := sql.Open("sqlite", "file:empty-scans?mode=memory&cache=shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	scans := []func(*sql.DB) error{
+		func(db *sql.DB) error { _, err := scanAPIs(db); return err },
+		func(db *sql.DB) error { _, err := scanOperations(db); return err },
+		func(db *sql.DB) error { _, err := scanProducts(db); return err },
+		func(db *sql.DB) error { _, err := scanLinks(db); return err },
+		func(db *sql.DB) error { _, err := scanSubscriptions(db); return err },
+		func(db *sql.DB) error { _, err := scanPolicies(db); return err },
+	}
+	for index, scan := range scans {
+		if err := scan(db); err == nil {
+			t.Errorf("scan %d succeeded: %s", index, fmt.Sprint(err))
+		}
+	}
+}
