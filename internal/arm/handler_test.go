@@ -122,10 +122,19 @@ func TestAPIBranches(t *testing.T) {
 	assertStatus(t, handler, http.MethodPost, basePath+"/apis/a/operations/get"+apiQuery, `{}`, http.StatusNotFound)
 
 	assertStatus(t, handler, http.MethodPut, basePath+"/apis/a/policies/policy"+apiQuery, `{`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodGet, basePath+"/apis/a/policies/policy"+apiQuery, "", http.StatusNotFound)
 	handler.ValidatePolicy = func(string) error { return errors.New("invalid policy") }
 	assertStatus(t, handler, http.MethodPut, basePath+"/apis/a/policies/policy"+apiQuery, `{"properties":{"format":"rawxml","value":"x"}}`, http.StatusBadRequest)
 	handler.ValidatePolicy = nil
 	assertStatus(t, handler, http.MethodPut, basePath+"/apis/a/policies/policy"+apiQuery, `{"properties":{"format":"rawxml","value":"<policies/>"}}`, http.StatusCreated)
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, basePath+"/apis/a/policies/policy"+apiQuery, nil)
+	request.Header.Set("Authorization", "Bearer token")
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), `\u003cpolicies/\u003e`) || recorder.Header().Get("ETag") == "" {
+		t.Fatalf("policy GET = %d %s", recorder.Code, recorder.Body.String())
+	}
+	assertStatus(t, handler, http.MethodGet, basePath+"/apis/a/policies/missing"+apiQuery, "", http.StatusNotFound)
 
 	handler.Activate = func() error { return errors.New("activation") }
 	assertStatus(t, handler, http.MethodPut, basePath+"/apis/a"+apiQuery, `{"properties":{"displayName":"A","path":"a","serviceUrl":"https://backend"}}`, http.StatusBadRequest)
@@ -184,6 +193,7 @@ func TestClosedStoreWriteErrors(t *testing.T) {
 	assertStatus(t, handler, http.MethodPut, basePath+apiQuery, `{"location":"local","properties":{"publisherName":"Local","publisherEmail":"local@example.test"}}`, http.StatusConflict)
 	assertStatus(t, handler, http.MethodPut, basePath+"/apis/a/operations/get"+apiQuery, `{"properties":{"method":"GET","urlTemplate":"/"}}`, http.StatusConflict)
 	assertStatus(t, handler, http.MethodPut, basePath+"/apis/a/policies/policy"+apiQuery, `{"properties":{"value":"<policies/>"}}`, http.StatusConflict)
+	assertStatus(t, handler, http.MethodGet, basePath+"/apis/a/policies/policy"+apiQuery, "", http.StatusConflict)
 	assertStatus(t, handler, http.MethodPut, basePath+"/products/p/apis/a"+apiQuery, `{}`, http.StatusConflict)
 	assertStatus(t, handler, http.MethodDelete, basePath+apiQuery, "", http.StatusConflict)
 	assertStatus(t, handler, http.MethodGet, "/subscriptions/sub/providers/Microsoft.ApiManagement/service"+apiQuery, "", http.StatusConflict)

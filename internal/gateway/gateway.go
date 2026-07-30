@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"sort"
 	"strings"
+	"sync"
 	"sync/atomic"
 
 	"github.com/calvinchengx/azure-apim-emulator/internal/model"
@@ -41,6 +42,26 @@ type Runtime struct {
 	defaultService string
 	client         *http.Client
 	current        atomic.Pointer[Snapshot]
+	traceMu        sync.RWMutex
+	traces         map[string]Trace
+	traceOrder     []string
+}
+
+// Trace is a bounded structured record of one opted-in gateway request.
+type Trace struct {
+	ID      string       `json:"id"`
+	Method  string       `json:"method"`
+	Path    string       `json:"path"`
+	Service string       `json:"service"`
+	API     string       `json:"api,omitempty"`
+	Status  int          `json:"status"`
+	Events  []TraceEvent `json:"events"`
+}
+
+// TraceEvent records a gateway pipeline phase and optional detail.
+type TraceEvent struct {
+	Phase  string `json:"phase"`
+	Detail string `json:"detail,omitempty"`
 }
 
 // New creates an empty gateway runtime.
@@ -48,7 +69,7 @@ func New(defaultService string, client *http.Client) *Runtime {
 	if client == nil {
 		client = http.DefaultClient
 	}
-	r := &Runtime{defaultService: defaultService, client: client}
+	r := &Runtime{defaultService: defaultService, client: client, traces: map[string]Trace{}}
 	r.current.Store(&Snapshot{Services: map[string]*Service{}})
 	return r
 }
@@ -126,8 +147,14 @@ func serviceNameFromID(id string) string {
 
 // ServeHTTP handles managed gateway requests.
 func (r *Runtime) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	trace, tracedWriter := r.beginTrace(w, req)
+	if trace != nil {
+		w = tracedWriter
+		defer r.finishTrace(trace, tracedWriter)
+	}
 	snapshot := r.current.Load()
 	serviceName := serviceFromHost(req.Host, r.defaultService)
+	traceEvent(trace, "ingress", serviceName)
 	service := snapshot.Services[strings.ToLower(serviceName)]
 	if service == nil {
 		gatewayError(w, http.StatusNotFound, "ServiceNotFound", "API Management service was not found.")
@@ -138,6 +165,10 @@ func (r *Runtime) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		gatewayError(w, http.StatusNotFound, "OperationNotFound", "Unable to match incoming request to an operation.")
 		return
 	}
+	if trace != nil {
+		trace.API = route.API.ID()
+	}
+	traceEvent(trace, "route", route.API.Path)
 	if !matchOperation(route.Operations, req.Method, relative) {
 		gatewayError(w, http.StatusNotFound, "OperationNotFound", "Unable to match incoming request to an operation.")
 		return
@@ -151,6 +182,7 @@ func (r *Runtime) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	state := &policy.State{Request: req, BackendURL: route.API.ServiceURL, Path: relative, Headers: make(http.Header)}
+	traceEvent(trace, "inbound", "")
 	if err := policy.Execute(route.Plan.Inbound, state); err != nil {
 		r.policyFailure(w, req, route.Plan, state, err)
 		return
@@ -159,6 +191,7 @@ func (r *Runtime) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		writePolicyResponse(w, state)
 		return
 	}
+	traceEvent(trace, "backend", state.BackendURL)
 	if err := policy.Execute(route.Plan.Backend, state); err != nil {
 		r.policyFailure(w, req, route.Plan, state, err)
 		return
@@ -174,6 +207,7 @@ func (r *Runtime) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 	defer response.Body.Close()
 	state.Response = response
+	traceEvent(trace, "outbound", "")
 	if err := policy.Execute(route.Plan.Outbound, state); err != nil {
 		r.policyFailure(w, req, route.Plan, state, err)
 		return
@@ -186,6 +220,65 @@ func (r *Runtime) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	copyHeaders(w.Header(), state.Headers)
 	w.WriteHeader(response.StatusCode)
 	_, _ = io.Copy(w, response.Body)
+}
+
+const traceLimit = 100
+
+type traceWriter struct {
+	http.ResponseWriter
+	status int
+}
+
+func (w *traceWriter) WriteHeader(status int) {
+	if w.status == 0 {
+		w.status = status
+	}
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *traceWriter) Write(body []byte) (int, error) {
+	if w.status == 0 {
+		w.WriteHeader(http.StatusOK)
+	}
+	return w.ResponseWriter.Write(body)
+}
+
+func (r *Runtime) beginTrace(w http.ResponseWriter, req *http.Request) (*Trace, *traceWriter) {
+	if !strings.EqualFold(req.Header.Get("Ocp-Apim-Trace"), "true") {
+		return nil, nil
+	}
+	id := store.NewOpaqueID()
+	w.Header().Set("Ocp-Apim-Trace-Location", "/_emulator/traces/"+id)
+	return &Trace{ID: id, Method: req.Method, Path: req.URL.RequestURI(), Events: []TraceEvent{}}, &traceWriter{ResponseWriter: w}
+}
+
+func (r *Runtime) finishTrace(trace *Trace, writer *traceWriter) {
+	trace.Status = writer.status
+	if trace.Status == 0 {
+		trace.Status = http.StatusOK
+	}
+	r.traceMu.Lock()
+	defer r.traceMu.Unlock()
+	if len(r.traceOrder) == traceLimit {
+		delete(r.traces, r.traceOrder[0])
+		r.traceOrder = r.traceOrder[1:]
+	}
+	r.traces[trace.ID] = *trace
+	r.traceOrder = append(r.traceOrder, trace.ID)
+}
+
+func traceEvent(trace *Trace, phase, detail string) {
+	if trace != nil {
+		trace.Events = append(trace.Events, TraceEvent{Phase: phase, Detail: detail})
+	}
+}
+
+// GetTrace returns a previously completed gateway trace.
+func (r *Runtime) GetTrace(id string) (Trace, bool) {
+	r.traceMu.RLock()
+	defer r.traceMu.RUnlock()
+	value, ok := r.traces[id]
+	return value, ok
 }
 
 func (r *Runtime) policyFailure(w http.ResponseWriter, req *http.Request, plan policy.Plan, state *policy.State, cause error) {

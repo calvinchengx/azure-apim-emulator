@@ -3,6 +3,7 @@ package gateway
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -173,9 +174,16 @@ func TestSuccessfulBackendAndOutboundReturn(t *testing.T) {
 	}
 	runtime.current.Store(&Snapshot{Services: map[string]*Service{"emulator": {Routes: []*Route{route}}}})
 	recorder := httptest.NewRecorder()
-	runtime.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/items", nil))
+	request := httptest.NewRequest(http.MethodGet, "/api/items", nil)
+	request.Header.Set("Ocp-Apim-Trace", "true")
+	runtime.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusOK || recorder.Body.String() != "outbound" {
 		t.Fatalf("outbound return = %d %q", recorder.Code, recorder.Body.String())
+	}
+	traceID := strings.TrimPrefix(recorder.Header().Get("Ocp-Apim-Trace-Location"), "/_emulator/traces/")
+	trace, ok := runtime.GetTrace(traceID)
+	if !ok || trace.API == "" || len(trace.Events) < 4 {
+		t.Fatalf("successful trace = %+v, %v", trace, ok)
 	}
 
 	route.Plan.Outbound = nil
@@ -250,6 +258,9 @@ func TestActivateFailuresAndSubscriptionStates(t *testing.T) {
 	if err := runtime.Activate(st, true); err == nil {
 		t.Fatal("strict invalid policy activation succeeded")
 	}
+	if runtime.current.Load() != snapshot {
+		t.Fatal("failed activation replaced the last-known-good snapshot")
+	}
 }
 
 func TestActivateRejectsOrphanAPI(t *testing.T) {
@@ -281,6 +292,54 @@ func TestWritePolicyResponseDefaultStatus(t *testing.T) {
 	writePolicyResponse(recorder, &policy.State{Body: "ok", Headers: http.Header{"X": {"y"}}})
 	if recorder.Code != http.StatusOK || recorder.Body.String() != "ok" || recorder.Header().Get("X") != "y" {
 		t.Fatalf("response = %d %q %v", recorder.Code, recorder.Body.String(), recorder.Header())
+	}
+}
+
+func TestStructuredTraceAndBound(t *testing.T) {
+	runtime := New("emulator", nil)
+	request := httptest.NewRequest(http.MethodGet, "/missing?q=1", nil)
+	request.Header.Set("Ocp-Apim-Trace", "TRUE")
+	recorder := httptest.NewRecorder()
+	runtime.ServeHTTP(recorder, request)
+	location := recorder.Header().Get("Ocp-Apim-Trace-Location")
+	id := strings.TrimPrefix(location, "/_emulator/traces/")
+	trace, ok := runtime.GetTrace(id)
+	if !ok || trace.Status != http.StatusNotFound || trace.Path != "/missing?q=1" || len(trace.Events) != 1 {
+		t.Fatalf("trace = %+v, %v", trace, ok)
+	}
+	if _, ok := runtime.GetTrace("missing"); ok {
+		t.Fatal("missing trace found")
+	}
+
+	for index := 0; index < traceLimit; index++ {
+		item := &Trace{ID: fmt.Sprintf("trace-%d", index)}
+		runtime.finishTrace(item, &traceWriter{status: http.StatusNoContent})
+	}
+	if _, ok := runtime.GetTrace(id); ok || len(runtime.traceOrder) != traceLimit {
+		t.Fatalf("trace bound = %d, original retained=%v", len(runtime.traceOrder), ok)
+	}
+}
+
+func TestTraceWriterAndEvents(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	writer := &traceWriter{ResponseWriter: recorder}
+	if _, err := writer.Write([]byte("ok")); err != nil {
+		t.Fatal(err)
+	}
+	writer.WriteHeader(http.StatusCreated)
+	if writer.status != http.StatusOK || recorder.Body.String() != "ok" {
+		t.Fatalf("writer = %+v", writer)
+	}
+	traceEvent(nil, "ignored", "")
+	runtime := New("emulator", nil)
+	trace, writer := runtime.beginTrace(recorder, httptest.NewRequest(http.MethodGet, "/", nil))
+	if trace != nil || writer != nil {
+		t.Fatal("trace unexpectedly enabled")
+	}
+	item := &Trace{ID: "default"}
+	runtime.finishTrace(item, &traceWriter{})
+	if got, _ := runtime.GetTrace("default"); got.Status != http.StatusOK {
+		t.Fatalf("default status = %d", got.Status)
 	}
 }
 

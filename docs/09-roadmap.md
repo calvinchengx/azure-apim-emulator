@@ -15,7 +15,7 @@ Goal: prove the architecture before broad resource work.
 - [x] Minimal API, operation, policy, product, product/API link, and subscription resources.
 - [x] Four-SDK custom-endpoint spike: Go `armapimanagement v1.1.1`, JavaScript `@azure/arm-apimanagement 10.0.0`, Python `azure-mgmt-apimanagement 5.0.0`, and .NET `Azure.ResourceManager.ApiManagement 1.3.1`.
 - [x] HTTP route to fixture backend, subscription-key validation, `forward-request`, `set-header`, and `return-response`.
-- [ ] Policy XML round-trip, snapshot compiler, failed-compile protection, and structured trace. Compilation and immutable activation work; management GET and trace remain.
+- [x] Policy XML round-trip, immutable snapshot compiler, last-known-good failed-compile protection, and bounded structured gateway traces.
 - [ ] CI, coverage floor, GoReleaser skeleton, container, compose, and initial docs site.
 
 Exit: every SDK creates/configures a service and a subscription-protected API,

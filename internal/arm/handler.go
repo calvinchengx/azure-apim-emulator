@@ -302,6 +302,15 @@ func (h *Handler) api(w http.ResponseWriter, r *http.Request, rt route) {
 		writeResource(w, http.StatusCreated, operationWire(got), got.ETag)
 		return
 	}
+	if len(rt.Tail) == 4 && equal(rt.Tail[2], "policies") && equal(rt.Tail[3], "policy") && r.Method == http.MethodGet {
+		value, err := h.Store.GetPolicy(api.ID())
+		if err != nil {
+			h.storeError(w, err, api.ID())
+			return
+		}
+		writeResource(w, http.StatusOK, policyWire(api.ID(), value), value.ETag)
+		return
+	}
 	if len(rt.Tail) == 4 && equal(rt.Tail[2], "policies") && equal(rt.Tail[3], "policy") && r.Method == http.MethodPut {
 		var body struct {
 			Properties struct {
@@ -328,7 +337,7 @@ func (h *Handler) api(w http.ResponseWriter, r *http.Request, rt route) {
 			writeError(w, http.StatusBadRequest, "ConfigurationInvalid", err.Error(), api.ID())
 			return
 		}
-		writeResource(w, http.StatusCreated, map[string]any{"id": api.ID() + "/policies/policy", "name": "policy", "type": "Microsoft.ApiManagement/service/apis/policies", "properties": map[string]any{"format": value.Format, "value": value.Value}}, value.ETag)
+		writeResource(w, http.StatusCreated, policyWire(api.ID(), value), value.ETag)
 		return
 	}
 	writeError(w, http.StatusNotFound, "ResourceNotFound", "The requested API resource was not found.", r.URL.Path)
@@ -454,6 +463,9 @@ func subscriptionWire(v model.Subscription, secrets bool) map[string]any {
 		properties["primaryKey"], properties["secondaryKey"] = v.PrimaryKey, v.SecondaryKey
 	}
 	return map[string]any{"id": v.ID(), "name": v.Name, "type": "Microsoft.ApiManagement/service/subscriptions", "properties": properties}
+}
+func policyWire(scopeID string, value model.Policy) map[string]any {
+	return map[string]any{"id": scopeID + "/policies/policy", "name": "policy", "type": "Microsoft.ApiManagement/service/apis/policies", "properties": map[string]any{"format": value.Format, "value": value.Value}}
 }
 
 func decode(r *http.Request, value any) error {

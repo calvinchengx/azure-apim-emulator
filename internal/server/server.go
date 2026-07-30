@@ -87,6 +87,14 @@ func (s *Server) register() {
 		writeJSON(w, http.StatusOK, map[string]any{"offset": offset, "frozen": frozen, "now": now})
 	})
 	s.mux.HandleFunc("POST /_emulator/clock", s.updateClock)
+	s.mux.HandleFunc("GET /_emulator/traces/{id}", func(w http.ResponseWriter, r *http.Request) {
+		trace, ok := s.Gateway.GetTrace(r.PathValue("id"))
+		if !ok {
+			writeJSON(w, http.StatusNotFound, map[string]any{"error": "trace not found"})
+			return
+		}
+		writeJSON(w, http.StatusOK, trace)
+	})
 	s.mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(strings.ToLower(r.URL.Path), "/subscriptions/") {
 			s.ARM.ServeHTTP(w, r)

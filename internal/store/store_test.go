@@ -67,8 +67,16 @@ func TestStoreResourceLifecycle(t *testing.T) {
 	if subscription.PrimaryKey == "" || subscription.SecondaryKey == "" || subscription.State != "active" {
 		t.Fatalf("subscription = %+v", subscription)
 	}
-	if _, err := st.UpsertPolicy(model.Policy{ScopeID: api.ID(), Format: "rawxml", Value: "<policies/>"}); err != nil {
+	policy, err := st.UpsertPolicy(model.Policy{ScopeID: api.ID(), Format: "rawxml", Value: "<policies/>"})
+	if err != nil {
 		t.Fatal(err)
+	}
+	gotPolicy, err := st.GetPolicy(api.ID())
+	if err != nil || gotPolicy.Value != policy.Value {
+		t.Fatalf("GetPolicy = %+v, %v", gotPolicy, err)
+	}
+	if _, err := st.GetPolicy("/missing"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing policy = %v", err)
 	}
 
 	services, apis, operations, products, links, subscriptions, policies, err := st.RuntimeData()
@@ -146,6 +154,10 @@ func TestClosedStoreErrors(t *testing.T) {
 		},
 		"get API": func() error {
 			_, err := st.GetAPI(api.ID())
+			return err
+		},
+		"get policy": func() error {
+			_, err := st.GetPolicy("policy")
 			return err
 		},
 		"runtime": func() error {

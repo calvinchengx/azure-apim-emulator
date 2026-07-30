@@ -15,7 +15,7 @@ Snapshot date: 2026-07-30
 | official management SDKs | sdk-verified | P0-P1 | Go `v1.1.1`, JavaScript `10.0.0`, Python `5.0.0`, and .NET `1.3.1` custom-endpoint API creation witnesses |
 | preview `2025-09-01-preview` | planned | P8 | isolated preview suite |
 | HTTP gateway and routing | implemented | P0-P1 | operation template, subscription, backend recorder integration test |
-| policy XML/inheritance | partial | P0-P2 | API-scope XML compiler; broader scope inheritance pending |
+| policy XML/inheritance | partial | P0-P2 | API-scope XML round-trip/compiler, last-known-good activation, and structured traces; broader scope inheritance pending |
 | policy inventory | planned | P1-P2 | generated reference audit |
 | C# expression member inventory | planned | P2 | .NET vectors and Azure differential fuzzing |
 | developer portal | planned | P3 | portal API fixtures and Playwright journeys |

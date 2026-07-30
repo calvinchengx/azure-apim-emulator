@@ -162,9 +162,22 @@ func TestControlAndDispatchEndpoints(t *testing.T) {
 		t.Fatalf("management dispatch = %d %s", managementRecorder.Code, managementRecorder.Body.String())
 	}
 	gatewayRecorder := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(gatewayRecorder, httptest.NewRequest(http.MethodGet, "/unknown", nil))
+	gatewayRequest := httptest.NewRequest(http.MethodGet, "/unknown", nil)
+	gatewayRequest.Header.Set("Ocp-Apim-Trace", "true")
+	srv.Handler().ServeHTTP(gatewayRecorder, gatewayRequest)
 	if gatewayRecorder.Code != http.StatusNotFound {
 		t.Fatalf("gateway dispatch = %d", gatewayRecorder.Code)
+	}
+	traceLocation := gatewayRecorder.Header().Get("Ocp-Apim-Trace-Location")
+	traceRecorder := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(traceRecorder, httptest.NewRequest(http.MethodGet, traceLocation, nil))
+	if traceRecorder.Code != http.StatusOK || !strings.Contains(traceRecorder.Body.String(), `"status":404`) {
+		t.Fatalf("trace = %d %s", traceRecorder.Code, traceRecorder.Body.String())
+	}
+	missingTrace := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(missingTrace, httptest.NewRequest(http.MethodGet, "/_emulator/traces/missing", nil))
+	if missingTrace.Code != http.StatusNotFound {
+		t.Fatalf("missing trace = %d", missingTrace.Code)
 	}
 }
 

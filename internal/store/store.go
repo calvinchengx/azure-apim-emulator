@@ -270,6 +270,20 @@ func (s *Store) UpsertPolicy(v model.Policy) (model.Policy, error) {
 	return v, err
 }
 
+// GetPolicy finds a policy by its owning scope ID.
+func (s *Store) GetPolicy(scopeID string) (model.Policy, error) {
+	var value model.Policy
+	err := s.db.QueryRow(`SELECT scope_id, format, value, etag FROM policies WHERE lower(scope_id)=lower(?)`, scopeID).
+		Scan(&value.ScopeID, &value.Format, &value.Value, &value.ETag)
+	if errors.Is(err, sql.ErrNoRows) {
+		return model.Policy{}, ErrNotFound
+	}
+	if err != nil {
+		return model.Policy{}, err
+	}
+	return value, nil
+}
+
 // RuntimeData returns all resources needed to compile gateway snapshots.
 func (s *Store) RuntimeData() ([]model.Service, []model.API, []model.Operation, []model.Product, map[string][]string, []model.Subscription, []model.Policy, error) {
 	services, err := s.ListServices()
