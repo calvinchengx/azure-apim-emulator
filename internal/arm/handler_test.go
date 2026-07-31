@@ -199,16 +199,43 @@ func TestAPIBranches(t *testing.T) {
 	if !strings.Contains(revisions.Body.String(), `"count":3`) || !strings.Contains(revisions.Body.String(), `"description":"Cloned revision"`) {
 		t.Fatalf("cloned API revision list = %s", revisions.Body.String())
 	}
+	assertStatus(t, handler, http.MethodGet, basePath+"/apis/a/releases"+apiQuery, "", http.StatusOK)
+	assertStatus(t, handler, http.MethodPost, basePath+"/apis/a/releases"+apiQuery, "", http.StatusMethodNotAllowed)
+	assertStatus(t, handler, http.MethodPut, basePath+"/apis/a/releases/r"+apiQuery, `{`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPut, basePath+"/apis/a/releases/r"+apiQuery, `{"properties":{}}`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPut, basePath+"/apis/a/releases/r"+apiQuery, `{"properties":{"apiId":"/missing"}}`, http.StatusNotFound)
+	targetRevision3 := serviceModel().ID() + "/apis/a;rev=3"
+	assertStatus(t, handler, http.MethodPut, basePath+"/apis/a/releases/r"+apiQuery, `{"properties":{"apiId":"`+targetRevision3+`","notes":"Release 3"}}`, http.StatusCreated)
+	assertStatus(t, handler, http.MethodGet, basePath+"/apis/a/releases/r"+apiQuery, "", http.StatusOK)
+	assertStatus(t, handler, http.MethodHead, basePath+"/apis/a/releases/r"+apiQuery, "", http.StatusOK)
+	releases := request(t, handler, http.MethodGet, basePath+"/apis/a/releases"+apiQuery, "")
+	if !strings.Contains(releases.Body.String(), `"count":1`) || !strings.Contains(releases.Body.String(), `"notes":"Release 3"`) {
+		t.Fatalf("API releases = %s", releases.Body.String())
+	}
+	assertStatus(t, handler, http.MethodPatch, basePath+"/apis/a/releases/missing"+apiQuery, `{}`, http.StatusNotFound)
+	assertStatus(t, handler, http.MethodPatch, basePath+"/apis/a/releases/r"+apiQuery, `{`, http.StatusBadRequest)
+	targetRevision2 := serviceModel().ID() + "/apis/a;rev=2"
+	assertStatus(t, handler, http.MethodPatch, basePath+"/apis/a/releases/r"+apiQuery, `{"properties":{"apiId":"`+targetRevision2+`","notes":"Release 2"}}`, http.StatusOK)
+	assertStatus(t, handler, http.MethodPut, basePath+"/apis/other"+apiQuery, `{"properties":{"displayName":"Other","path":"other","serviceUrl":"https://other"}}`, http.StatusCreated)
+	assertStatus(t, handler, http.MethodPut, basePath+"/apis/other/releases/r"+apiQuery, `{"properties":{"apiId":"`+targetRevision2+`"}}`, http.StatusConflict)
+	revisions = request(t, handler, http.MethodGet, basePath+"/apis/a/revisions"+apiQuery, "")
+	if !strings.Contains(revisions.Body.String(), `"apiRevision":"2","createdDateTime"`) || strings.Count(revisions.Body.String(), `"isCurrent":true`) != 1 {
+		t.Fatalf("promoted API revisions = %s", revisions.Body.String())
+	}
+	assertStatus(t, handler, http.MethodPost, basePath+"/apis/a/releases/r"+apiQuery, "", http.StatusMethodNotAllowed)
 	assertStatus(t, handler, http.MethodPut, basePath+"/apis/a;rev=4"+apiQuery, `{"properties":{"sourceApiId":"/missing","apiRevision":"4"}}`, http.StatusNotFound)
 	assertStatus(t, handler, http.MethodGet, basePath+"/apis/a/policies/missing"+apiQuery, "", http.StatusNotFound)
 
 	handler.Activate = func() error { return errors.New("activation") }
+	assertStatus(t, handler, http.MethodPatch, basePath+"/apis/a/releases/r"+apiQuery, `{"properties":{"apiId":"`+targetRevision3+`"}}`, http.StatusBadRequest)
 	assertStatus(t, handler, http.MethodPut, basePath+"/apis/a"+apiQuery, `{"properties":{"displayName":"A","path":"a","serviceUrl":"https://backend"}}`, http.StatusBadRequest)
 	assertStatus(t, handler, http.MethodPut, basePath+"/apis/a/operations/two"+apiQuery, `{"properties":{"displayName":"Two","method":"GET","urlTemplate":"/two"}}`, http.StatusBadRequest)
 	assertStatus(t, handler, http.MethodPut, basePath+"/apis/a/policies/policy"+apiQuery, `{"properties":{"value":"<policies/>"}}`, http.StatusBadRequest)
 	assertStatus(t, handler, http.MethodDelete, basePath+"/apis/a/operations/get"+apiQuery, "", http.StatusInternalServerError)
 	assertStatus(t, handler, http.MethodDelete, basePath+"/apis/a"+apiQuery, "", http.StatusInternalServerError)
 	handler.Activate = nil
+	assertStatus(t, handler, http.MethodDelete, basePath+"/apis/a/releases/r"+apiQuery, "", http.StatusNoContent)
+	assertStatus(t, handler, http.MethodDelete, basePath+"/apis/a/releases/r"+apiQuery, "", http.StatusNoContent)
 	assertStatus(t, handler, http.MethodDelete, basePath+"/apis/a/operations/get"+apiQuery, "", http.StatusNoContent)
 	assertStatus(t, handler, http.MethodDelete, basePath+"/apis/a"+apiQuery, "", http.StatusNoContent)
 	assertStatus(t, handler, http.MethodDelete, basePath+"/apis/a"+apiQuery, "", http.StatusNoContent)
@@ -363,6 +390,10 @@ func TestClosedStoreWriteErrors(t *testing.T) {
 	assertStatus(t, handler, http.MethodGet, basePath+"/apis"+apiQuery, "", http.StatusConflict)
 	assertStatus(t, handler, http.MethodGet, basePath+"/apis/a/operations"+apiQuery, "", http.StatusConflict)
 	assertStatus(t, handler, http.MethodGet, basePath+"/apis/a/revisions"+apiQuery, "", http.StatusConflict)
+	assertStatus(t, handler, http.MethodGet, basePath+"/apis/a/releases"+apiQuery, "", http.StatusConflict)
+	assertStatus(t, handler, http.MethodGet, basePath+"/apis/a/releases/r"+apiQuery, "", http.StatusConflict)
+	assertStatus(t, handler, http.MethodPut, basePath+"/apis/a/releases/r"+apiQuery, `{"properties":{"apiId":"/target"}}`, http.StatusConflict)
+	assertStatus(t, handler, http.MethodDelete, basePath+"/apis/a/releases/r"+apiQuery, "", http.StatusConflict)
 	assertStatus(t, handler, http.MethodDelete, basePath+"/apis/a"+apiQuery, "", http.StatusConflict)
 	assertStatus(t, handler, http.MethodDelete, basePath+"/apis/a/operations/get"+apiQuery, "", http.StatusConflict)
 	assertStatus(t, handler, http.MethodGet, basePath+"/products"+apiQuery, "", http.StatusConflict)

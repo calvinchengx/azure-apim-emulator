@@ -101,10 +101,10 @@ func (r *Runtime) Activate(st *store.Store, strict bool) error {
 			continue
 		}
 		for _, api := range apis {
-			allowed := strings.EqualFold(subscription.Scope, api.ID()) || strings.EqualFold(subscription.Scope, api.ServiceID)
+			allowed := strings.EqualFold(subscription.Scope, api.ID()) || strings.EqualFold(subscription.Scope, logicalAPIID(api.ID())) || strings.EqualFold(subscription.Scope, api.ServiceID)
 			if linkedAPIs := links[subscription.Scope]; !allowed {
 				for _, linkedAPI := range linkedAPIs {
-					if strings.EqualFold(linkedAPI, api.ID()) {
+					if strings.EqualFold(linkedAPI, api.ID()) || strings.EqualFold(linkedAPI, logicalAPIID(api.ID())) {
 						allowed = true
 						break
 					}
@@ -146,6 +146,14 @@ func serviceNameFromID(id string) string {
 		}
 	}
 	return ""
+}
+
+func logicalAPIID(id string) string {
+	index := strings.LastIndex(strings.ToLower(id), ";rev=")
+	if index < 0 {
+		return id
+	}
+	return id[:index]
 }
 
 // ServeHTTP handles managed gateway requests.

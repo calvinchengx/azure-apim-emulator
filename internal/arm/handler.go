@@ -294,8 +294,29 @@ func (h *Handler) api(w http.ResponseWriter, r *http.Request, rt route) {
 		writeJSON(w, http.StatusOK, map[string]any{"value": resources, "count": len(resources)})
 		return
 	}
+	if len(rt.Tail) == 3 && equal(rt.Tail[2], "releases") {
+		if r.Method != http.MethodGet {
+			methodNotAllowed(w)
+			return
+		}
+		values, err := h.Store.ListAPIReleases(api.ID())
+		if err != nil {
+			h.storeError(w, err, api.ID())
+			return
+		}
+		resources := make([]map[string]any, 0, len(values))
+		for _, value := range values {
+			resources = append(resources, apiReleaseWire(value))
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"value": resources, "count": len(resources)})
+		return
+	}
 	if len(rt.Tail) == 4 && equal(rt.Tail[2], "operations") {
 		h.operationResource(w, r, model.Operation{APIID: api.ID(), Name: rt.Tail[3]})
+		return
+	}
+	if len(rt.Tail) == 4 && equal(rt.Tail[2], "releases") {
+		h.apiReleaseResource(w, r, model.APIRelease{APIID: api.ID(), Name: rt.Tail[3]})
 		return
 	}
 	if len(rt.Tail) == 4 && equal(rt.Tail[2], "policies") && equal(rt.Tail[3], "policy") && r.Method == http.MethodGet {
@@ -469,6 +490,85 @@ func applyAPIPayload(api *model.API, body apiPayload) {
 	}
 	if body.Properties.IsCurrent != nil {
 		api.IsCurrent = *body.Properties.IsCurrent
+	}
+}
+
+type apiReleasePayload struct {
+	Properties struct {
+		APIID *string `json:"apiId"`
+		Notes *string `json:"notes"`
+	} `json:"properties"`
+}
+
+func (h *Handler) apiReleaseResource(w http.ResponseWriter, r *http.Request, value model.APIRelease) {
+	switch r.Method {
+	case http.MethodGet, http.MethodHead:
+		got, err := h.Store.GetAPIRelease(value.ID())
+		if err != nil {
+			h.storeError(w, err, value.ID())
+			return
+		}
+		if r.Method == http.MethodHead {
+			w.Header().Set("ETag", got.ETag)
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		writeResource(w, http.StatusOK, apiReleaseWire(got), got.ETag)
+	case http.MethodPut, http.MethodPatch:
+		existing, existingErr := h.Store.GetAPIRelease(value.ID())
+		if existingErr != nil && !errors.Is(existingErr, store.ErrNotFound) {
+			h.storeError(w, existingErr, value.ID())
+			return
+		}
+		if r.Method == http.MethodPatch {
+			if existingErr != nil {
+				h.storeError(w, existingErr, value.ID())
+				return
+			}
+			value = existing
+		}
+		var body apiReleasePayload
+		if err := decode(r, &body); err != nil {
+			writeError(w, http.StatusBadRequest, "InvalidRequestContent", err.Error(), "")
+			return
+		}
+		if body.Properties.APIID != nil {
+			_, targetID, err := h.revisionSource(*body.Properties.APIID)
+			if err != nil {
+				h.storeError(w, err, *body.Properties.APIID)
+				return
+			}
+			value.TargetAPIID = targetID
+		}
+		if body.Properties.Notes != nil {
+			value.Notes = *body.Properties.Notes
+		}
+		if value.TargetAPIID == "" {
+			writeError(w, http.StatusBadRequest, "ValidationError", "apiId is required.", "properties.apiId")
+			return
+		}
+		got, err := h.Store.UpsertAPIRelease(value)
+		if err != nil {
+			h.storeError(w, err, value.ID())
+			return
+		}
+		if err := h.activate(); err != nil {
+			writeError(w, http.StatusBadRequest, "ConfigurationInvalid", err.Error(), value.ID())
+			return
+		}
+		status := http.StatusOK
+		if r.Method == http.MethodPut && errors.Is(existingErr, store.ErrNotFound) {
+			status = http.StatusCreated
+		}
+		writeResource(w, status, apiReleaseWire(got), got.ETag)
+	case http.MethodDelete:
+		if err := h.Store.DeleteAPIRelease(value.ID()); err != nil && !errors.Is(err, store.ErrNotFound) {
+			h.storeError(w, err, value.ID())
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	default:
+		methodNotAllowed(w)
 	}
 }
 
@@ -908,6 +1008,12 @@ func apiRevisionWire(v model.API) map[string]any {
 	return map[string]any{"apiId": apiID, "apiRevision": v.Revision, "description": v.RevisionDescription,
 		"createdDateTime": time.Unix(v.CreatedAt, 0).UTC().Format(time.RFC3339),
 		"updatedDateTime": time.Unix(v.UpdatedAt, 0).UTC().Format(time.RFC3339), "isOnline": true, "isCurrent": v.IsCurrent}
+}
+func apiReleaseWire(v model.APIRelease) map[string]any {
+	return map[string]any{"id": v.ID(), "name": v.Name, "type": "Microsoft.ApiManagement/service/apis/releases",
+		"properties": map[string]any{"apiId": v.TargetAPIID, "notes": v.Notes,
+			"createdDateTime": time.Unix(v.CreatedAt, 0).UTC().Format(time.RFC3339),
+			"updatedDateTime": time.Unix(v.UpdatedAt, 0).UTC().Format(time.RFC3339)}}
 }
 func operationWire(v model.Operation) map[string]any {
 	return map[string]any{"id": v.APIID + "/operations/" + v.Name, "name": v.Name, "type": "Microsoft.ApiManagement/service/apis/operations", "properties": map[string]any{"displayName": v.DisplayName, "method": v.Method, "urlTemplate": v.URLTemplate}}

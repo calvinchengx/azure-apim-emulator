@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -161,6 +162,29 @@ func TestGoManagementSDKConfiguresProtectedGateway(t *testing.T) {
 	if err != nil || len(revisionPage.Value) != 2 {
 		t.Fatalf("cloned revision page = %+v, %v", revisionPage, err)
 	}
+	releaseClient, err := armapimanagement.NewAPIReleaseClient(defaultSubscription, credential, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetAPIID, releaseNotes := strings.TrimSuffix(sourceAPIID, ";rev=1")+";rev=2", "Promote revision 2"
+	createdRelease, err := releaseClient.CreateOrUpdate(ctx, defaultResourceGroup, "emulator", "go-sdk-full", "release-2", armapimanagement.APIReleaseContract{
+		Properties: &armapimanagement.APIReleaseContractProperties{APIID: &targetAPIID, Notes: &releaseNotes},
+	}, nil)
+	if err != nil || createdRelease.Properties == nil || createdRelease.Properties.APIID == nil || *createdRelease.Properties.APIID != targetAPIID {
+		t.Fatalf("created API release = %+v, %v", createdRelease, err)
+	}
+	gotRelease, err := releaseClient.Get(ctx, defaultResourceGroup, "emulator", "go-sdk-full", "release-2", nil)
+	if err != nil || gotRelease.Properties == nil || gotRelease.Properties.Notes == nil || *gotRelease.Properties.Notes != releaseNotes {
+		t.Fatalf("API release GET = %+v, %v", gotRelease, err)
+	}
+	if entityTag, err := releaseClient.GetEntityTag(ctx, defaultResourceGroup, "emulator", "go-sdk-full", "release-2", nil); err != nil || entityTag.ETag == nil {
+		t.Fatalf("API release ETag = %+v, %v", entityTag, err)
+	}
+	releasePager := releaseClient.NewListByServicePager(defaultResourceGroup, "emulator", "go-sdk-full", nil)
+	releasePage, err := releasePager.NextPage(ctx)
+	if err != nil || len(releasePage.Value) != 1 {
+		t.Fatalf("API release page = %+v, %v", releasePage, err)
+	}
 
 	subscriptionClient, err := armapimanagement.NewSubscriptionClient(defaultSubscription, credential, options)
 	if err != nil {
@@ -209,6 +233,16 @@ func TestGoManagementSDKConfiguresProtectedGateway(t *testing.T) {
 	body, _ := io.ReadAll(response.Body)
 	if response.StatusCode != http.StatusOK || string(body) != "go-sdk-backend" {
 		t.Fatalf("gateway = %d %q", response.StatusCode, body)
+	}
+	updatedNotes := "Updated release notes"
+	updatedRelease, err := releaseClient.Update(ctx, defaultResourceGroup, "emulator", "go-sdk-full", "release-2", "*", armapimanagement.APIReleaseContract{
+		Properties: &armapimanagement.APIReleaseContractProperties{Notes: &updatedNotes},
+	}, nil)
+	if err != nil || updatedRelease.Properties == nil || updatedRelease.Properties.Notes == nil || *updatedRelease.Properties.Notes != updatedNotes {
+		t.Fatalf("updated API release = %+v, %v", updatedRelease, err)
+	}
+	if _, err := releaseClient.Delete(ctx, defaultResourceGroup, "emulator", "go-sdk-full", "release-2", "*", nil); err != nil {
+		t.Fatal(err)
 	}
 }
 

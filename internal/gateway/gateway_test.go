@@ -255,6 +255,20 @@ func TestActivateFailuresAndSubscriptionStates(t *testing.T) {
 	if len(routes) != 2 || routes[0].API.Name != "b" || routes[0].AcceptedKeys["inactive"] || !routes[0].AcceptedKeys["linked"] {
 		t.Fatalf("activated routes = %+v", routes)
 	}
+	revision := apiA
+	revision.Name, revision.Path, revision.Revision, revision.IsCurrent = "a;rev=2", "promoted", "2", false
+	revision, _ = st.CloneAPIRevision(apiA.ID(), revision)
+	if _, err := st.UpsertAPIRelease(model.APIRelease{APIID: apiA.ID(), Name: "release", TargetAPIID: revision.ID()}); err != nil {
+		t.Fatal(err)
+	}
+	if err := runtime.Activate(st, false); err != nil {
+		t.Fatal(err)
+	}
+	snapshot = runtime.current.Load()
+	routes = snapshot.Services["emulator"].Routes
+	if len(routes) != 2 || routes[1].API.Name != "a;rev=2" {
+		t.Fatalf("promoted routes = %+v", routes)
+	}
 	_, _ = st.UpsertPolicy(model.Policy{ScopeID: apiA.ID(), Value: `<policies><inbound><choose/></inbound></policies>`})
 	if err := runtime.Activate(st, true); err == nil {
 		t.Fatal("strict invalid policy activation succeeded")

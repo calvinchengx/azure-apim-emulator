@@ -42,6 +42,20 @@ type API struct {
 // ID returns the API ARM resource ID.
 func (a API) ID() string { return a.ServiceID + "/apis/" + a.Name }
 
+// APIRelease records promotion of an API revision.
+type APIRelease struct {
+	APIID       string
+	Name        string
+	TargetAPIID string
+	Notes       string
+	CreatedAt   int64
+	UpdatedAt   int64
+	ETag        string
+}
+
+// ID returns the release ARM resource ID.
+func (r APIRelease) ID() string { return r.APIID + "/releases/" + r.Name }
+
 // Operation is an HTTP operation belonging to an API.
 type Operation struct {
 	APIID       string

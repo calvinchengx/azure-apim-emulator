@@ -319,6 +319,12 @@ func TestScanFunctionsRejectMalformedRows(t *testing.T) {
 			func(db *sql.DB) error { _, err := scanAPIs(db); return err },
 		},
 		{
+			"releases",
+			`CREATE TABLE api_releases (id, api_id, name, target_api_id, notes, created_at, updated_at, etag)`,
+			`INSERT INTO api_releases VALUES ('id', 'id', NULL, '', '', 0, 0, '')`,
+			func(db *sql.DB) error { _, err := (&Store{db: db}).ListAPIReleases("id"); return err },
+		},
+		{
 			"operations",
 			`CREATE TABLE operations (id, api_id, name, display_name, method, url_template, etag)`,
 			`INSERT INTO operations VALUES ('id', NULL, '', '', '', '', '')`,
@@ -522,6 +528,77 @@ func TestCloneAPIRevisionTransactions(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestAPIReleaseTransactions(t *testing.T) {
+	setup := func(t *testing.T) (*Store, model.APIRelease) {
+		t.Helper()
+		st, err := Open("", clock.New())
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = st.Close() })
+		service, _ := st.UpsertService(model.Service{Name: "svc"})
+		base, _ := st.UpsertAPI(model.API{ServiceID: service.ID(), Name: "api"})
+		target := base
+		target.Name, target.Revision = "api;rev=2", "2"
+		target, _ = st.CloneAPIRevision(base.ID(), target)
+		return st, model.APIRelease{APIID: base.ID(), Name: "release", TargetAPIID: target.ID()}
+	}
+
+	tests := []struct {
+		name string
+		run  func(*testing.T, *Store, model.APIRelease)
+	}{
+		{"missing target", func(t *testing.T, st *Store, release model.APIRelease) {
+			release.TargetAPIID = "/missing"
+			if _, err := st.UpsertAPIRelease(release); !errors.Is(err, ErrNotFound) {
+				t.Fatalf("error = %v", err)
+			}
+		}},
+		{"cross API", func(t *testing.T, st *Store, release model.APIRelease) {
+			release.APIID += "-other"
+			if _, err := st.UpsertAPIRelease(release); !errors.Is(err, ErrConflict) {
+				t.Fatalf("error = %v", err)
+			}
+		}},
+		{"existing query", func(t *testing.T, st *Store, release model.APIRelease) {
+			_, _ = st.db.Exec(`DROP TABLE api_releases`)
+			if _, err := st.UpsertAPIRelease(release); err == nil {
+				t.Fatal("query error ignored")
+			}
+		}},
+		{"release write", func(t *testing.T, st *Store, release model.APIRelease) {
+			_, _ = st.db.Exec(`CREATE TRIGGER reject_release BEFORE INSERT ON api_releases BEGIN SELECT RAISE(FAIL, 'rejected'); END`)
+			if _, err := st.UpsertAPIRelease(release); err == nil {
+				t.Fatal("write error ignored")
+			}
+		}},
+		{"promotion", func(t *testing.T, st *Store, release model.APIRelease) {
+			_, _ = st.db.Exec(`CREATE TRIGGER reject_promotion BEFORE UPDATE ON api_revision_metadata BEGIN SELECT RAISE(FAIL, 'rejected'); END`)
+			if _, err := st.UpsertAPIRelease(release); err == nil {
+				t.Fatal("promotion error ignored")
+			}
+		}},
+		{"missing metadata", func(t *testing.T, st *Store, release model.APIRelease) {
+			_, _ = st.db.Exec(`DELETE FROM api_revision_metadata`)
+			if _, err := st.UpsertAPIRelease(release); !errors.Is(err, ErrNotFound) {
+				t.Fatalf("error = %v", err)
+			}
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) { st, release := setup(t); test.run(t, st, release) })
+	}
+	t.Run("begin", func(t *testing.T) {
+		st, release := setup(t)
+		original := beginReleaseTxn
+		beginReleaseTxn = func(*sql.DB) (*sql.Tx, error) { return nil, errors.New("begin failed") }
+		defer func() { beginReleaseTxn = original }()
+		if _, err := st.UpsertAPIRelease(release); err == nil {
+			t.Fatal("begin error ignored")
+		}
+	})
 }
 
 func TestScanFunctionsQueryErrors(t *testing.T) {

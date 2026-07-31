@@ -30,8 +30,9 @@ type Store struct {
 }
 
 var (
-	openDB     = sql.Open
-	readRandom = rand.Read
+	openDB          = sql.Open
+	readRandom      = rand.Read
+	beginReleaseTxn = func(db *sql.DB) (*sql.Tx, error) { return db.Begin() }
 )
 
 // Open creates or opens the emulator database. Empty dataDir is in-memory.
@@ -79,6 +80,11 @@ CREATE TABLE IF NOT EXISTS api_revision_metadata (
   api_id TEXT PRIMARY KEY REFERENCES apis(id) ON DELETE CASCADE,
   revision TEXT NOT NULL, description TEXT NOT NULL, is_current INTEGER NOT NULL,
   created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS api_releases (
+  id TEXT PRIMARY KEY, api_id TEXT NOT NULL REFERENCES apis(id) ON DELETE CASCADE,
+  name TEXT NOT NULL, target_api_id TEXT NOT NULL REFERENCES apis(id) ON DELETE CASCADE,
+  notes TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, etag TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS operations (
   id TEXT PRIMARY KEY, api_id TEXT NOT NULL REFERENCES apis(id) ON DELETE CASCADE,
@@ -343,6 +349,90 @@ func (s *Store) ListAPIRevisions(serviceID, apiName string) ([]model.API, error)
 		}
 	}
 	return filtered, nil
+}
+
+// UpsertAPIRelease records a release and atomically promotes its target revision.
+func (s *Store) UpsertAPIRelease(v model.APIRelease) (model.APIRelease, error) {
+	target, err := s.GetAPI(v.TargetAPIID)
+	if err != nil {
+		return v, err
+	}
+	parentBase, _ := splitRevision(strings.TrimPrefix(v.APIID, target.ServiceID+"/apis/"))
+	targetBase, _ := splitRevision(target.Name)
+	if !equalID(parentBase, targetBase) {
+		return v, ErrConflict
+	}
+	now := s.Clock.Now()
+	if existing, existingErr := s.GetAPIRelease(v.ID()); existingErr == nil {
+		v.CreatedAt = existing.CreatedAt
+	} else if !errors.Is(existingErr, ErrNotFound) {
+		return v, existingErr
+	}
+	if v.CreatedAt == 0 {
+		v.CreatedAt = now
+	}
+	v.UpdatedAt, v.ETag = now, newETag()
+	tx, err := beginReleaseTxn(s.db)
+	if err != nil {
+		return v, err
+	}
+	defer tx.Rollback()
+	_, err = tx.Exec(`INSERT INTO api_releases
+	    (id, api_id, name, target_api_id, notes, created_at, updated_at, etag) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+	    ON CONFLICT(id) DO UPDATE SET target_api_id=excluded.target_api_id, notes=excluded.notes,
+	      updated_at=excluded.updated_at, etag=excluded.etag`, v.ID(), v.APIID, v.Name,
+		v.TargetAPIID, v.Notes, v.CreatedAt, v.UpdatedAt, v.ETag)
+	if err != nil {
+		return v, err
+	}
+	result, err := tx.Exec(`UPDATE api_revision_metadata SET is_current=CASE WHEN lower(api_id)=lower(?) THEN 1 ELSE 0 END
+	    WHERE api_id IN (SELECT id FROM apis WHERE lower(service_id)=lower(?) AND
+	      (lower(name)=lower(?) OR lower(name) LIKE lower(?)))`, v.TargetAPIID, target.ServiceID,
+		targetBase, targetBase+";rev=%")
+	if err != nil {
+		return v, err
+	}
+	count, _ := result.RowsAffected()
+	if count == 0 {
+		return v, ErrNotFound
+	}
+	return v, tx.Commit()
+}
+
+// GetAPIRelease finds one API release.
+func (s *Store) GetAPIRelease(id string) (model.APIRelease, error) {
+	var v model.APIRelease
+	err := s.db.QueryRow(`SELECT api_id, name, target_api_id, notes, created_at, updated_at, etag
+	    FROM api_releases WHERE lower(id)=lower(?)`, id).
+		Scan(&v.APIID, &v.Name, &v.TargetAPIID, &v.Notes, &v.CreatedAt, &v.UpdatedAt, &v.ETag)
+	if errors.Is(err, sql.ErrNoRows) {
+		return model.APIRelease{}, ErrNotFound
+	}
+	return v, err
+}
+
+// ListAPIReleases returns releases for an API in stable ID order.
+func (s *Store) ListAPIReleases(apiID string) ([]model.APIRelease, error) {
+	rows, err := s.db.Query(`SELECT api_id, name, target_api_id, notes, created_at, updated_at, etag
+	    FROM api_releases WHERE lower(api_id)=lower(?) ORDER BY id`, apiID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	values := make([]model.APIRelease, 0)
+	for rows.Next() {
+		var v model.APIRelease
+		if err := rows.Scan(&v.APIID, &v.Name, &v.TargetAPIID, &v.Notes, &v.CreatedAt, &v.UpdatedAt, &v.ETag); err != nil {
+			return nil, err
+		}
+		values = append(values, v)
+	}
+	return values, rows.Err()
+}
+
+// DeleteAPIRelease removes release history without changing the current revision.
+func (s *Store) DeleteAPIRelease(id string) error {
+	return deleteScopedResource(s.db, "api_releases", id)
 }
 
 // DeleteAPI removes an API and its children.
