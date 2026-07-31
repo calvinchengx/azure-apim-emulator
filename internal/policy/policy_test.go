@@ -236,6 +236,45 @@ func TestIPFilterPolicy(t *testing.T) {
 	}
 }
 
+func TestSetMethodAndCORSPolicies(t *testing.T) {
+	plan, err := Compile(`<policies><inbound><set-method>POST</set-method><cors allowed-origins="https://app.example" allowed-methods="GET,POST" allowed-headers="Authorization" expose-headers="X-Request-ID" max-age="600" allow-credentials="true"/></inbound></policies>`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	request.Header.Set("Origin", "https://app.example")
+	state := &State{Request: request}
+	if err := Execute(plan.Inbound, state); err != nil {
+		t.Fatal(err)
+	}
+	if request.Method != http.MethodPost || state.Headers.Get("Access-Control-Allow-Origin") != "https://app.example" || state.Headers.Get("Access-Control-Allow-Credentials") != "true" {
+		t.Fatalf("mutation/cors state = %+v", state)
+	}
+	preflight := httptest.NewRequest(http.MethodOptions, "/", nil)
+	preflight.Header.Set("Origin", "https://app.example")
+	state = &State{Request: preflight}
+	if err := Execute(plan.Inbound[1:], state); err != nil || !state.Returned || state.StatusCode != http.StatusNoContent {
+		t.Fatalf("preflight state = %+v, %v", state, err)
+	}
+	if _, err := Compile(`<policies><inbound><set-method>@(context.Request.Method)</set-method></inbound></policies>`, true); err == nil {
+		t.Fatal("set-method expression accepted")
+	}
+	if _, err := Compile(`<policies><inbound><cors allowed-origins="@(context.Request.Headers.GetValueOrDefault('Origin'))"/></inbound></policies>`, true); err == nil {
+		t.Fatal("cors expression accepted")
+	}
+	noOrigin := httptest.NewRequest(http.MethodGet, "/", nil)
+	state = &State{Request: noOrigin}
+	if err := Execute([]Action{{Kind: ActionCORS}}, state); err != nil || state.Returned || len(state.Headers) != 0 {
+		t.Fatalf("no-origin cors state = %+v, %v", state, err)
+	}
+	if err := Execute([]Action{{Kind: ActionSetMethod}}, &State{}); err == nil {
+		t.Fatal("set-method without request should fail")
+	}
+	if err := Execute([]Action{{Kind: ActionCORS}}, &State{}); err == nil {
+		t.Fatal("cors without request should fail")
+	}
+}
+
 func TestUnsupportedExpressionModes(t *testing.T) {
 	xml := `<policies><inbound><set-header name="X"><value>@(context.Request.Method)</value></set-header></inbound><backend/><outbound/><on-error/></policies>`
 	plan, err := Compile(xml, false)

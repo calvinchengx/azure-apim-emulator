@@ -26,6 +26,8 @@ const (
 	ActionCheckHeader
 	ActionValidateJWT
 	ActionIPFilter
+	ActionSetMethod
+	ActionCORS
 	ActionSetBackend
 	ActionRewriteURI
 	ActionForward
@@ -50,6 +52,12 @@ type Action struct {
 	IgnoreCase    bool
 	FailedCode    int
 	FilterAction  string
+	Methods       string
+	AllowOrigin   string
+	AllowHeaders  string
+	ExposeHeaders string
+	MaxAge        string
+	AllowCreds    bool
 	Children      []Action
 	RetryCount    int
 	RetryInterval time.Duration
@@ -317,6 +325,20 @@ func compileNode(item node, strict bool) (Action, bool, error) {
 			values = append(values, strings.TrimSpace(child.Text))
 		}
 		return Action{Kind: ActionIPFilter, Values: values, FilterAction: filterAction, StatusCode: http.StatusForbidden, Value: item.Attrs["failed-check-error-message"]}, true, nil
+	case "set-method":
+		value := strings.TrimSpace(item.Attrs["id"])
+		if value == "" {
+			value = strings.TrimSpace(item.Text)
+		}
+		if value == "" || expression(value) {
+			return unsupported(item.Name), true, nil
+		}
+		return Action{Kind: ActionSetMethod, Value: value}, true, nil
+	case "cors":
+		if expression(item.Attrs["allowed-origins"]) || expression(item.Attrs["allowed-methods"]) || expression(item.Attrs["allowed-headers"]) {
+			return unsupported(item.Name), true, nil
+		}
+		return Action{Kind: ActionCORS, AllowOrigin: item.Attrs["allowed-origins"], Methods: item.Attrs["allowed-methods"], AllowHeaders: item.Attrs["allowed-headers"], ExposeHeaders: item.Attrs["expose-headers"], MaxAge: item.Attrs["max-age"], AllowCreds: strings.EqualFold(item.Attrs["allow-credentials"], "true")}, true, nil
 	case "set-backend-service":
 		value, backendID := item.Attrs["base-url"], item.Attrs["backend-id"]
 		if (value == "") == (backendID == "") || expression(value) || expression(backendID) {
@@ -496,6 +518,38 @@ func Execute(actions []Action, state *State) error {
 			if failed {
 				state.Returned, state.StatusCode, state.Body = true, action.StatusCode, action.Value
 				return nil
+			}
+		case ActionSetMethod:
+			if state.Request == nil {
+				return fmt.Errorf("set-method requires a request")
+			}
+			state.Request.Method = strings.ToUpper(action.Value)
+		case ActionCORS:
+			if state.Request == nil {
+				return fmt.Errorf("cors requires a request")
+			}
+			origin := state.Request.Header.Get("Origin")
+			if origin == "" {
+				continue
+			}
+			state.Headers.Set("Access-Control-Allow-Origin", action.AllowOrigin)
+			if action.AllowCreds {
+				state.Headers.Set("Access-Control-Allow-Credentials", "true")
+			}
+			if action.Methods != "" {
+				state.Headers.Set("Access-Control-Allow-Methods", action.Methods)
+			}
+			if action.AllowHeaders != "" {
+				state.Headers.Set("Access-Control-Allow-Headers", action.AllowHeaders)
+			}
+			if action.ExposeHeaders != "" {
+				state.Headers.Set("Access-Control-Expose-Headers", action.ExposeHeaders)
+			}
+			if action.MaxAge != "" {
+				state.Headers.Set("Access-Control-Max-Age", action.MaxAge)
+			}
+			if state.Request.Method == http.MethodOptions {
+				state.Returned, state.StatusCode = true, http.StatusNoContent
 			}
 		case ActionSetBackend:
 			state.BackendURL = action.Value
