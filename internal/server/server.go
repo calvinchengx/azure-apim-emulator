@@ -124,10 +124,17 @@ func (s *Server) portal(w http.ResponseWriter, _ *http.Request) {
 
 func (s *Server) portalStatus(w http.ResponseWriter, _ *http.Request) {
 	offset, frozen, now := s.Clock.State()
+	services, _ := s.Store.ListServices()
+	resources := make([]map[string]any, 0, len(services))
+	for _, service := range services {
+		apis, _ := s.Store.ListAPIs(service.ID())
+		resources = append(resources, map[string]any{"id": service.ID(), "name": service.Name, "apis": len(apis)})
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"service":  s.Cfg.DefaultService,
-		"clock":    map[string]any{"offset": offset, "frozen": frozen, "now": now},
-		"snapshot": s.Gateway.SnapshotSummary(),
+		"service":   s.Cfg.DefaultService,
+		"clock":     map[string]any{"offset": offset, "frozen": frozen, "now": now},
+		"snapshot":  s.Gateway.SnapshotSummary(),
+		"resources": resources,
 	})
 }
 

@@ -144,6 +144,11 @@ func TestControlAndDispatchEndpoints(t *testing.T) {
 			t.Fatalf("%s = %d %s", path, recorder.Code, recorder.Body.String())
 		}
 	}
+	status := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(status, httptest.NewRequest(http.MethodGet, "/_emulator/portal/api/status", nil))
+	if !strings.Contains(status.Body.String(), `"name":"emulator"`) {
+		t.Fatalf("portal resource summary = %s", status.Body.String())
+	}
 	portal := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(portal, httptest.NewRequest(http.MethodGet, "/_emulator/portal/", nil))
 	if portal.Code != http.StatusOK || !strings.Contains(portal.Body.String(), "Azure APIM Emulator") || !strings.Contains(portal.Header().Get("Content-Type"), "text/html") {
