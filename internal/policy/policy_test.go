@@ -69,6 +69,36 @@ func TestRetryPolicyCompilationAndExecution(t *testing.T) {
 	}
 }
 
+func TestQueryParameterAndVariablePolicies(t *testing.T) {
+	plan, err := Compile(`<policies><inbound><set-query-parameter name="new"><value>value</value></set-query-parameter><set-query-parameter name="existing" exists-action="skip"><value>replacement</value></set-query-parameter><set-query-parameter name="remove" exists-action="delete"/><set-variable name="route"><value>blue</value></set-variable></inbound></policies>`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodGet, "http://example/?existing=original&remove=yes", nil)
+	state := &State{Request: request}
+	if err := Execute(plan.Inbound, state); err != nil {
+		t.Fatal(err)
+	}
+	query := request.URL.Query()
+	if query.Get("new") != "value" || query.Get("existing") != "original" || query.Get("remove") != "" || state.Variables["route"] != "blue" {
+		t.Fatalf("mutation state = query %v variables %v", query, state.Variables)
+	}
+	if err := Execute([]Action{{Kind: ActionSetQueryParameter, Name: "missing", Value: "added", Action: "skip"}}, state); err != nil || request.URL.Query().Get("missing") != "added" {
+		t.Fatalf("skip missing parameter = %v, %v", request.URL.Query(), err)
+	}
+	if err := Execute([]Action{{Kind: ActionSetQueryParameter, Name: "x"}}, &State{}); err == nil {
+		t.Fatal("query mutation without request should fail")
+	}
+	for _, value := range []string{
+		`<policies><inbound><set-query-parameter name="x"><value>@(1)</value></set-query-parameter></inbound></policies>`,
+		`<policies><inbound><set-variable name="x"><value>@(1)</value></set-variable></inbound></policies>`,
+	} {
+		if _, err := Compile(value, true); err == nil {
+			t.Fatal("strict mode should reject expression mutation")
+		}
+	}
+}
+
 func TestUnsupportedExpressionModes(t *testing.T) {
 	xml := `<policies><inbound><set-header name="X"><value>@(context.Request.Method)</value></set-header></inbound><backend/><outbound/><on-error/></policies>`
 	plan, err := Compile(xml, false)

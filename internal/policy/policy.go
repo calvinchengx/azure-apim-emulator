@@ -18,6 +18,8 @@ type ActionKind int
 
 const (
 	ActionSetHeader ActionKind = iota
+	ActionSetQueryParameter
+	ActionSetVariable
 	ActionSetBackend
 	ActionRewriteURI
 	ActionForward
@@ -37,6 +39,7 @@ type Action struct {
 	Reason        string
 	Body          string
 	Headers       []Header
+	Variable      string
 	Children      []Action
 	RetryCount    int
 	RetryInterval time.Duration
@@ -71,6 +74,7 @@ type State struct {
 	Reason     string
 	Body       string
 	Headers    http.Header
+	Variables  map[string]string
 }
 
 type node struct {
@@ -240,6 +244,18 @@ func compileNode(item node, strict bool) (Action, bool, error) {
 			return unsupported(item.Name), true, nil
 		}
 		return Action{Kind: ActionSetHeader, Name: item.Attrs["name"], Value: value, Action: item.Attrs["exists-action"]}, true, nil
+	case "set-query-parameter":
+		value := childText(item, "value")
+		if expression(value) {
+			return unsupported(item.Name), true, nil
+		}
+		return Action{Kind: ActionSetQueryParameter, Name: item.Attrs["name"], Value: value, Action: item.Attrs["exists-action"]}, true, nil
+	case "set-variable":
+		value := childText(item, "value")
+		if expression(value) {
+			return unsupported(item.Name), true, nil
+		}
+		return Action{Kind: ActionSetVariable, Variable: item.Attrs["name"], Value: value}, true, nil
 	case "set-backend-service":
 		value, backendID := item.Attrs["base-url"], item.Attrs["backend-id"]
 		if (value == "") == (backendID == "") || expression(value) || expression(backendID) {
@@ -331,6 +347,27 @@ func Execute(actions []Action, state *State) error {
 				target = state.Request.Header
 			}
 			setHeader(target, Header{Name: action.Name, Value: action.Value, Action: action.Action})
+		case ActionSetQueryParameter:
+			if state.Request == nil {
+				return fmt.Errorf("set-query-parameter requires a request")
+			}
+			query := state.Request.URL.Query()
+			switch action.Action {
+			case "delete":
+				query.Del(action.Name)
+			case "skip":
+				if !query.Has(action.Name) {
+					query.Set(action.Name, action.Value)
+				}
+			default:
+				query.Set(action.Name, action.Value)
+			}
+			state.Request.URL.RawQuery = query.Encode()
+		case ActionSetVariable:
+			if state.Variables == nil {
+				state.Variables = map[string]string{}
+			}
+			state.Variables[action.Variable] = action.Value
 		case ActionSetBackend:
 			state.BackendURL = action.Value
 			state.BackendID = action.BackendID
