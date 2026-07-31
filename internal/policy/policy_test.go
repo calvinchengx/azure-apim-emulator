@@ -1,6 +1,7 @@
 package policy
 
 import (
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -160,6 +161,78 @@ func TestCheckHeaderPolicy(t *testing.T) {
 	}
 	if err := Execute([]Action{{Kind: ActionCheckHeader, Name: "X"}}, &State{}); err == nil {
 		t.Fatal("check-header without request should fail")
+	}
+}
+
+func TestValidateJWTPolicy(t *testing.T) {
+	plan, err := Compile(`<policies><inbound><validate-jwt failed-validation-httpcode="403" failed-validation-error-message="token rejected"/></inbound></policies>`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	request.Header.Set("Authorization", "Bearer good")
+	state := &State{Request: request, ValidateToken: func(token string) error {
+		if token != "good" {
+			return errors.New("bad token")
+		}
+		return nil
+	}}
+	if err := Execute(plan.Inbound, state); err != nil || state.Returned {
+		t.Fatalf("valid token = %+v, %v", state, err)
+	}
+	request.Header.Set("Authorization", "Bearer bad")
+	state = &State{Request: request, ValidateToken: func(string) error { return errors.New("bad token") }}
+	if err := Execute(plan.Inbound, state); err != nil || !state.Returned || state.StatusCode != http.StatusForbidden || state.Body != "token rejected" {
+		t.Fatalf("invalid token = %+v, %v", state, err)
+	}
+	if _, err := Compile(`<policies><inbound><validate-jwt failed-validation-httpcode="bad"/></inbound></policies>`, false); err == nil {
+		t.Fatal("invalid validate-jwt status accepted")
+	}
+	if err := Execute(plan.Inbound, &State{Request: request}); err == nil {
+		t.Fatal("unconfigured validate-jwt accepted")
+	}
+}
+
+func TestIPFilterPolicy(t *testing.T) {
+	allow, err := Compile(`<policies><inbound><ip-filter action="allow" failed-check-error-message="blocked"><address>10.0.0.0/8</address><address>192.0.2.1</address></ip-filter></inbound></policies>`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	allowed := httptest.NewRequest(http.MethodGet, "/", nil)
+	allowed.RemoteAddr = "10.1.2.3:1234"
+	state := &State{Request: allowed}
+	if err := Execute(allow.Inbound, state); err != nil || state.Returned {
+		t.Fatalf("allowed IP = %+v, %v", state, err)
+	}
+	blocked := httptest.NewRequest(http.MethodGet, "/", nil)
+	blocked.RemoteAddr = "203.0.113.5:1234"
+	state = &State{Request: blocked}
+	if err := Execute(allow.Inbound, state); err != nil || !state.Returned || state.StatusCode != http.StatusForbidden {
+		t.Fatalf("blocked IP = %+v, %v", state, err)
+	}
+	forbid, err := Compile(`<policies><inbound><ip-filter action="forbid"><address>192.0.2.1</address></ip-filter></inbound></policies>`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	forbidden := httptest.NewRequest(http.MethodGet, "/", nil)
+	forbidden.RemoteAddr = "192.0.2.1:1234"
+	state = &State{Request: forbidden}
+	if err := Execute(forbid.Inbound, state); err != nil || !state.Returned {
+		t.Fatalf("forbidden IP = %+v, %v", state, err)
+	}
+	for _, xml := range []string{
+		`<policies><inbound><ip-filter action="bad"/></inbound></policies>`,
+		`<policies><inbound><ip-filter action="allow"><range/></ip-filter></inbound></policies>`,
+	} {
+		if _, err := Compile(xml, true); err == nil {
+			t.Fatal("invalid ip-filter accepted")
+		}
+	}
+	if !ipMatches("192.0.2.1", "192.0.2.1") || ipMatches("not-an-ip", "192.0.2.1") || ipMatches("192.0.2.2", "bad/cidr") {
+		t.Fatal("IP matcher mismatch")
+	}
+	if err := Execute([]Action{{Kind: ActionIPFilter, FilterAction: "allow"}}, &State{}); err == nil {
+		t.Fatal("ip-filter without request should fail")
 	}
 }
 

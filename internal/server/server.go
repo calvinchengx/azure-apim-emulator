@@ -47,6 +47,9 @@ func New(cfg *config.Config, validator auth.RequestValidator, backendClient, jwk
 		}
 	}
 	runtime := gateway.New(cfg.DefaultService, backendClient)
+	if tokenValidator, ok := validator.(*auth.Validator); ok {
+		runtime.SetPolicyTokenValidator(tokenValidator.ValidateToken)
+	}
 	s := &Server{Cfg: cfg, Clock: ck, Store: st, Gateway: runtime, mux: http.NewServeMux()}
 	s.ARM = &arm.Handler{
 		Store: st, Auth: validator,

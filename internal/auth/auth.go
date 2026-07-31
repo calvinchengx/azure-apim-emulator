@@ -146,6 +146,12 @@ func (v *Validator) Validate(token string) (*Principal, error) {
 	return principal, nil
 }
 
+// ValidateToken adapts JWT validation for gateway policy execution.
+func (v *Validator) ValidateToken(token string) error {
+	_, err := v.Validate(token)
+	return err
+}
+
 func armAudience(raw json.RawMessage) bool {
 	accepted := map[string]bool{"https://management.azure.com": true, "https://management.azure.com/": true}
 	var one string

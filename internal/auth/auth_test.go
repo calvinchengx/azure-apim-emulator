@@ -22,6 +22,9 @@ func TestValidatorHappyPaths(t *testing.T) {
 	jwks := httptest.NewServer(jwksHandler(key, "kid"))
 	defer jwks.Close()
 	v := New(testIssuer, jwks.URL, false, func() int64 { return 1000 }, jwks.Client())
+	if err := v.ValidateToken("invalid"); err == nil {
+		t.Fatal("ValidateToken accepted invalid token")
+	}
 
 	token := signToken(t, key, map[string]any{"alg": "RS256", "kid": "kid"}, map[string]any{
 		"iss": testIssuer, "aud": "https://management.azure.com/", "exp": 1100, "nbf": 900,

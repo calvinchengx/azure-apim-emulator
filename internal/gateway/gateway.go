@@ -70,15 +70,16 @@ type Route struct {
 
 // Runtime atomically publishes snapshots and serves gateway traffic.
 type Runtime struct {
-	defaultService string
-	client         *http.Client
-	current        atomic.Pointer[Snapshot]
-	traceMu        sync.RWMutex
-	traces         map[string]Trace
-	traceOrder     []string
-	eventStore     atomic.Pointer[store.Store]
-	breakerMu      sync.Mutex
-	breakers       map[string]circuitState
+	defaultService       string
+	client               *http.Client
+	current              atomic.Pointer[Snapshot]
+	traceMu              sync.RWMutex
+	traces               map[string]Trace
+	traceOrder           []string
+	eventStore           atomic.Pointer[store.Store]
+	breakerMu            sync.Mutex
+	breakers             map[string]circuitState
+	policyTokenValidator func(string) error
 }
 
 type circuitState struct {
@@ -119,6 +120,11 @@ func New(defaultService string, client *http.Client) *Runtime {
 	r := &Runtime{defaultService: defaultService, client: client, traces: map[string]Trace{}, breakers: map[string]circuitState{}}
 	r.current.Store(&Snapshot{Services: map[string]*Service{}})
 	return r
+}
+
+// SetPolicyTokenValidator configures the validator used by gateway JWT policies.
+func (r *Runtime) SetPolicyTokenValidator(validate func(string) error) {
+	r.policyTokenValidator = validate
 }
 
 // Activate compiles all stored resources and atomically publishes them.
@@ -361,7 +367,7 @@ func (r *Runtime) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		gatewayError(w, http.StatusUnauthorized, "SubscriptionKeyInvalid", message)
 		return
 	}
-	state := &policy.State{Request: req, BackendURL: route.API.ServiceURL, Path: relative, Headers: make(http.Header)}
+	state := &policy.State{Request: req, BackendURL: route.API.ServiceURL, Path: relative, Headers: make(http.Header), ValidateToken: r.policyTokenValidator}
 	traceEvent(trace, "inbound", "")
 	if err := policy.Execute(route.Plan.Inbound, state); err != nil {
 		r.policyFailure(w, req, route.Plan, state, err)

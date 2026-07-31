@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -23,6 +24,8 @@ const (
 	ActionSetVariable
 	ActionSetBody
 	ActionCheckHeader
+	ActionValidateJWT
+	ActionIPFilter
 	ActionSetBackend
 	ActionRewriteURI
 	ActionForward
@@ -45,6 +48,8 @@ type Action struct {
 	Variable      string
 	Values        []string
 	IgnoreCase    bool
+	FailedCode    int
+	FilterAction  string
 	Children      []Action
 	RetryCount    int
 	RetryInterval time.Duration
@@ -69,18 +74,19 @@ type Plan struct {
 
 // State is mutable request state exposed to policy actions.
 type State struct {
-	Request    *http.Request
-	Response   *http.Response
-	BackendURL string
-	BackendID  string
-	Path       string
-	Returned   bool
-	StatusCode int
-	Reason     string
-	Body       string
-	BodySet    bool
-	Headers    http.Header
-	Variables  map[string]string
+	Request       *http.Request
+	Response      *http.Response
+	BackendURL    string
+	BackendID     string
+	Path          string
+	Returned      bool
+	StatusCode    int
+	Reason        string
+	Body          string
+	BodySet       bool
+	Headers       http.Header
+	Variables     map[string]string
+	ValidateToken func(string) error
 }
 
 type node struct {
@@ -290,6 +296,27 @@ func compileNode(item node, strict bool) (Action, bool, error) {
 			}
 		}
 		return Action{Kind: ActionCheckHeader, Name: item.Attrs["name"], Values: values, Value: item.Attrs["failed-check-error-message"], StatusCode: code, IgnoreCase: strings.EqualFold(item.Attrs["ignore-case"], "true")}, true, nil
+	case "validate-jwt":
+		code := http.StatusUnauthorized
+		if value := item.Attrs["failed-validation-httpcode"]; value != "" {
+			if _, err := fmt.Sscanf(value, "%d", &code); err != nil {
+				return Action{}, false, fmt.Errorf("invalid validate-jwt status")
+			}
+		}
+		return Action{Kind: ActionValidateJWT, Value: item.Attrs["failed-validation-error-message"], FailedCode: code}, true, nil
+	case "ip-filter":
+		filterAction := strings.ToLower(item.Attrs["action"])
+		if filterAction != "allow" && filterAction != "forbid" {
+			return Action{}, false, fmt.Errorf("invalid ip-filter action")
+		}
+		values := make([]string, 0, len(item.Children))
+		for _, child := range item.Children {
+			if child.Name != "address" {
+				return unsupported(item.Name + "/" + child.Name), true, nil
+			}
+			values = append(values, strings.TrimSpace(child.Text))
+		}
+		return Action{Kind: ActionIPFilter, Values: values, FilterAction: filterAction, StatusCode: http.StatusForbidden, Value: item.Attrs["failed-check-error-message"]}, true, nil
 	case "set-backend-service":
 		value, backendID := item.Attrs["base-url"], item.Attrs["backend-id"]
 		if (value == "") == (backendID == "") || expression(value) || expression(backendID) {
@@ -368,6 +395,18 @@ func childText(item node, name string) string {
 	return ""
 }
 
+func ipMatches(remote, rule string) bool {
+	ip := net.ParseIP(strings.TrimSpace(remote))
+	if ip == nil {
+		return false
+	}
+	if strings.Contains(rule, "/") {
+		_, network, err := net.ParseCIDR(strings.TrimSpace(rule))
+		return err == nil && network.Contains(ip)
+	}
+	return ip.Equal(net.ParseIP(strings.TrimSpace(rule)))
+}
+
 // Execute applies compiled actions to state.
 func Execute(actions []Action, state *State) error {
 	if state.Headers == nil {
@@ -426,6 +465,35 @@ func Execute(actions []Action, state *State) error {
 				}
 			}
 			if !matched {
+				state.Returned, state.StatusCode, state.Body = true, action.StatusCode, action.Value
+				return nil
+			}
+		case ActionValidateJWT:
+			if state.Request == nil || state.ValidateToken == nil {
+				return fmt.Errorf("validate-jwt requires a configured token validator")
+			}
+			header := state.Request.Header.Get("Authorization")
+			if !strings.HasPrefix(header, "Bearer ") || state.ValidateToken(strings.TrimSpace(strings.TrimPrefix(header, "Bearer "))) != nil {
+				state.Returned, state.StatusCode, state.Body = true, action.FailedCode, action.Value
+				return nil
+			}
+		case ActionIPFilter:
+			if state.Request == nil {
+				return fmt.Errorf("ip-filter requires a request")
+			}
+			remote := state.Request.RemoteAddr
+			if host, _, err := net.SplitHostPort(remote); err == nil {
+				remote = host
+			}
+			matched := false
+			for _, value := range action.Values {
+				if ipMatches(remote, value) {
+					matched = true
+					break
+				}
+			}
+			failed := (action.FilterAction == "allow" && !matched) || (action.FilterAction == "forbid" && matched)
+			if failed {
 				state.Returned, state.StatusCode, state.Body = true, action.StatusCode, action.Value
 				return nil
 			}
