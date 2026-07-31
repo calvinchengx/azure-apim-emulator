@@ -265,13 +265,68 @@ func TestCollectionPagingAndFiltering(t *testing.T) {
 		source.WriteHeader(http.StatusOK)
 		_, _ = source.WriteString(body)
 		target := httptest.NewRecorder()
-		writeCollectionResponse(target, httptest.NewRequest(http.MethodGet, basePath+apiQuery, nil), source)
+		writeCollectionResponse(target, httptest.NewRequest(http.MethodGet, basePath+apiQuery, nil), source, route{})
 		if target.Code != http.StatusOK && body != `{"value":["scalar"]}` {
 			t.Fatalf("collection response %q = %d", body, target.Code)
 		}
 		if body == `{"value":["scalar"]}` && target.Code != http.StatusBadRequest {
 			t.Fatalf("scalar collection = %d: %s", target.Code, target.Body.String())
 		}
+	}
+}
+
+func TestCollectionOptionMatrixAndOrdering(t *testing.T) {
+	handler, st := testHandler(t)
+	seedService(t, st)
+	for _, name := range []string{"alpha", "middle", "zulu"} {
+		if _, err := st.UpsertPolicyFragment(model.PolicyFragment{ServiceID: serviceModel().ID(), Name: name, Value: "<fragment/>"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	path := basePath + "/policyFragments?api-version=2024-05-01&$orderby=name+desc&$top=2"
+	response := request(t, handler, http.MethodGet, path, "")
+	var page struct {
+		Value []struct{ Name string } `json:"value"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &page); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != http.StatusOK || len(page.Value) != 2 || page.Value[0].Name != "zulu" || page.Value[1].Name != "middle" {
+		t.Fatalf("ordered fragments = %d %+v", response.Code, page.Value)
+	}
+
+	for _, path := range []string{
+		basePath + "/tags?api-version=2024-05-01&$orderby=name",
+		basePath + "/tags?api-version=2024-05-01&$select=name",
+		basePath + "/policyFragments?api-version=2024-05-01&$orderby=description",
+	} {
+		response := request(t, handler, http.MethodGet, path, "")
+		if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "InvalidQueryParameterValue") {
+			t.Fatalf("unsupported option = %d %s", response.Code, response.Body.String())
+		}
+	}
+
+	rt := route{ServiceName: "service", Tail: []string{"policyFragments"}}
+	for _, test := range []struct {
+		query url.Values
+		want  int
+		err   bool
+	}{
+		{url.Values{"$orderby": {"name"}}, 1, false},
+		{url.Values{"$orderby": {"NAME ASC"}}, 1, false},
+		{url.Values{"$orderby": {"name DESC"}}, -1, false},
+		{url.Values{"$orderby": {""}}, 0, true},
+		{url.Values{"$orderby": {"description"}}, 0, true},
+		{url.Values{"$orderby": {"name sideways"}}, 0, true},
+		{url.Values{"$orderby": {"name", "name desc"}}, 0, true},
+	} {
+		got, err := parseCollectionOrder(test.query, rt)
+		if got != test.want || (err != nil) != test.err {
+			t.Errorf("parseCollectionOrder(%v) = %d, %v", test.query, got, err)
+		}
+	}
+	if _, err := parseCollectionOrder(url.Values{"$orderby": {"name"}}, route{}); err == nil {
+		t.Fatal("unsupported route accepted $orderby")
 	}
 }
 

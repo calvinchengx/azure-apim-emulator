@@ -61,18 +61,29 @@ const fragmentState = await client.policyFragment.getEntityTag(resourceGroup, se
 if (!fragmentState.eTag) {
   throw new Error("JavaScript SDK policy fragment ETag missing");
 }
+await client.policyFragment.beginCreateOrUpdateAndWait(
+  resourceGroup,
+  serviceName,
+  "aaa-javascript-sdk-fragment",
+  {
+    description: "Ordering witness",
+    format: "rawxml",
+    value: "<fragment />",
+  },
+);
 const fragments = [];
-for await (const item of client.policyFragment.listByService(resourceGroup, serviceName)) {
+for await (const item of client.policyFragment.listByService(resourceGroup, serviceName, { orderby: "name desc" })) {
   fragments.push(item);
 }
-if (fragments.length !== 1) {
-  throw new Error(`unexpected policy fragment count: ${fragments.length}`);
+if (fragments.length !== 2 || fragments[0].name !== "javascript-sdk-fragment" || fragments[1].name !== "aaa-javascript-sdk-fragment") {
+  throw new Error(`unexpected ordered policy fragments: ${fragments.map((item) => item.name).join(",")}`);
 }
 const references = await client.policyFragment.listReferences(resourceGroup, serviceName, "javascript-sdk-fragment");
 if ((references.value ?? []).length !== 0) {
   throw new Error("unreferenced policy fragment reported references");
 }
 await client.policyFragment.delete(resourceGroup, serviceName, "javascript-sdk-fragment", "*");
+await client.policyFragment.delete(resourceGroup, serviceName, "aaa-javascript-sdk-fragment", "*");
 const scope = `/subscriptions/${process.env.APIM_SUBSCRIPTION_ID}/resourceGroups/${resourceGroup}/providers/Microsoft.ApiManagement/service/${serviceName}/apis/javascript-sdk-api`;
 await client.subscription.createOrUpdate(resourceGroup, serviceName, "javascript-sdk-subscription", {
   displayName: "JavaScript SDK subscription",

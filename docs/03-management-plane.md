@@ -208,8 +208,12 @@ ordering, return the filtered total in `count`, and emit an absolute `nextLink`
 that retains the original query. `$filter` supports parentheses, `and`/`or`,
 `eq`, `ne`, `gt`, `ge`, `lt`, `le`, boolean/number/null/string literals,
 doubled-quote string escaping, and `contains`, `startswith`, `endswith`, and
-`substringof`. The generated operation inventory will further constrain fields,
-operators, and functions to each endpoint's documented matrix.
+`substringof`. Undocumented OData options are rejected on collection operations.
+The stable `2024-05-01` exception is implemented for policy fragments:
+`$orderby=name` accepts `asc` or `desc`, applies stable ordering before paging,
+and is exercised through the official JavaScript SDK. The generated operation
+inventory will further constrain filter fields, operators, and functions and
+implement named selectors such as `expandGroups`, `tags`, and `scope`.
 
 All current ARM failures include the canonical JSON error envelope and mirror
 its code in `x-ms-error-code`, alongside the per-request request and correlation

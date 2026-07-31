@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"unicode"
@@ -18,11 +19,11 @@ func (h *Handler) handleCollectionRequest(w http.ResponseWriter, r *http.Request
 	}
 	response := httptest.NewRecorder()
 	h.dispatch(response, r, rt)
-	writeCollectionResponse(w, r, response)
+	writeCollectionResponse(w, r, response, rt)
 	return true
 }
 
-func writeCollectionResponse(w http.ResponseWriter, r *http.Request, response *httptest.ResponseRecorder) {
+func writeCollectionResponse(w http.ResponseWriter, r *http.Request, response *httptest.ResponseRecorder, rt route) {
 	if response.Code < 200 || response.Code >= 300 {
 		copyRecordedResponse(w, response)
 		return
@@ -35,6 +36,10 @@ func writeCollectionResponse(w http.ResponseWriter, r *http.Request, response *h
 	values, ok := document["value"].([]any)
 	if !ok {
 		copyRecordedResponse(w, response)
+		return
+	}
+	if name := unsupportedCollectionOption(r.URL.Query(), rt); name != "" {
+		writeError(w, http.StatusBadRequest, "InvalidQueryParameterValue", fmt.Sprintf("The query option %s is not supported for this operation.", name), name)
 		return
 	}
 
@@ -58,6 +63,19 @@ func writeCollectionResponse(w http.ResponseWriter, r *http.Request, response *h
 		if matches {
 			filtered = append(filtered, value)
 		}
+	}
+	order, err := parseCollectionOrder(r.URL.Query(), rt)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "InvalidQueryParameterValue", err.Error(), "$orderby")
+		return
+	}
+	if order != 0 {
+		sort.SliceStable(filtered, func(left, right int) bool {
+			leftName, _ := caseInsensitiveValue(filtered[left].(map[string]any), "name")
+			rightName, _ := caseInsensitiveValue(filtered[right].(map[string]any), "name")
+			comparison := strings.Compare(fmt.Sprint(leftName), fmt.Sprint(rightName))
+			return comparison*order < 0
+		})
 	}
 
 	skip, err := collectionInteger(r.URL.Query(), "$skip", 0, math.MaxInt32)
@@ -93,6 +111,44 @@ func writeCollectionResponse(w http.ResponseWriter, r *http.Request, response *h
 	copyHeaders(w.Header(), response.Header())
 	w.Header().Del("Content-Length")
 	writeJSON(w, response.Code, document)
+}
+
+func unsupportedCollectionOption(query url.Values, rt route) string {
+	for name := range query {
+		if !strings.HasPrefix(name, "$") || oneOf(name, "$filter", "$top", "$skip") {
+			continue
+		}
+		if name == "$orderby" && policyFragmentCollection(rt) {
+			continue
+		}
+		return name
+	}
+	return ""
+}
+
+func parseCollectionOrder(query url.Values, rt route) (int, error) {
+	values, present := query["$orderby"]
+	if !present {
+		return 0, nil
+	}
+	if !policyFragmentCollection(rt) || len(values) != 1 {
+		return 0, fmt.Errorf("$orderby must be specified once on a supported operation")
+	}
+	parts := strings.Fields(values[0])
+	if len(parts) == 0 || len(parts) > 2 || !strings.EqualFold(parts[0], "name") {
+		return 0, fmt.Errorf("$orderby supports only the name field")
+	}
+	if len(parts) == 1 || strings.EqualFold(parts[1], "asc") {
+		return 1, nil
+	}
+	if strings.EqualFold(parts[1], "desc") {
+		return -1, nil
+	}
+	return 0, fmt.Errorf("$orderby direction must be asc or desc")
+}
+
+func policyFragmentCollection(rt route) bool {
+	return rt.ServiceName != "" && len(rt.Tail) == 1 && equal(rt.Tail[0], "policyFragments")
 }
 
 func collectionInteger(query url.Values, name string, minimum, maximum int) (int, error) {
