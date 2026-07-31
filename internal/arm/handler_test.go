@@ -64,7 +64,10 @@ func TestTopLevelRoutingErrors(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			handler.Auth = test.auth
-			assertStatus(t, handler, test.method, test.path, "", test.want)
+			response := request(t, handler, test.method, test.path, "")
+			if response.Code != test.want || response.Header().Get("x-ms-error-code") == "" {
+				t.Fatalf("%s %s = %d, error code %q: %s", test.method, test.path, response.Code, response.Header().Get("x-ms-error-code"), response.Body.String())
+			}
 		})
 	}
 	if _, ok := parse(nil); ok {

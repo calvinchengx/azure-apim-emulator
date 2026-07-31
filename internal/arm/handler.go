@@ -3136,6 +3136,7 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 	_ = json.NewEncoder(w).Encode(value)
 }
 func writeError(w http.ResponseWriter, status int, code, message, target string) {
+	w.Header().Set("x-ms-error-code", code)
 	errorValue := map[string]any{"code": code, "message": message}
 	if target != "" {
 		errorValue["target"] = target

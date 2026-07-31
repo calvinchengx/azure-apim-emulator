@@ -93,6 +93,11 @@ doubled-quote string escaping, and `contains`, `startswith`, `endswith`, and
 `substringof`. The generated operation inventory will further constrain fields,
 operators, and functions to each endpoint's documented matrix.
 
+All current ARM failures include the canonical JSON error envelope and mirror
+its code in `x-ms-error-code`, alongside the per-request request and correlation
+IDs. Endpoint-specific nested `details` and `additionalInfo` payloads remain in
+the generated error-contract audit.
+
 ## API import and export
 
 Support OpenAPI 2/3/3.1 as documented, WSDL/SOAP, GraphQL schema, WADL where

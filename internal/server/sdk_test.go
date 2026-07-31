@@ -175,7 +175,7 @@ func TestGoManagementSDKConfiguresProtectedGateway(t *testing.T) {
 		Properties: &armapimanagement.NamedValueUpdateParameterProperties{Value: &namedValueContent},
 	}, nil)
 	var responseError *azcore.ResponseError
-	if !errors.As(err, &responseError) || responseError.StatusCode != http.StatusPreconditionFailed || responseError.ErrorCode != "PreconditionFailed" {
+	if !errors.As(err, &responseError) || responseError.StatusCode != http.StatusPreconditionFailed || responseError.ErrorCode != "PreconditionFailed" || responseError.RawResponse.Header.Get("x-ms-error-code") != "PreconditionFailed" {
 		t.Fatalf("stale named value update error = %#v", err)
 	}
 	temporaryDisplayName, temporaryValue := "Temporary", "temporary"

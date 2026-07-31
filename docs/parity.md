@@ -14,6 +14,7 @@ Snapshot date: 2026-07-31
 | stable `2024-05-01` operation inventory | planned | P1-P7 | generated spec audit and SDK/differential tests |
 | ARM conditional requests | implemented | P1 | central strong/weak ETag parser, `If-Match`/`If-None-Match`/wildcard behavior, atomic mutation checks, malformed-header and `304` tests, and official Go SDK stale-update `412 PreconditionFailed` witness; operation-specific required-header audit and Azure differential fixture pending |
 | ARM collection queries | implemented | P1 | central stable paging, filtered total `count`, absolute query-preserving `nextLink`, int32 validation, comparison/logical/string-function OData grammar, exact failure coverage, and official Go SDK filtered multipage pager witness; endpoint-specific filter matrix and Azure differential fixtures pending |
+| ARM error envelope | partial | P1 | canonical body code/message/target, `x-ms-error-code`, request/correlation IDs, exact HTTP coverage, and official Go SDK `ResponseError` witness; endpoint-specific nested details/additionalInfo and Azure differential fixtures pending |
 | official management SDKs | sdk-verified | P0-P1 | Go `v1.1.1`, JavaScript `10.0.0`, Python `5.0.0`, and .NET `1.3.1` service/API/operation/subscription plus protected-gateway workflows |
 | preview `2025-09-01-preview` | planned | P8 | isolated preview suite |
 | HTTP gateway and routing | implemented | P0-P1 | operation template, subscription, backend recorder integration test |
