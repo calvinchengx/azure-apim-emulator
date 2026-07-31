@@ -447,6 +447,16 @@ func TestCollectionSelectors(t *testing.T) {
 	if _, err := handler.applyCollectionSelectors([]any{tagWire(tags[0])}, url.Values{"scope": {"invalid"}}, route{ServiceName: "svc", SubscriptionID: "sub", ResourceGroup: "rg", Tail: []string{"tags"}}); err == nil {
 		t.Fatal("unsupported tag scope was accepted")
 	}
+	projected, err := handler.applyCollectionSelectors([]any{
+		map[string]any{"properties": map[string]any{"isKeyVaultRefreshFailed": true}},
+		map[string]any{"properties": map[string]any{}},
+	}, url.Values{"isKeyVaultRefreshFailed": {"true"}}, route{Tail: []string{"namedValues"}})
+	if err != nil || projected[1].(map[string]any)["properties"].(map[string]any)["isKeyVaultRefreshFailed"] != false {
+		t.Fatalf("Key Vault projection = %#v, %v", projected, err)
+	}
+	if _, err := handler.applyCollectionSelectors([]any{"scalar"}, url.Values{"isKeyVaultRefreshFailed": {"true"}}, route{Tail: []string{"certificates"}}); err == nil {
+		t.Fatal("scalar Key Vault projection was accepted")
+	}
 	for _, path := range []string{
 		basePath + "/products?api-version=2024-05-01&expandGroups=maybe",
 		basePath + "/tags?api-version=2024-05-01&tags=gateway",

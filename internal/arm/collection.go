@@ -233,6 +233,18 @@ func (h *Handler) applyCollectionSelectors(values []any, query url.Values, rt ro
 			return nil, err
 		}
 	}
+	if (key == "namedValues" || key == "certificates") && query.Get("isKeyVaultRefreshFailed") == "true" {
+		for _, value := range values {
+			resource, ok := value.(map[string]any)
+			if !ok {
+				return nil, errors.New("the collection cannot project Key Vault refresh state")
+			}
+			properties := resourceProperties(resource)
+			if _, present := properties["isKeyVaultRefreshFailed"]; !present {
+				properties["isKeyVaultRefreshFailed"] = false
+			}
+		}
+	}
 	return values, nil
 }
 
