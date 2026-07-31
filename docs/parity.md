@@ -10,7 +10,7 @@ Snapshot date: 2026-07-31
 |---|---|---:|---|
 | process/config/TLS/store/clock | implemented | P0 | Go tests, GoReleaser matrix, container and Compose smoke tests |
 | service ARM lifecycle and LROs | partial | P0 | lossless `2024-05-01` schema inventory, GET/PUT/PATCH/DELETE/list, completed LRO, 100% local statement coverage, and read-only differential harness; authorized Azure evidence pending |
-| APIs/operations/schemas/tags/products/groups/users/subscriptions/named values/backends/certificates/policy fragments | partial | P0-P1 | Core lifecycles and four-SDK secret rotation; Go SDK revision cloning including lossless schemas and API/operation tag associations, tags and links, groups and memberships, user CRUD/SSO/tokens, release promotion, version-set, named-value, backend, and PFX certificate CRUD/refresh; JavaScript SDK fragment lifecycle/reference evidence plus recursive gateway expansion and cycle/missing-reference validation; Key Vault retrieval and broader resources pending |
+| APIs/operations/schemas/tags/products/groups/users/subscriptions/named values/backends/certificates/policy fragments/loggers/diagnostics | partial | P0-P1 | Core lifecycles and four-SDK secret rotation; Go SDK revision cloning including lossless schemas, API/operation tag associations, and API diagnostics; tags and links, groups and memberships, user CRUD/SSO/tokens, release promotion, version-set, named-value, backend, PFX certificate, logger, and service/API diagnostic CRUD; JavaScript SDK fragment lifecycle/reference evidence plus recursive gateway expansion and cycle/missing-reference validation; Key Vault retrieval and broader resources pending |
 | stable `2024-05-01` operation inventory | planned | P1-P7 | generated spec audit and SDK/differential tests |
 | official management SDKs | sdk-verified | P0-P1 | Go `v1.1.1`, JavaScript `10.0.0`, Python `5.0.0`, and .NET `1.3.1` service/API/operation/subscription plus protected-gateway workflows |
 | preview `2025-09-01-preview` | planned | P8 | isolated preview suite |
@@ -27,7 +27,7 @@ Snapshot date: 2026-07-31
 | gRPC | planned | P5 | generated clients and trailer/stream fixtures |
 | networking/private/custom domains | planned | P1/P6 | ARM state plus local reachability and Azure differential |
 | tiers/SKUs/regions/deployment | planned | P6 | capability audit and tier fixtures |
-| diagnostics/analytics/monitoring | planned | P1/P7 | telemetry schema/correlation fixtures |
+| diagnostics/analytics/monitoring | partial | P1/P7 | lossless logger and service/API diagnostic ARM state, logger reference protection, fixed sampling and all-error override, correlation/status/duration/client-IP SQLite events, Go SDK and real gateway integration; body/header capture and masking, external adapters, analytics, metrics, and Azure differential fixtures pending |
 | authorization providers/integrations | planned | P7 | adapter and Azure differential suites |
 | AI gateway and MCP | planned | P8 | deterministic providers and opt-in real suites |
 | Entra ARM authentication | sdk-verified | P0 | Go SDK + `azidentity` + in-process `entra-emulator` |

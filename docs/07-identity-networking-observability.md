@@ -84,6 +84,12 @@ portal. Optional adapters export to OTLP, an Application Insights-compatible
 collector, HTTP/Event Hub-style fixtures, and user-provided endpoints. Azure
 credentials or network calls are never required for the standard test suite.
 
+The current P1 slice implements lossless logger and service/API diagnostic ARM
+documents, logger reference protection, revision cloning, fixed sampling,
+`allErrors` override behavior, and local request events containing correlation,
+status, duration, method, path, and optional client IP. Header/body capture,
+masking, external adapters, analytics, and metrics remain tracked parity work.
+
 ## Security posture
 
 This is local development software, not a security boundary. Even so:
@@ -95,4 +101,3 @@ This is local development software, not a security boundary. Even so:
 - warn on policies capable of outbound requests or code-like evaluation
 - isolate optional native/runtime helpers
 - include fuzzing for HTTP, XML, C# expressions, GraphQL, WSDL, and imports
-

@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -372,6 +373,24 @@ func TestClosedStoreErrors(t *testing.T) {
 			_, err := st.ListPolicyFragmentReferences("service", "fragment")
 			return err
 		},
+		"upsert logger": func() error { _, err := st.UpsertLogger(model.Logger{}); return err },
+		"get logger":    func() error { _, err := st.GetLogger("logger"); return err },
+		"list loggers":  func() error { _, err := st.ListLoggers("service"); return err },
+		"delete logger": func() error { return st.DeleteLogger("logger") },
+		"upsert diagnostic": func() error {
+			_, err := st.UpsertDiagnostic(model.Diagnostic{})
+			return err
+		},
+		"get diagnostic":    func() error { _, err := st.GetDiagnostic("diagnostic"); return err },
+		"list diagnostics":  func() error { _, err := st.ListDiagnostics("service"); return err },
+		"delete diagnostic": func() error { return st.DeleteDiagnostic("diagnostic") },
+		"add diagnostic event": func() error {
+			return st.AddDiagnosticEvent(model.DiagnosticEvent{})
+		},
+		"list diagnostic events": func() error {
+			_, err := st.ListDiagnosticEvents("service")
+			return err
+		},
 		"runtime": func() error {
 			_, _, _, _, _, _, _, err := st.RuntimeData()
 			return err
@@ -525,6 +544,24 @@ func TestScanFunctionsRejectMalformedRows(t *testing.T) {
 				_, err := (&Store{db: db}).ListPolicyFragmentReferences("service", "fragment")
 				return err
 			},
+		},
+		{
+			"loggers",
+			`CREATE TABLE loggers (id, service_id, name, logger_type, description, is_buffered, resource_id, credentials_json, document_json, etag)`,
+			`INSERT INTO loggers VALUES ('id', 'service', NULL, '', '', 0, '', '{}', '{}', '')`,
+			func(db *sql.DB) error { _, err := (&Store{db: db}).ListLoggers("service"); return err },
+		},
+		{
+			"diagnostics",
+			`CREATE TABLE diagnostics (id, service_id, scope_id, name, logger_id, always_log, log_client_ip, verbosity, sampling_type, sampling_percentage, document_json, etag)`,
+			`INSERT INTO diagnostics VALUES ('id', 'service', 'scope', NULL, '', '', 0, '', '', 0, '{}', '')`,
+			func(db *sql.DB) error { _, err := (&Store{db: db}).ListDiagnostics("scope"); return err },
+		},
+		{
+			"diagnostic events",
+			`CREATE TABLE diagnostic_events (id, service_id, api_id, diagnostic_id, correlation_id, method, path, status_code, timestamp, duration_nanos, client_ip)`,
+			`INSERT INTO diagnostic_events VALUES ('id', 'service', NULL, '', '', '', '', 0, 0, 0, '')`,
+			func(db *sql.DB) error { _, err := (&Store{db: db}).ListDiagnosticEvents("service"); return err },
 		},
 		{
 			"products",
@@ -1261,6 +1298,162 @@ func TestCertificateLifecycle(t *testing.T) {
 	}
 	if err := st.DeleteCertificate(certificate.ID()); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("second delete = %v", err)
+	}
+}
+
+func TestLoggerDiagnosticAndEventLifecycle(t *testing.T) {
+	st, err := Open("", clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	service, err := st.UpsertService(model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "svc"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	api, err := st.UpsertAPI(model.API{ServiceID: service.ID(), Name: "api", DisplayName: "API"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	logger, err := st.UpsertLogger(model.Logger{ServiceID: service.ID(), Name: "app", LoggerType: "applicationInsights", IsBuffered: true, Credentials: map[string]string{"instrumentationKey": "secret"}, Document: map[string]any{"properties": map[string]any{"custom": true}}})
+	if err != nil || logger.ETag == "" {
+		t.Fatalf("UpsertLogger = %+v, %v", logger, err)
+	}
+	logger.Description = "updated"
+	if logger, err = st.UpsertLogger(logger); err != nil || logger.Description != "updated" {
+		t.Fatalf("update logger = %+v, %v", logger, err)
+	}
+	gotLogger, err := st.GetLogger(strings.ToUpper(logger.ID()))
+	if err != nil || gotLogger.Credentials["instrumentationKey"] != "secret" || gotLogger.Document["properties"].(map[string]any)["custom"] != true {
+		t.Fatalf("GetLogger = %+v, %v", gotLogger, err)
+	}
+	if values, err := st.ListLoggers(strings.ToUpper(service.ID())); err != nil || len(values) != 1 {
+		t.Fatalf("ListLoggers = %+v, %v", values, err)
+	}
+	if _, err := st.GetLogger("missing"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing logger = %v", err)
+	}
+
+	diagnostic, err := st.UpsertDiagnostic(model.Diagnostic{ServiceID: service.ID(), ScopeID: api.ID(), Name: "app", LoggerID: logger.ID(), AlwaysLog: "allErrors", LogClientIP: true, Verbosity: "information", SamplingType: "fixed", SamplingPercentage: 50, Document: map[string]any{"properties": map[string]any{"frontend": map[string]any{"request": map[string]any{"body": map[string]any{"bytes": 64.0}}}}}})
+	if err != nil || diagnostic.ETag == "" {
+		t.Fatalf("UpsertDiagnostic = %+v, %v", diagnostic, err)
+	}
+	diagnostic.Verbosity = "verbose"
+	if diagnostic, err = st.UpsertDiagnostic(diagnostic); err != nil || diagnostic.Verbosity != "verbose" {
+		t.Fatalf("update diagnostic = %+v, %v", diagnostic, err)
+	}
+	gotDiagnostic, err := st.GetDiagnostic(strings.ToUpper(diagnostic.ID()))
+	if err != nil || gotDiagnostic.SamplingPercentage != 50 || gotDiagnostic.Document == nil {
+		t.Fatalf("GetDiagnostic = %+v, %v", gotDiagnostic, err)
+	}
+	if values, err := st.ListDiagnostics(strings.ToUpper(api.ID())); err != nil || len(values) != 1 {
+		t.Fatalf("ListDiagnostics = %+v, %v", values, err)
+	}
+	if _, err := st.GetDiagnostic("missing"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing diagnostic = %v", err)
+	}
+	if err := st.DeleteLogger(logger.ID()); !errors.Is(err, ErrConflict) {
+		t.Fatalf("referenced logger delete = %v", err)
+	}
+
+	event := model.DiagnosticEvent{ID: "event", ServiceID: service.ID(), APIID: api.ID(), DiagnosticID: diagnostic.ID(), CorrelationID: "correlation", Method: "GET", Path: "/api", StatusCode: 200, Timestamp: 123, DurationNanos: 456, ClientIP: "127.0.0.1"}
+	if err := st.AddDiagnosticEvent(event); err != nil {
+		t.Fatal(err)
+	}
+	if events, err := st.ListDiagnosticEvents(strings.ToUpper(service.ID())); err != nil || len(events) != 1 || events[0] != event {
+		t.Fatalf("ListDiagnosticEvents = %+v, %v", events, err)
+	}
+
+	clone, err := st.CloneAPIRevision(api.ID(), model.API{ServiceID: service.ID(), Name: "api;rev=2", DisplayName: "API"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if values, err := st.ListDiagnostics(clone.ID()); err != nil || len(values) != 1 || values[0].LoggerID != logger.ID() {
+		t.Fatalf("cloned diagnostics = %+v, %v", values, err)
+	}
+	if err := st.DeleteAPI(clone.ID()); err != nil {
+		t.Fatal(err)
+	}
+	if values, err := st.ListDiagnostics(clone.ID()); err != nil || len(values) != 0 {
+		t.Fatalf("deleted API diagnostics = %+v, %v", values, err)
+	}
+	if err := st.DeleteDiagnostic(diagnostic.ID()); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.DeleteDiagnostic(diagnostic.ID()); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("second diagnostic delete = %v", err)
+	}
+	if err := st.DeleteLogger(logger.ID()); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.DeleteLogger(logger.ID()); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("second logger delete = %v", err)
+	}
+}
+
+func TestLoggerDiagnosticJSONFailures(t *testing.T) {
+	st, err := Open("", clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	bad := make(chan int)
+	if _, err := st.UpsertLogger(model.Logger{Credentials: map[string]string{}, Document: map[string]any{"bad": bad}}); err == nil {
+		t.Fatal("logger document marshal succeeded after credentials")
+	}
+	if _, err := st.UpsertDiagnostic(model.Diagnostic{Document: map[string]any{"bad": bad}}); err == nil {
+		t.Fatal("diagnostic document marshal succeeded")
+	}
+	if _, err := st.db.Exec(`PRAGMA foreign_keys = OFF`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.db.Exec(`INSERT INTO loggers VALUES ('logger', 'service', 'name', 'azureMonitor', '', 1, '', '{', '{}', '')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.ListLoggers("service"); err == nil {
+		t.Fatal("malformed logger credentials accepted")
+	}
+	if _, err := st.db.Exec(`UPDATE loggers SET credentials_json='{}', document_json='{'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.ListLoggers("service"); err == nil {
+		t.Fatal("malformed logger document accepted")
+	}
+	if _, err := st.db.Exec(`INSERT INTO diagnostics VALUES ('diagnostic', 'service', 'scope', 'name', 'logger', '', 0, '', 'fixed', 100, '{', '')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.ListDiagnostics("scope"); err == nil {
+		t.Fatal("malformed diagnostic document accepted")
+	}
+}
+
+func TestDiagnosticTransactionFailures(t *testing.T) {
+	dir := t.TempDir()
+	st, err := Open(dir, clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	service, _ := st.UpsertService(model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "svc"})
+	api, _ := st.UpsertAPI(model.API{ServiceID: service.ID(), Name: "api"})
+	logger, _ := st.UpsertLogger(model.Logger{ServiceID: service.ID(), Name: "logger"})
+	_, _ = st.UpsertDiagnostic(model.Diagnostic{ServiceID: service.ID(), ScopeID: api.ID(), Name: "d", LoggerID: logger.ID()})
+	db, err := sql.Open("sqlite", filepath.Join(dir, "azure-apim-emulator.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`CREATE TRIGGER reject_diagnostic_clone BEFORE INSERT ON diagnostics BEGIN SELECT RAISE(FAIL, 'rejected'); END`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CloneAPIRevision(api.ID(), model.API{ServiceID: service.ID(), Name: "api;rev=2"}); err == nil {
+		t.Fatal("diagnostic clone trigger was ignored")
+	}
+	if _, err := db.Exec(`DROP TRIGGER reject_diagnostic_clone; CREATE TRIGGER reject_diagnostic_delete BEFORE DELETE ON diagnostics BEGIN SELECT RAISE(FAIL, 'rejected'); END`); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.DeleteAPI(api.ID()); err == nil {
+		t.Fatal("diagnostic cleanup trigger was ignored")
 	}
 }
 

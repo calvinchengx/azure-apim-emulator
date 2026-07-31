@@ -156,6 +156,25 @@ CREATE TABLE IF NOT EXISTS policy_fragments (
   name TEXT NOT NULL, description TEXT NOT NULL, format TEXT NOT NULL, value TEXT NOT NULL,
   provisioning_state TEXT NOT NULL, etag TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS loggers (
+  id TEXT PRIMARY KEY, service_id TEXT NOT NULL REFERENCES services(id) ON DELETE CASCADE,
+  name TEXT NOT NULL, logger_type TEXT NOT NULL, description TEXT NOT NULL,
+  is_buffered INTEGER NOT NULL, resource_id TEXT NOT NULL, credentials_json TEXT NOT NULL,
+  document_json TEXT NOT NULL, etag TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS diagnostics (
+  id TEXT PRIMARY KEY, service_id TEXT NOT NULL REFERENCES services(id) ON DELETE CASCADE,
+  scope_id TEXT NOT NULL, name TEXT NOT NULL, logger_id TEXT NOT NULL,
+  always_log TEXT NOT NULL, log_client_ip INTEGER NOT NULL, verbosity TEXT NOT NULL,
+  sampling_type TEXT NOT NULL, sampling_percentage REAL NOT NULL,
+  document_json TEXT NOT NULL, etag TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS diagnostic_events (
+  id TEXT PRIMARY KEY, service_id TEXT NOT NULL REFERENCES services(id) ON DELETE CASCADE,
+  api_id TEXT NOT NULL, diagnostic_id TEXT NOT NULL, correlation_id TEXT NOT NULL,
+  method TEXT NOT NULL, path TEXT NOT NULL, status_code INTEGER NOT NULL,
+  timestamp INTEGER NOT NULL, duration_nanos INTEGER NOT NULL, client_ip TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS products (
   id TEXT PRIMARY KEY, service_id TEXT NOT NULL REFERENCES services(id) ON DELETE CASCADE,
   name TEXT NOT NULL, display_name TEXT NOT NULL, state TEXT NOT NULL,
@@ -389,6 +408,14 @@ func (s *Store) CloneAPIRevision(sourceID string, v model.API) (model.API, error
 	    SELECT CASE WHEN lower(resource_id)=lower(?) THEN ? ELSE ? || substr(resource_id, length(?) + 1) END, tag_id
 	    FROM resource_tags WHERE lower(resource_id)=lower(?) OR lower(resource_id) LIKE lower(?)`,
 		sourceID, v.ID(), v.ID(), sourceID, sourceID, sourceID+"/operations/%"); err != nil {
+		return v, err
+	}
+	if _, err := tx.Exec(`INSERT INTO diagnostics
+        (id, service_id, scope_id, name, logger_id, always_log, log_client_ip, verbosity,
+         sampling_type, sampling_percentage, document_json, etag)
+        SELECT ? || '/diagnostics/' || name, service_id, ?, name, logger_id, always_log,
+          log_client_ip, verbosity, sampling_type, sampling_percentage, document_json, ?
+        FROM diagnostics WHERE lower(scope_id)=lower(?)`, v.ID(), v.ID(), newETag(), sourceID); err != nil {
 		return v, err
 	}
 	if _, err := tx.Exec(`INSERT INTO policies (scope_id, format, value, etag)
@@ -1405,6 +1432,179 @@ func (s *Store) GetPolicy(scopeID string) (model.Policy, error) {
 	return value, nil
 }
 
+// UpsertLogger creates or replaces a service logger while preserving its ARM document.
+func (s *Store) UpsertLogger(v model.Logger) (model.Logger, error) {
+	v.ETag = newETag()
+	credentials, _ := json.Marshal(v.Credentials)
+	document, err := json.Marshal(v.Document)
+	if err != nil {
+		return v, err
+	}
+	_, err = s.db.Exec(`INSERT INTO loggers
+      (id, service_id, name, logger_type, description, is_buffered, resource_id, credentials_json, document_json, etag)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET logger_type=excluded.logger_type, description=excluded.description,
+        is_buffered=excluded.is_buffered, resource_id=excluded.resource_id,
+        credentials_json=excluded.credentials_json, document_json=excluded.document_json, etag=excluded.etag`,
+		v.ID(), v.ServiceID, v.Name, v.LoggerType, v.Description, v.IsBuffered, v.ResourceID,
+		credentials, document, v.ETag)
+	return v, err
+}
+
+// GetLogger finds one logger by ARM ID.
+func (s *Store) GetLogger(id string) (model.Logger, error) {
+	values, err := scanLoggers(s.db.Query(`SELECT service_id, name, logger_type, description, is_buffered,
+      resource_id, credentials_json, document_json, etag FROM loggers WHERE lower(id)=lower(?)`, id))
+	if err != nil {
+		return model.Logger{}, err
+	}
+	if len(values) == 0 {
+		return model.Logger{}, ErrNotFound
+	}
+	return values[0], nil
+}
+
+// ListLoggers returns service loggers in stable ID order.
+func (s *Store) ListLoggers(serviceID string) ([]model.Logger, error) {
+	return scanLoggers(s.db.Query(`SELECT service_id, name, logger_type, description, is_buffered,
+      resource_id, credentials_json, document_json, etag FROM loggers
+      WHERE lower(service_id)=lower(?) ORDER BY id`, serviceID))
+}
+
+func scanLoggers(rows *sql.Rows, err error) ([]model.Logger, error) {
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	values := make([]model.Logger, 0)
+	for rows.Next() {
+		var v model.Logger
+		var credentials, document string
+		if err := rows.Scan(&v.ServiceID, &v.Name, &v.LoggerType, &v.Description, &v.IsBuffered,
+			&v.ResourceID, &credentials, &document, &v.ETag); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal([]byte(credentials), &v.Credentials); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal([]byte(document), &v.Document); err != nil {
+			return nil, err
+		}
+		values = append(values, v)
+	}
+	return values, rows.Err()
+}
+
+// DeleteLogger removes an unreferenced logger.
+func (s *Store) DeleteLogger(id string) error {
+	var references int
+	if err := s.db.QueryRow(`SELECT count(*) FROM diagnostics WHERE lower(logger_id)=lower(?)`, id).Scan(&references); err != nil {
+		return err
+	}
+	if references != 0 {
+		return ErrConflict
+	}
+	return deleteScopedResource(s.db, "loggers", id)
+}
+
+// UpsertDiagnostic creates or replaces a diagnostic at service or API scope.
+func (s *Store) UpsertDiagnostic(v model.Diagnostic) (model.Diagnostic, error) {
+	v.ETag = newETag()
+	document, err := json.Marshal(v.Document)
+	if err != nil {
+		return v, err
+	}
+	_, err = s.db.Exec(`INSERT INTO diagnostics
+      (id, service_id, scope_id, name, logger_id, always_log, log_client_ip, verbosity,
+       sampling_type, sampling_percentage, document_json, etag)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET logger_id=excluded.logger_id, always_log=excluded.always_log,
+        log_client_ip=excluded.log_client_ip, verbosity=excluded.verbosity,
+        sampling_type=excluded.sampling_type, sampling_percentage=excluded.sampling_percentage,
+        document_json=excluded.document_json, etag=excluded.etag`, v.ID(), v.ServiceID, v.ScopeID,
+		v.Name, v.LoggerID, v.AlwaysLog, v.LogClientIP, v.Verbosity, v.SamplingType,
+		v.SamplingPercentage, document, v.ETag)
+	return v, err
+}
+
+// GetDiagnostic finds one diagnostic by ARM ID.
+func (s *Store) GetDiagnostic(id string) (model.Diagnostic, error) {
+	values, err := scanDiagnostics(s.db.Query(`SELECT service_id, scope_id, name, logger_id, always_log,
+      log_client_ip, verbosity, sampling_type, sampling_percentage, document_json, etag
+      FROM diagnostics WHERE lower(id)=lower(?)`, id))
+	if err != nil {
+		return model.Diagnostic{}, err
+	}
+	if len(values) == 0 {
+		return model.Diagnostic{}, ErrNotFound
+	}
+	return values[0], nil
+}
+
+// ListDiagnostics returns diagnostics at exactly one scope in stable ID order.
+func (s *Store) ListDiagnostics(scopeID string) ([]model.Diagnostic, error) {
+	return scanDiagnostics(s.db.Query(`SELECT service_id, scope_id, name, logger_id, always_log,
+      log_client_ip, verbosity, sampling_type, sampling_percentage, document_json, etag
+      FROM diagnostics WHERE lower(scope_id)=lower(?) ORDER BY id`, scopeID))
+}
+
+func scanDiagnostics(rows *sql.Rows, err error) ([]model.Diagnostic, error) {
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	values := make([]model.Diagnostic, 0)
+	for rows.Next() {
+		var v model.Diagnostic
+		var document string
+		if err := rows.Scan(&v.ServiceID, &v.ScopeID, &v.Name, &v.LoggerID, &v.AlwaysLog,
+			&v.LogClientIP, &v.Verbosity, &v.SamplingType, &v.SamplingPercentage, &document, &v.ETag); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal([]byte(document), &v.Document); err != nil {
+			return nil, err
+		}
+		values = append(values, v)
+	}
+	return values, rows.Err()
+}
+
+// DeleteDiagnostic removes a diagnostic.
+func (s *Store) DeleteDiagnostic(id string) error {
+	return deleteScopedResource(s.db, "diagnostics", id)
+}
+
+// AddDiagnosticEvent persists one local gateway telemetry event.
+func (s *Store) AddDiagnosticEvent(v model.DiagnosticEvent) error {
+	_, err := s.db.Exec(`INSERT INTO diagnostic_events
+      (id, service_id, api_id, diagnostic_id, correlation_id, method, path, status_code,
+       timestamp, duration_nanos, client_ip) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		v.ID, v.ServiceID, v.APIID, v.DiagnosticID, v.CorrelationID, v.Method, v.Path,
+		v.StatusCode, v.Timestamp, v.DurationNanos, v.ClientIP)
+	return err
+}
+
+// ListDiagnosticEvents returns persisted events for a service in insertion-time order.
+func (s *Store) ListDiagnosticEvents(serviceID string) ([]model.DiagnosticEvent, error) {
+	rows, err := s.db.Query(`SELECT id, service_id, api_id, diagnostic_id, correlation_id, method,
+      path, status_code, timestamp, duration_nanos, client_ip FROM diagnostic_events
+      WHERE lower(service_id)=lower(?) ORDER BY timestamp, id`, serviceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	values := make([]model.DiagnosticEvent, 0)
+	for rows.Next() {
+		var v model.DiagnosticEvent
+		if err := rows.Scan(&v.ID, &v.ServiceID, &v.APIID, &v.DiagnosticID, &v.CorrelationID,
+			&v.Method, &v.Path, &v.StatusCode, &v.Timestamp, &v.DurationNanos, &v.ClientIP); err != nil {
+			return nil, err
+		}
+		values = append(values, v)
+	}
+	return values, rows.Err()
+}
+
 // RuntimeData returns all resources needed to compile gateway snapshots.
 func (s *Store) RuntimeData() ([]model.Service, []model.API, []model.Operation, []model.Product, map[string][]string, []model.Subscription, []model.Policy, error) {
 	services, err := s.ListServices()
@@ -1559,6 +1759,9 @@ func deleteScopedResource(db *sql.DB, table, id string) error {
 		return err
 	}
 	if _, err := tx.Exec(`DELETE FROM resource_tags WHERE lower(resource_id)=lower(?) OR lower(resource_id) LIKE lower(?)`, id, id+"/%"); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM diagnostics WHERE lower(scope_id)=lower(?) OR lower(scope_id) LIKE lower(?)`, id, id+"/%"); err != nil {
 		return err
 	}
 	result, err := tx.Exec(`DELETE FROM `+table+` WHERE lower(id)=lower(?)`, id)

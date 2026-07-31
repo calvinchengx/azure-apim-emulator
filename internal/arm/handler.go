@@ -75,6 +75,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.user(w, r, parsed)
 	case "policyFragments":
 		h.policyFragment(w, r, parsed)
+	case "loggers":
+		h.logger(w, r, parsed)
+	case "diagnostics":
+		h.diagnostic(w, r, parsed, model.Service{SubscriptionID: parsed.SubscriptionID, ResourceGroup: parsed.ResourceGroup, Name: parsed.ServiceName}.ID(), 1)
 	case "products":
 		h.product(w, r, parsed)
 	case "subscriptions":
@@ -304,6 +308,14 @@ func (h *Handler) api(w http.ResponseWriter, r *http.Request, rt route) {
 	}
 	if len(rt.Tail) == 3 && equal(rt.Tail[2], "schemas") {
 		h.apiSchemaCollection(w, r, api)
+		return
+	}
+	if len(rt.Tail) >= 3 && equal(rt.Tail[2], "diagnostics") {
+		if _, err := h.Store.GetAPI(api.ID()); err != nil {
+			h.storeError(w, err, api.ID())
+			return
+		}
+		h.diagnostic(w, r, rt, api.ID(), 3)
 		return
 	}
 	if len(rt.Tail) == 3 && equal(rt.Tail[2], "tags") {
@@ -1726,6 +1738,273 @@ func applyBackendPayload(value *model.Backend, body backendPayload) {
 	}
 }
 
+type loggerPayload struct {
+	Properties struct {
+		LoggerType  *string           `json:"loggerType"`
+		Description *string           `json:"description"`
+		IsBuffered  *bool             `json:"isBuffered"`
+		ResourceID  *string           `json:"resourceId"`
+		Credentials map[string]string `json:"credentials"`
+	} `json:"properties"`
+}
+
+func (h *Handler) logger(w http.ResponseWriter, r *http.Request, rt route) {
+	service := model.Service{SubscriptionID: rt.SubscriptionID, ResourceGroup: rt.ResourceGroup, Name: rt.ServiceName}
+	if len(rt.Tail) == 1 {
+		if r.Method != http.MethodGet {
+			methodNotAllowed(w)
+			return
+		}
+		values, err := h.Store.ListLoggers(service.ID())
+		if err != nil {
+			h.storeError(w, err, service.ID())
+			return
+		}
+		resources := make([]map[string]any, 0, len(values))
+		for _, value := range values {
+			resources = append(resources, loggerWire(value))
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"value": resources, "count": len(resources)})
+		return
+	}
+	if len(rt.Tail) != 2 {
+		writeError(w, http.StatusNotFound, "ResourceNotFound", "The requested logger resource was not found.", r.URL.Path)
+		return
+	}
+	value := model.Logger{ServiceID: service.ID(), Name: rt.Tail[1], IsBuffered: true}
+	switch r.Method {
+	case http.MethodGet, http.MethodHead:
+		got, err := h.Store.GetLogger(value.ID())
+		if err != nil {
+			h.storeError(w, err, value.ID())
+			return
+		}
+		if r.Method == http.MethodHead {
+			w.Header().Set("ETag", got.ETag)
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		writeResource(w, http.StatusOK, loggerWire(got), got.ETag)
+	case http.MethodPut, http.MethodPatch:
+		existing, existingErr := h.Store.GetLogger(value.ID())
+		if existingErr != nil && !errors.Is(existingErr, store.ErrNotFound) {
+			h.storeError(w, existingErr, value.ID())
+			return
+		}
+		if r.Method == http.MethodPatch {
+			if existingErr != nil {
+				h.storeError(w, existingErr, value.ID())
+				return
+			}
+			value = existing
+		}
+		var body loggerPayload
+		var document map[string]any
+		if err := decodeDocument(r, &body, &document); err != nil {
+			writeError(w, http.StatusBadRequest, "InvalidRequestContent", err.Error(), "")
+			return
+		}
+		if r.Method == http.MethodPatch {
+			mergeObject(value.Document, document)
+		} else {
+			value.Document = document
+		}
+		applyLoggerPayload(&value, body)
+		if value.LoggerType != "applicationInsights" && value.LoggerType != "azureEventHub" && value.LoggerType != "azureMonitor" {
+			writeError(w, http.StatusBadRequest, "ValidationError", "loggerType must be applicationInsights, azureEventHub, or azureMonitor.", "properties.loggerType")
+			return
+		}
+		got, err := h.Store.UpsertLogger(value)
+		if err != nil {
+			h.storeError(w, err, value.ID())
+			return
+		}
+		status := http.StatusOK
+		if r.Method == http.MethodPut && errors.Is(existingErr, store.ErrNotFound) {
+			status = http.StatusCreated
+		}
+		writeResource(w, status, loggerWire(got), got.ETag)
+	case http.MethodDelete:
+		if err := h.Store.DeleteLogger(value.ID()); err != nil && !errors.Is(err, store.ErrNotFound) {
+			if errors.Is(err, store.ErrConflict) {
+				writeError(w, http.StatusConflict, "ResourceInUse", "The logger is referenced by a diagnostic.", value.ID())
+				return
+			}
+			h.storeError(w, err, value.ID())
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	default:
+		methodNotAllowed(w)
+	}
+}
+
+func applyLoggerPayload(value *model.Logger, body loggerPayload) {
+	if body.Properties.LoggerType != nil {
+		value.LoggerType = *body.Properties.LoggerType
+	}
+	if body.Properties.Description != nil {
+		value.Description = *body.Properties.Description
+	}
+	if body.Properties.IsBuffered != nil {
+		value.IsBuffered = *body.Properties.IsBuffered
+	}
+	if body.Properties.ResourceID != nil {
+		value.ResourceID = *body.Properties.ResourceID
+	}
+	if body.Properties.Credentials != nil {
+		value.Credentials = body.Properties.Credentials
+	}
+}
+
+type diagnosticPayload struct {
+	Properties struct {
+		LoggerID    *string `json:"loggerId"`
+		AlwaysLog   *string `json:"alwaysLog"`
+		LogClientIP *bool   `json:"logClientIp"`
+		Verbosity   *string `json:"verbosity"`
+		Sampling    *struct {
+			SamplingType *string  `json:"samplingType"`
+			Percentage   *float64 `json:"percentage"`
+		} `json:"sampling"`
+	} `json:"properties"`
+}
+
+func (h *Handler) diagnostic(w http.ResponseWriter, r *http.Request, rt route, scopeID string, tailOffset int) {
+	serviceID := model.Service{SubscriptionID: rt.SubscriptionID, ResourceGroup: rt.ResourceGroup, Name: rt.ServiceName}.ID()
+	if len(rt.Tail) == tailOffset {
+		if r.Method != http.MethodGet {
+			methodNotAllowed(w)
+			return
+		}
+		values, err := h.Store.ListDiagnostics(scopeID)
+		if err != nil {
+			h.storeError(w, err, scopeID)
+			return
+		}
+		resources := make([]map[string]any, 0, len(values))
+		for _, value := range values {
+			resources = append(resources, diagnosticWire(value))
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"value": resources, "count": len(resources)})
+		return
+	}
+	if len(rt.Tail) != tailOffset+1 {
+		writeError(w, http.StatusNotFound, "ResourceNotFound", "The requested diagnostic resource was not found.", r.URL.Path)
+		return
+	}
+	value := model.Diagnostic{ServiceID: serviceID, ScopeID: scopeID, Name: rt.Tail[tailOffset], SamplingType: "fixed", SamplingPercentage: 100}
+	switch r.Method {
+	case http.MethodGet, http.MethodHead:
+		got, err := h.Store.GetDiagnostic(value.ID())
+		if err != nil {
+			h.storeError(w, err, value.ID())
+			return
+		}
+		if r.Method == http.MethodHead {
+			w.Header().Set("ETag", got.ETag)
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		writeResource(w, http.StatusOK, diagnosticWire(got), got.ETag)
+	case http.MethodPut, http.MethodPatch:
+		existing, existingErr := h.Store.GetDiagnostic(value.ID())
+		if existingErr != nil && !errors.Is(existingErr, store.ErrNotFound) {
+			h.storeError(w, existingErr, value.ID())
+			return
+		}
+		if r.Method == http.MethodPatch {
+			if existingErr != nil {
+				h.storeError(w, existingErr, value.ID())
+				return
+			}
+			value = existing
+		}
+		var body diagnosticPayload
+		var document map[string]any
+		if err := decodeDocument(r, &body, &document); err != nil {
+			writeError(w, http.StatusBadRequest, "InvalidRequestContent", err.Error(), "")
+			return
+		}
+		if r.Method == http.MethodPatch {
+			mergeObject(value.Document, document)
+		} else {
+			value.Document = document
+		}
+		applyDiagnosticPayload(&value, body)
+		if value.LoggerID == "" {
+			writeError(w, http.StatusBadRequest, "ValidationError", "loggerId is required.", "properties.loggerId")
+			return
+		}
+		logger, err := h.Store.GetLogger(value.LoggerID)
+		if err != nil || !strings.EqualFold(logger.ServiceID, serviceID) {
+			writeError(w, http.StatusBadRequest, "ValidationError", "loggerId must reference a logger in this service.", "properties.loggerId")
+			return
+		}
+		if value.SamplingType != "fixed" || value.SamplingPercentage < 0 || value.SamplingPercentage > 100 {
+			writeError(w, http.StatusBadRequest, "ValidationError", "sampling must use fixed with percentage from 0 through 100.", "properties.sampling")
+			return
+		}
+		if value.AlwaysLog != "" && value.AlwaysLog != "allErrors" {
+			writeError(w, http.StatusBadRequest, "ValidationError", "alwaysLog must be allErrors.", "properties.alwaysLog")
+			return
+		}
+		if value.Verbosity != "" && value.Verbosity != "error" && value.Verbosity != "information" && value.Verbosity != "verbose" {
+			writeError(w, http.StatusBadRequest, "ValidationError", "verbosity is invalid.", "properties.verbosity")
+			return
+		}
+		got, err := h.Store.UpsertDiagnostic(value)
+		if err != nil {
+			h.storeError(w, err, value.ID())
+			return
+		}
+		if err := h.activate(); err != nil {
+			writeError(w, http.StatusBadRequest, "ConfigurationInvalid", err.Error(), value.ID())
+			return
+		}
+		status := http.StatusOK
+		if r.Method == http.MethodPut && errors.Is(existingErr, store.ErrNotFound) {
+			status = http.StatusCreated
+		}
+		writeResource(w, status, diagnosticWire(got), got.ETag)
+	case http.MethodDelete:
+		if err := h.Store.DeleteDiagnostic(value.ID()); err != nil && !errors.Is(err, store.ErrNotFound) {
+			h.storeError(w, err, value.ID())
+			return
+		}
+		if err := h.activate(); err != nil {
+			writeError(w, http.StatusInternalServerError, "ConfigurationInvalid", err.Error(), value.ID())
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	default:
+		methodNotAllowed(w)
+	}
+}
+
+func applyDiagnosticPayload(value *model.Diagnostic, body diagnosticPayload) {
+	if body.Properties.LoggerID != nil {
+		value.LoggerID = *body.Properties.LoggerID
+	}
+	if body.Properties.AlwaysLog != nil {
+		value.AlwaysLog = *body.Properties.AlwaysLog
+	}
+	if body.Properties.LogClientIP != nil {
+		value.LogClientIP = *body.Properties.LogClientIP
+	}
+	if body.Properties.Verbosity != nil {
+		value.Verbosity = *body.Properties.Verbosity
+	}
+	if body.Properties.Sampling != nil {
+		if body.Properties.Sampling.SamplingType != nil {
+			value.SamplingType = *body.Properties.Sampling.SamplingType
+		}
+		if body.Properties.Sampling.Percentage != nil {
+			value.SamplingPercentage = *body.Properties.Sampling.Percentage
+		}
+	}
+}
+
 type certificatePayload struct {
 	Properties struct {
 		Data     []byte  `json:"data"`
@@ -2539,6 +2818,35 @@ func policyFragmentWire(v model.PolicyFragment, format string) map[string]any {
 		format = v.Format
 	}
 	return map[string]any{"id": v.ID(), "name": v.Name, "type": "Microsoft.ApiManagement/service/policyFragments", "properties": map[string]any{"description": v.Description, "format": format, "value": v.Value, "provisioningState": v.ProvisioningState}}
+}
+func loggerWire(v model.Logger) map[string]any {
+	result := cloneObject(v.Document)
+	result["id"], result["name"], result["type"] = v.ID(), v.Name, "Microsoft.ApiManagement/service/loggers"
+	properties, ok := result["properties"].(map[string]any)
+	if !ok {
+		properties = map[string]any{}
+		result["properties"] = properties
+	}
+	properties["loggerType"], properties["description"] = v.LoggerType, v.Description
+	properties["isBuffered"], properties["resourceId"], properties["credentials"] = v.IsBuffered, v.ResourceID, v.Credentials
+	return result
+}
+func diagnosticWire(v model.Diagnostic) map[string]any {
+	result := cloneObject(v.Document)
+	result["id"], result["name"] = v.ID(), v.Name
+	result["type"] = "Microsoft.ApiManagement/service/diagnostics"
+	if !strings.EqualFold(v.ScopeID, v.ServiceID) {
+		result["type"] = "Microsoft.ApiManagement/service/apis/diagnostics"
+	}
+	properties, ok := result["properties"].(map[string]any)
+	if !ok {
+		properties = map[string]any{}
+		result["properties"] = properties
+	}
+	properties["loggerId"], properties["alwaysLog"] = v.LoggerID, v.AlwaysLog
+	properties["logClientIp"], properties["verbosity"] = v.LogClientIP, v.Verbosity
+	properties["sampling"] = map[string]any{"samplingType": v.SamplingType, "percentage": v.SamplingPercentage}
+	return result
 }
 func nullableString(value string) any {
 	if value == "" {

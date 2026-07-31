@@ -121,6 +121,136 @@ func TestServiceDocumentHelpers(t *testing.T) {
 	}
 }
 
+func TestLoggerAndDiagnosticBranches(t *testing.T) {
+	handler, st := testHandler(t)
+	seedService(t, st)
+	api := model.API{ServiceID: serviceModel().ID(), Name: "api", DisplayName: "API", Path: "api", ServiceURL: "https://backend", Protocols: []string{"https"}}
+	if _, err := st.UpsertAPI(api); err != nil {
+		t.Fatal(err)
+	}
+	loggerPath := basePath + "/loggers/app" + apiQuery
+	loggerBody := `{"properties":{"loggerType":"applicationInsights","description":"App Insights","isBuffered":false,"resourceId":"/components/app","credentials":{"instrumentationKey":"secret"},"custom":"kept"}}`
+	assertStatus(t, handler, http.MethodPost, basePath+"/loggers"+apiQuery, "", http.StatusMethodNotAllowed)
+	assertStatus(t, handler, http.MethodGet, basePath+"/loggers/too/deep"+apiQuery, "", http.StatusNotFound)
+	assertStatus(t, handler, http.MethodGet, loggerPath, "", http.StatusNotFound)
+	assertStatus(t, handler, http.MethodPut, loggerPath, `{`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPut, loggerPath, `{"properties":{"loggerType":"wrong"}}`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPut, loggerPath, loggerBody, http.StatusCreated)
+	assertStatus(t, handler, http.MethodPut, loggerPath, loggerBody, http.StatusOK)
+	assertStatus(t, handler, http.MethodHead, loggerPath, "", http.StatusOK)
+	loggerGet := request(t, handler, http.MethodGet, loggerPath, "")
+	if !strings.Contains(loggerGet.Body.String(), `"instrumentationKey":"secret"`) || !strings.Contains(loggerGet.Body.String(), `"custom":"kept"`) {
+		t.Fatalf("logger GET = %s", loggerGet.Body.String())
+	}
+	assertStatus(t, handler, http.MethodPatch, basePath+"/loggers/missing"+apiQuery, `{}`, http.StatusNotFound)
+	assertStatus(t, handler, http.MethodPatch, loggerPath, `{`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPatch, loggerPath, `{"properties":{"loggerType":"azureMonitor","description":"Updated","isBuffered":true,"resourceId":"","credentials":{}}}`, http.StatusOK)
+	list := request(t, handler, http.MethodGet, basePath+"/loggers"+apiQuery, "")
+	if !strings.Contains(list.Body.String(), `"count":1`) || !strings.Contains(list.Body.String(), `"loggerType":"azureMonitor"`) {
+		t.Fatalf("logger list = %s", list.Body.String())
+	}
+	assertStatus(t, handler, http.MethodPost, loggerPath, "", http.StatusMethodNotAllowed)
+
+	diagnosticPath := basePath + "/diagnostics/local" + apiQuery
+	diagnosticBody := `{"properties":{"loggerId":"` + serviceModel().ID() + `/loggers/app","alwaysLog":"allErrors","logClientIp":true,"verbosity":"information","sampling":{"samplingType":"fixed","percentage":50},"frontend":{"request":{"body":{"bytes":64}}}}}`
+	assertStatus(t, handler, http.MethodPost, basePath+"/diagnostics"+apiQuery, "", http.StatusMethodNotAllowed)
+	assertStatus(t, handler, http.MethodGet, basePath+"/diagnostics/too/deep"+apiQuery, "", http.StatusNotFound)
+	assertStatus(t, handler, http.MethodGet, diagnosticPath, "", http.StatusNotFound)
+	assertStatus(t, handler, http.MethodPut, diagnosticPath, `{`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPut, diagnosticPath, `{"properties":{}}`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPut, diagnosticPath, `{"properties":{"loggerId":"/missing"}}`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPut, diagnosticPath, `{"properties":{"loggerId":"`+serviceModel().ID()+`/loggers/app","sampling":{"samplingType":"random","percentage":50}}}`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPut, diagnosticPath, `{"properties":{"loggerId":"`+serviceModel().ID()+`/loggers/app","sampling":{"samplingType":"fixed","percentage":101}}}`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPut, diagnosticPath, `{"properties":{"loggerId":"`+serviceModel().ID()+`/loggers/app","alwaysLog":"everything"}}`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPut, diagnosticPath, `{"properties":{"loggerId":"`+serviceModel().ID()+`/loggers/app","verbosity":"debug"}}`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPut, diagnosticPath, diagnosticBody, http.StatusCreated)
+	assertStatus(t, handler, http.MethodPut, diagnosticPath, diagnosticBody, http.StatusOK)
+	assertStatus(t, handler, http.MethodHead, diagnosticPath, "", http.StatusOK)
+	diagnosticGet := request(t, handler, http.MethodGet, diagnosticPath, "")
+	if !strings.Contains(diagnosticGet.Body.String(), `"bytes":64`) || !strings.Contains(diagnosticGet.Body.String(), `"percentage":50`) {
+		t.Fatalf("diagnostic GET = %s", diagnosticGet.Body.String())
+	}
+	assertStatus(t, handler, http.MethodPatch, basePath+"/diagnostics/missing"+apiQuery, `{}`, http.StatusNotFound)
+	assertStatus(t, handler, http.MethodPatch, diagnosticPath, `{`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPatch, diagnosticPath, `{"properties":{"alwaysLog":"","logClientIp":false,"verbosity":"verbose","sampling":{"samplingType":"fixed","percentage":100}}}`, http.StatusOK)
+	list = request(t, handler, http.MethodGet, basePath+"/diagnostics"+apiQuery, "")
+	if !strings.Contains(list.Body.String(), `"count":1`) || !strings.Contains(list.Body.String(), `"verbosity":"verbose"`) {
+		t.Fatalf("diagnostic list = %s", list.Body.String())
+	}
+	assertStatus(t, handler, http.MethodPost, diagnosticPath, "", http.StatusMethodNotAllowed)
+	assertStatus(t, handler, http.MethodDelete, loggerPath, "", http.StatusConflict)
+
+	apiDiagnosticPath := basePath + "/apis/api/diagnostics/app" + apiQuery
+	assertStatus(t, handler, http.MethodGet, basePath+"/apis/missing/diagnostics"+apiQuery, "", http.StatusNotFound)
+	assertStatus(t, handler, http.MethodGet, basePath+"/apis/api/diagnostics"+apiQuery, "", http.StatusOK)
+	assertStatus(t, handler, http.MethodPut, apiDiagnosticPath, diagnosticBody, http.StatusCreated)
+	assertStatus(t, handler, http.MethodGet, apiDiagnosticPath, "", http.StatusOK)
+	assertStatus(t, handler, http.MethodHead, apiDiagnosticPath, "", http.StatusOK)
+	assertStatus(t, handler, http.MethodGet, basePath+"/apis/api/diagnostics/app/deep"+apiQuery, "", http.StatusNotFound)
+
+	handler.Activate = func() error { return errors.New("compile failed") }
+	assertStatus(t, handler, http.MethodPatch, apiDiagnosticPath, `{"properties":{"verbosity":"error"}}`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodDelete, apiDiagnosticPath, "", http.StatusInternalServerError)
+	handler.Activate = nil
+	assertStatus(t, handler, http.MethodDelete, diagnosticPath, "", http.StatusNoContent)
+	assertStatus(t, handler, http.MethodDelete, diagnosticPath, "", http.StatusNoContent)
+	assertStatus(t, handler, http.MethodDelete, loggerPath, "", http.StatusNoContent)
+	assertStatus(t, handler, http.MethodDelete, loggerPath, "", http.StatusNoContent)
+}
+
+func TestLoggerDiagnosticStoreErrorsAndWireFallbacks(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(dir, clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	seedService(t, st)
+	logger, _ := st.UpsertLogger(model.Logger{ServiceID: serviceModel().ID(), Name: "app", LoggerType: "azureMonitor"})
+	diagnostic, _ := st.UpsertDiagnostic(model.Diagnostic{ServiceID: serviceModel().ID(), ScopeID: serviceModel().ID(), Name: "d", LoggerID: logger.ID(), SamplingType: "fixed", SamplingPercentage: 100})
+	db, err := sql.Open("sqlite", filepath.Join(dir, "azure-apim-emulator.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	handler := &Handler{Store: st, Auth: auth.AllowAll{}}
+	loggerPath := basePath + "/loggers/app" + apiQuery
+	diagnosticPath := basePath + "/diagnostics/d" + apiQuery
+	if _, err := db.Exec(`CREATE TRIGGER reject_logger_write BEFORE INSERT ON loggers BEGIN SELECT RAISE(FAIL, 'rejected'); END`); err != nil {
+		t.Fatal(err)
+	}
+	assertStatus(t, handler, http.MethodPut, loggerPath, `{"properties":{"loggerType":"azureMonitor"}}`, http.StatusConflict)
+	if _, err := db.Exec(`DROP TRIGGER reject_logger_write; CREATE TRIGGER reject_logger_delete BEFORE DELETE ON loggers BEGIN SELECT RAISE(FAIL, 'rejected'); END; DELETE FROM diagnostics`); err != nil {
+		t.Fatal(err)
+	}
+	assertStatus(t, handler, http.MethodDelete, loggerPath, "", http.StatusConflict)
+	if _, err := st.UpsertDiagnostic(diagnostic); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`DROP TRIGGER reject_logger_delete; CREATE TRIGGER reject_diagnostic_write BEFORE INSERT ON diagnostics BEGIN SELECT RAISE(FAIL, 'rejected'); END`); err != nil {
+		t.Fatal(err)
+	}
+	assertStatus(t, handler, http.MethodPut, diagnosticPath, `{"properties":{"loggerId":"`+logger.ID()+`","sampling":{"samplingType":"fixed","percentage":100}}}`, http.StatusConflict)
+	if _, err := db.Exec(`DROP TRIGGER reject_diagnostic_write; CREATE TRIGGER reject_diagnostic_delete BEFORE DELETE ON diagnostics BEGIN SELECT RAISE(FAIL, 'rejected'); END`); err != nil {
+		t.Fatal(err)
+	}
+	assertStatus(t, handler, http.MethodDelete, diagnosticPath, "", http.StatusConflict)
+	if _, err := db.Exec(`DROP TRIGGER reject_diagnostic_delete; DROP TABLE diagnostics; DROP TABLE loggers`); err != nil {
+		t.Fatal(err)
+	}
+	assertStatus(t, handler, http.MethodGet, basePath+"/loggers"+apiQuery, "", http.StatusConflict)
+	assertStatus(t, handler, http.MethodPut, loggerPath, `{"properties":{"loggerType":"azureMonitor"}}`, http.StatusConflict)
+	assertStatus(t, handler, http.MethodGet, basePath+"/diagnostics"+apiQuery, "", http.StatusConflict)
+	assertStatus(t, handler, http.MethodPut, diagnosticPath, `{"properties":{"loggerId":"`+logger.ID()+`"}}`, http.StatusConflict)
+	assertStatus(t, handler, http.MethodDelete, diagnosticPath, "", http.StatusConflict)
+
+	loggerResult := loggerWire(model.Logger{ServiceID: "service", Name: "l", Document: map[string]any{"properties": "scalar"}})
+	diagnosticResult := diagnosticWire(model.Diagnostic{ServiceID: "service", ScopeID: "service/apis/a", Name: "d", Document: map[string]any{"properties": "scalar"}})
+	if loggerResult["properties"].(map[string]any) == nil || diagnosticResult["type"] != "Microsoft.ApiManagement/service/apis/diagnostics" {
+		t.Fatalf("wire fallbacks = %#v %#v", loggerResult, diagnosticResult)
+	}
+}
+
 func TestServiceLists(t *testing.T) {
 	handler, st := testHandler(t)
 	seedService(t, st)

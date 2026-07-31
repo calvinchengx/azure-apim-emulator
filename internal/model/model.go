@@ -202,6 +202,55 @@ type PolicyFragment struct {
 // ID returns the policy fragment ARM resource ID.
 func (v PolicyFragment) ID() string { return v.ServiceID + "/policyFragments/" + v.Name }
 
+// Logger is a diagnostic event sink configured on a service.
+type Logger struct {
+	ServiceID   string
+	Name        string
+	LoggerType  string
+	Description string
+	IsBuffered  bool
+	ResourceID  string
+	Credentials map[string]string
+	Document    map[string]any
+	ETag        string
+}
+
+// ID returns the logger ARM resource ID.
+func (v Logger) ID() string { return v.ServiceID + "/loggers/" + v.Name }
+
+// Diagnostic configures telemetry at service or API scope.
+type Diagnostic struct {
+	ServiceID          string
+	ScopeID            string
+	Name               string
+	LoggerID           string
+	AlwaysLog          string
+	LogClientIP        bool
+	Verbosity          string
+	SamplingType       string
+	SamplingPercentage float64
+	Document           map[string]any
+	ETag               string
+}
+
+// ID returns the diagnostic ARM resource ID.
+func (v Diagnostic) ID() string { return v.ScopeID + "/diagnostics/" + v.Name }
+
+// DiagnosticEvent is one locally persisted gateway telemetry event.
+type DiagnosticEvent struct {
+	ID            string
+	ServiceID     string
+	APIID         string
+	DiagnosticID  string
+	CorrelationID string
+	Method        string
+	Path          string
+	StatusCode    int
+	Timestamp     int64
+	DurationNanos int64
+	ClientIP      string
+}
+
 // Operation is an HTTP operation belonging to an API.
 type Operation struct {
 	APIID       string

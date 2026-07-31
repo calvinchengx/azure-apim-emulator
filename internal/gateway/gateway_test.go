@@ -318,6 +318,138 @@ func TestServeHTTPFailuresAndPolicyResponses(t *testing.T) {
 	assertGatewayStatus(t, runtime, httptest.NewRequest(http.MethodGet, "/api/items", nil), http.StatusInternalServerError)
 }
 
+func TestDiagnosticEmissionAndSampling(t *testing.T) {
+	st, err := store.Open("", clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	serviceModel, _ := st.UpsertService(model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "emulator"})
+	apiModel, _ := st.UpsertAPI(model.API{ServiceID: serviceModel.ID(), Name: "api", Path: "api", ServiceURL: "https://backend"})
+	runtime := New("emulator", nil)
+	runtime.eventStore.Store(st)
+	d100 := model.Diagnostic{ServiceID: serviceModel.ID(), ScopeID: serviceModel.ID(), Name: "all", SamplingPercentage: 100, LogClientIP: true}
+	d0 := model.Diagnostic{ServiceID: serviceModel.ID(), ScopeID: apiModel.ID(), Name: "none", SamplingPercentage: 0}
+	route := &Route{API: apiModel, Diagnostics: []model.Diagnostic{d0}}
+	service := &Service{Diagnostics: []model.Diagnostic{d100, d100}}
+
+	request := httptest.NewRequest(http.MethodGet, "/api/items", nil)
+	request.Header.Set("traceparent", "trace-correlation")
+	request.RemoteAddr = "127.0.0.1:1234"
+	runtime.emitDiagnostics(request, service, route, &diagnosticWriter{ResponseWriter: httptest.NewRecorder()}, time.Now())
+	events, err := st.ListDiagnosticEvents(serviceModel.ID())
+	if err != nil || len(events) != 1 || events[0].CorrelationID != "trace-correlation" || events[0].ClientIP != "127.0.0.1" || events[0].StatusCode != http.StatusOK {
+		t.Fatalf("trace event = %+v, %v", events, err)
+	}
+
+	d0.AlwaysLog = "allErrors"
+	request = httptest.NewRequest(http.MethodPost, "/api/fail", nil)
+	request.Header.Set("Request-Id", "request-correlation")
+	request.RemoteAddr = "local-client"
+	runtime.emitDiagnostics(request, &Service{}, &Route{API: apiModel, Diagnostics: []model.Diagnostic{d0}}, &diagnosticWriter{ResponseWriter: httptest.NewRecorder(), status: http.StatusInternalServerError}, time.Now())
+	events, _ = st.ListDiagnosticEvents(serviceModel.ID())
+	byCorrelation := map[string]model.DiagnosticEvent{}
+	for _, event := range events {
+		byCorrelation[event.CorrelationID] = event
+	}
+	errorEvent := byCorrelation["request-correlation"]
+	if len(events) != 2 || errorEvent.ClientIP != "" || errorEvent.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("error event = %+v", events)
+	}
+
+	d0.LogClientIP = true
+	request = httptest.NewRequest(http.MethodGet, "/api/generated", nil)
+	request.RemoteAddr = "local-client"
+	runtime.emitDiagnostics(request, &Service{}, &Route{API: apiModel, Diagnostics: []model.Diagnostic{d0}}, &diagnosticWriter{ResponseWriter: httptest.NewRecorder(), status: http.StatusBadRequest}, time.Now())
+	events, _ = st.ListDiagnosticEvents(serviceModel.ID())
+	generatedFound := false
+	for _, event := range events {
+		generatedFound = generatedFound || (event.CorrelationID != "trace-correlation" && event.CorrelationID != "request-correlation" && event.ClientIP == "local-client")
+	}
+	if len(events) != 3 || !generatedFound {
+		t.Fatalf("generated event = %+v", events)
+	}
+
+	emptyRuntime := New("emulator", nil)
+	emptyRuntime.emitDiagnostics(request, service, route, &diagnosticWriter{ResponseWriter: httptest.NewRecorder()}, time.Now())
+	writer := &diagnosticWriter{ResponseWriter: httptest.NewRecorder()}
+	if count, err := writer.Write([]byte("ok")); err != nil || count != 2 || writer.status != http.StatusOK {
+		t.Fatalf("diagnostic writer = %d, %v, %d", count, err, writer.status)
+	}
+	if !diagnosticSampled("anything", 100) || diagnosticSampled("anything", 0) {
+		t.Fatal("sampling boundaries failed")
+	}
+	seenTrue, seenFalse := false, false
+	for index := 0; index < 1000 && (!seenTrue || !seenFalse); index++ {
+		if diagnosticSampled(fmt.Sprint(index), 50) {
+			seenTrue = true
+		} else {
+			seenFalse = true
+		}
+	}
+	if !seenTrue || !seenFalse {
+		t.Fatal("deterministic sampling did not exercise both outcomes")
+	}
+}
+
+func TestActivatedGatewayPersistsDiagnosticEvent(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer backend.Close()
+	st, err := store.Open("", clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	service, _ := st.UpsertService(model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "emulator"})
+	api, _ := st.UpsertAPI(model.API{ServiceID: service.ID(), Name: "api", Path: "api", ServiceURL: backend.URL})
+	_, _ = st.UpsertOperation(model.Operation{APIID: api.ID(), Name: "get", Method: http.MethodGet, URLTemplate: "/items"})
+	logger, _ := st.UpsertLogger(model.Logger{ServiceID: service.ID(), Name: "local", LoggerType: "azureMonitor"})
+	diagnostic, _ := st.UpsertDiagnostic(model.Diagnostic{ServiceID: service.ID(), ScopeID: api.ID(), Name: "local", LoggerID: logger.ID(), SamplingType: "fixed", SamplingPercentage: 100, LogClientIP: true})
+	runtime := New("emulator", backend.Client())
+	if err := runtime.Activate(st, false); err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodGet, "/api/items", nil)
+	request.Header.Set("traceparent", "integration-correlation")
+	request.RemoteAddr = "10.0.0.1:4321"
+	recorder := httptest.NewRecorder()
+	runtime.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusCreated {
+		t.Fatalf("gateway status = %d", recorder.Code)
+	}
+	events, err := st.ListDiagnosticEvents(service.ID())
+	if err != nil || len(events) != 1 || events[0].DiagnosticID != diagnostic.ID() || events[0].CorrelationID != "integration-correlation" || events[0].StatusCode != http.StatusCreated || events[0].ClientIP != "10.0.0.1" {
+		t.Fatalf("gateway diagnostic event = %+v, %v", events, err)
+	}
+}
+
+func TestActivateDiagnosticStoreFailure(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(dir, clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if _, err := st.UpsertService(model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "emulator"}); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", filepath.Join(dir, "azure-apim-emulator.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`DROP TABLE diagnostics`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := New("emulator", nil).Activate(st, false); err == nil {
+		t.Fatal("activation accepted missing diagnostics table")
+	}
+}
+
 func TestSuccessfulBackendAndOutboundReturn(t *testing.T) {
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Connection", "close")

@@ -592,6 +592,91 @@ func TestGoManagementSDKConfiguresProtectedGateway(t *testing.T) {
 	if _, err := schemaClient.Delete(ctx, defaultResourceGroup, "emulator", "go-sdk-full", "temporary", "*", nil); err != nil {
 		t.Fatal(err)
 	}
+	loggerClient, err := armapimanagement.NewLoggerClient(defaultSubscription, credential, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	loggerType := armapimanagement.LoggerTypeApplicationInsights
+	loggerDescription, instrumentationKey := "Go SDK logger", "local-instrumentation-key"
+	loggerBuffered := false
+	createdLogger, err := loggerClient.CreateOrUpdate(ctx, defaultResourceGroup, "emulator", "go-sdk-logger", armapimanagement.LoggerContract{
+		Properties: &armapimanagement.LoggerContractProperties{LoggerType: &loggerType, Description: &loggerDescription,
+			IsBuffered: &loggerBuffered, Credentials: map[string]*string{"instrumentationKey": &instrumentationKey}},
+	}, nil)
+	if err != nil || createdLogger.ID == nil || createdLogger.Properties == nil || createdLogger.Properties.LoggerType == nil {
+		t.Fatalf("logger create = %+v, %v", createdLogger, err)
+	}
+	loggerID := *createdLogger.ID
+	if got, err := loggerClient.Get(ctx, defaultResourceGroup, "emulator", "go-sdk-logger", nil); err != nil || got.Properties == nil || got.Properties.Description == nil || *got.Properties.Description != loggerDescription {
+		t.Fatalf("logger GET = %+v, %v", got, err)
+	}
+	if entityTag, err := loggerClient.GetEntityTag(ctx, defaultResourceGroup, "emulator", "go-sdk-logger", nil); err != nil || entityTag.ETag == nil {
+		t.Fatalf("logger ETag = %+v, %v", entityTag, err)
+	}
+	if page, err := loggerClient.NewListByServicePager(defaultResourceGroup, "emulator", nil).NextPage(ctx); err != nil || len(page.Value) != 1 {
+		t.Fatalf("logger page = %+v, %v", page, err)
+	}
+	updatedLoggerDescription := "Updated Go SDK logger"
+	if updated, err := loggerClient.Update(ctx, defaultResourceGroup, "emulator", "go-sdk-logger", "*", armapimanagement.LoggerUpdateContract{Properties: &armapimanagement.LoggerUpdateParameters{Description: &updatedLoggerDescription}}, nil); err != nil || updated.Properties == nil || updated.Properties.Description == nil || *updated.Properties.Description != updatedLoggerDescription {
+		t.Fatalf("logger update = %+v, %v", updated, err)
+	}
+	if _, err := loggerClient.CreateOrUpdate(ctx, defaultResourceGroup, "emulator", "temporary", armapimanagement.LoggerContract{Properties: &armapimanagement.LoggerContractProperties{LoggerType: &loggerType}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loggerClient.Delete(ctx, defaultResourceGroup, "emulator", "temporary", "*", nil); err != nil {
+		t.Fatal(err)
+	}
+
+	diagnosticClient, err := armapimanagement.NewDiagnosticClient(defaultSubscription, credential, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	alwaysLog, verbosity := armapimanagement.AlwaysLogAllErrors, armapimanagement.VerbosityInformation
+	samplingType, samplingPercentage, logClientIP := armapimanagement.SamplingTypeFixed, 100.0, true
+	diagnosticContract := armapimanagement.DiagnosticContract{Properties: &armapimanagement.DiagnosticContractProperties{
+		LoggerID: &loggerID, AlwaysLog: &alwaysLog, LogClientIP: &logClientIP, Verbosity: &verbosity,
+		Sampling: &armapimanagement.SamplingSettings{SamplingType: &samplingType, Percentage: &samplingPercentage},
+		Frontend: &armapimanagement.PipelineDiagnosticSettings{Request: &armapimanagement.HTTPMessageDiagnostic{Headers: []*string{&displayName}}},
+	}}
+	createdDiagnostic, err := diagnosticClient.CreateOrUpdate(ctx, defaultResourceGroup, "emulator", "go-sdk-diagnostic", diagnosticContract, nil)
+	if err != nil || createdDiagnostic.Properties == nil || createdDiagnostic.Properties.LoggerID == nil || *createdDiagnostic.Properties.LoggerID != loggerID {
+		t.Fatalf("diagnostic create = %+v, %v", createdDiagnostic, err)
+	}
+	if got, err := diagnosticClient.Get(ctx, defaultResourceGroup, "emulator", "go-sdk-diagnostic", nil); err != nil || got.Properties == nil || got.Properties.Frontend == nil {
+		t.Fatalf("diagnostic GET = %+v, %v", got, err)
+	}
+	if entityTag, err := diagnosticClient.GetEntityTag(ctx, defaultResourceGroup, "emulator", "go-sdk-diagnostic", nil); err != nil || entityTag.ETag == nil {
+		t.Fatalf("diagnostic ETag = %+v, %v", entityTag, err)
+	}
+	if page, err := diagnosticClient.NewListByServicePager(defaultResourceGroup, "emulator", nil).NextPage(ctx); err != nil || len(page.Value) != 1 {
+		t.Fatalf("diagnostic page = %+v, %v", page, err)
+	}
+	verbosity = armapimanagement.VerbosityVerbose
+	if updated, err := diagnosticClient.Update(ctx, defaultResourceGroup, "emulator", "go-sdk-diagnostic", "*", armapimanagement.DiagnosticContract{Properties: &armapimanagement.DiagnosticContractProperties{Verbosity: &verbosity}}, nil); err != nil || updated.Properties == nil || updated.Properties.Verbosity == nil || *updated.Properties.Verbosity != verbosity {
+		t.Fatalf("diagnostic update = %+v, %v", updated, err)
+	}
+
+	apiDiagnosticClient, err := armapimanagement.NewAPIDiagnosticClient(defaultSubscription, credential, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	createdAPIDiagnostic, err := apiDiagnosticClient.CreateOrUpdate(ctx, defaultResourceGroup, "emulator", "go-sdk-full", "go-sdk-api-diagnostic", diagnosticContract, nil)
+	if err != nil || createdAPIDiagnostic.Properties == nil || createdAPIDiagnostic.Properties.Sampling == nil {
+		t.Fatalf("API diagnostic create = %+v, %v", createdAPIDiagnostic, err)
+	}
+	if got, err := apiDiagnosticClient.Get(ctx, defaultResourceGroup, "emulator", "go-sdk-full", "go-sdk-api-diagnostic", nil); err != nil || got.Properties == nil || got.Properties.LoggerID == nil {
+		t.Fatalf("API diagnostic GET = %+v, %v", got, err)
+	}
+	if entityTag, err := apiDiagnosticClient.GetEntityTag(ctx, defaultResourceGroup, "emulator", "go-sdk-full", "go-sdk-api-diagnostic", nil); err != nil || entityTag.ETag == nil {
+		t.Fatalf("API diagnostic ETag = %+v, %v", entityTag, err)
+	}
+	if page, err := apiDiagnosticClient.NewListByServicePager(defaultResourceGroup, "emulator", "go-sdk-full", nil).NextPage(ctx); err != nil || len(page.Value) != 1 {
+		t.Fatalf("API diagnostic page = %+v, %v", page, err)
+	}
+	verbosity = armapimanagement.VerbosityError
+	if updated, err := apiDiagnosticClient.Update(ctx, defaultResourceGroup, "emulator", "go-sdk-full", "go-sdk-api-diagnostic", "*", armapimanagement.DiagnosticContract{Properties: &armapimanagement.DiagnosticContractProperties{Verbosity: &verbosity}}, nil); err != nil || updated.Properties == nil || updated.Properties.Verbosity == nil || *updated.Properties.Verbosity != verbosity {
+		t.Fatalf("API diagnostic update = %+v, %v", updated, err)
+	}
 	apiPolicyClient, err := armapimanagement.NewAPIPolicyClient(defaultSubscription, credential, options)
 	if err != nil {
 		t.Fatal(err)
@@ -628,6 +713,9 @@ func TestGoManagementSDKConfiguresProtectedGateway(t *testing.T) {
 	}
 	if clonedTag, err := tagClient.GetByOperation(ctx, defaultResourceGroup, "emulator", "go-sdk-full;rev=2", "get", "go-sdk-tag", nil); err != nil || clonedTag.Name == nil || *clonedTag.Name != "go-sdk-tag" {
 		t.Fatalf("cloned revision operation tag = %+v, %v", clonedTag, err)
+	}
+	if clonedDiagnostic, err := apiDiagnosticClient.Get(ctx, defaultResourceGroup, "emulator", "go-sdk-full;rev=2", "go-sdk-api-diagnostic", nil); err != nil || clonedDiagnostic.Properties == nil || clonedDiagnostic.Properties.LoggerID == nil || *clonedDiagnostic.Properties.LoggerID != loggerID {
+		t.Fatalf("cloned revision API diagnostic = %+v, %v", clonedDiagnostic, err)
 	}
 	revisionPager = revisionClient.NewListByServicePager(defaultResourceGroup, "emulator", "go-sdk-full", nil)
 	revisionPage, err = revisionPager.NextPage(ctx)
@@ -714,6 +802,21 @@ func TestGoManagementSDKConfiguresProtectedGateway(t *testing.T) {
 		t.Fatalf("updated API release = %+v, %v", updatedRelease, err)
 	}
 	if _, err := releaseClient.Delete(ctx, defaultResourceGroup, "emulator", "go-sdk-full", "release-2", "*", nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loggerClient.Delete(ctx, defaultResourceGroup, "emulator", "go-sdk-logger", "*", nil); err == nil {
+		t.Fatal("SDK deleted a referenced logger")
+	}
+	if _, err := apiDiagnosticClient.Delete(ctx, defaultResourceGroup, "emulator", "go-sdk-full", "go-sdk-api-diagnostic", "*", nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := apiDiagnosticClient.Delete(ctx, defaultResourceGroup, "emulator", "go-sdk-full;rev=2", "go-sdk-api-diagnostic", "*", nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := diagnosticClient.Delete(ctx, defaultResourceGroup, "emulator", "go-sdk-diagnostic", "*", nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loggerClient.Delete(ctx, defaultResourceGroup, "emulator", "go-sdk-logger", "*", nil); err != nil {
 		t.Fatal(err)
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"html"
 	"io"
 	"net"
@@ -15,6 +16,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	certutil "github.com/calvinchengx/azure-apim-emulator/internal/certificate"
 	"github.com/calvinchengx/azure-apim-emulator/internal/model"
@@ -33,6 +35,7 @@ type Service struct {
 	Routes       []*Route
 	Backends     map[string]model.Backend
 	Certificates map[string]model.Certificate
+	Diagnostics  []model.Diagnostic
 }
 
 // Route is a compiled API route.
@@ -42,6 +45,7 @@ type Route struct {
 	Operations   []model.Operation
 	Plan         policy.Plan
 	AcceptedKeys map[string]bool
+	Diagnostics  []model.Diagnostic
 }
 
 // Runtime atomically publishes snapshots and serves gateway traffic.
@@ -52,6 +56,7 @@ type Runtime struct {
 	traceMu        sync.RWMutex
 	traces         map[string]Trace
 	traceOrder     []string
+	eventStore     atomic.Pointer[store.Store]
 }
 
 // Trace is a bounded structured record of one opted-in gateway request.
@@ -92,6 +97,7 @@ func (r *Runtime) Activate(st *store.Store, strict bool) error {
 	backends := map[string]map[string]model.Backend{}
 	certificates := map[string]map[string]model.Certificate{}
 	fragments := map[string]map[string]string{}
+	diagnostics := map[string][]model.Diagnostic{}
 	for _, service := range services {
 		values, err := st.ListAPIVersionSets(service.ID())
 		if err != nil {
@@ -137,6 +143,11 @@ func (r *Runtime) Activate(st *store.Store, strict bool) error {
 		for _, value := range serviceFragments {
 			fragments[strings.ToLower(service.ID())][strings.ToLower(value.Name)] = value.Value
 		}
+		serviceDiagnostics, err := st.ListDiagnostics(service.ID())
+		if err != nil {
+			return err
+		}
+		diagnostics[strings.ToLower(service.ID())] = serviceDiagnostics
 	}
 	policyByScope := map[string]policy.Plan{}
 	for _, item := range policies {
@@ -183,7 +194,7 @@ func (r *Runtime) Activate(st *store.Store, strict bool) error {
 	}
 	snapshot := &Snapshot{Services: map[string]*Service{}}
 	for _, item := range services {
-		snapshot.Services[strings.ToLower(item.Name)] = &Service{Name: item.Name, Backends: backends[strings.ToLower(item.ID())], Certificates: certificates[strings.ToLower(item.ID())]}
+		snapshot.Services[strings.ToLower(item.Name)] = &Service{Name: item.Name, Backends: backends[strings.ToLower(item.ID())], Certificates: certificates[strings.ToLower(item.ID())], Diagnostics: diagnostics[strings.ToLower(item.ID())]}
 	}
 	for _, api := range apis {
 		if !api.IsCurrent {
@@ -201,12 +212,17 @@ func (r *Runtime) Activate(st *store.Store, strict bool) error {
 				return fmt.Errorf("API %s references missing version set", api.ID())
 			}
 		}
-		service.Routes = append(service.Routes, &Route{API: api, VersionSet: versionSet, Operations: operationsByAPI[strings.ToLower(api.ID())], Plan: policyByScope[strings.ToLower(api.ID())], AcceptedKeys: keysByAPI[strings.ToLower(api.ID())]})
+		apiDiagnostics, err := st.ListDiagnostics(api.ID())
+		if err != nil {
+			return err
+		}
+		service.Routes = append(service.Routes, &Route{API: api, VersionSet: versionSet, Operations: operationsByAPI[strings.ToLower(api.ID())], Plan: policyByScope[strings.ToLower(api.ID())], AcceptedKeys: keysByAPI[strings.ToLower(api.ID())], Diagnostics: apiDiagnostics})
 	}
 	for _, service := range snapshot.Services {
 		sort.SliceStable(service.Routes, func(i, j int) bool { return len(service.Routes[i].API.Path) > len(service.Routes[j].API.Path) })
 	}
 	r.current.Store(snapshot)
+	r.eventStore.Store(st)
 	return nil
 }
 
@@ -292,6 +308,10 @@ func (r *Runtime) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		gatewayError(w, http.StatusNotFound, "OperationNotFound", "Unable to match incoming request to an operation.")
 		return
 	}
+	diagnosticStart := time.Now()
+	diagnosticOutput := &diagnosticWriter{ResponseWriter: w}
+	w = diagnosticOutput
+	defer r.emitDiagnostics(req, service, route, diagnosticOutput, diagnosticStart)
 	if trace != nil {
 		trace.API = route.API.ID()
 	}
@@ -352,6 +372,80 @@ func (r *Runtime) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	copyHeaders(w.Header(), state.Headers)
 	w.WriteHeader(response.StatusCode)
 	_, _ = io.Copy(w, response.Body)
+}
+
+type diagnosticWriter struct {
+	http.ResponseWriter
+	status int
+}
+
+func (w *diagnosticWriter) WriteHeader(status int) {
+	if w.status == 0 {
+		w.status = status
+	}
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *diagnosticWriter) Write(value []byte) (int, error) {
+	if w.status == 0 {
+		w.WriteHeader(http.StatusOK)
+	}
+	return w.ResponseWriter.Write(value)
+}
+
+func (r *Runtime) emitDiagnostics(req *http.Request, service *Service, route *Route, output *diagnosticWriter, started time.Time) {
+	eventStore := r.eventStore.Load()
+	if eventStore == nil {
+		return
+	}
+	status := output.status
+	if status == 0 {
+		status = http.StatusOK
+	}
+	correlationID := req.Header.Get("traceparent")
+	if correlationID == "" {
+		correlationID = req.Header.Get("Request-Id")
+	}
+	if correlationID == "" {
+		correlationID = store.NewOpaqueID()
+	}
+	values := append(append([]model.Diagnostic{}, service.Diagnostics...), route.Diagnostics...)
+	seen := map[string]bool{}
+	for _, diagnostic := range values {
+		key := strings.ToLower(diagnostic.ID())
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		if (status < http.StatusBadRequest || diagnostic.AlwaysLog != "allErrors") && !diagnosticSampled(correlationID, diagnostic.SamplingPercentage) {
+			continue
+		}
+		clientIP := ""
+		if diagnostic.LogClientIP {
+			clientIP, _, _ = net.SplitHostPort(req.RemoteAddr)
+			if clientIP == "" {
+				clientIP = req.RemoteAddr
+			}
+		}
+		_ = eventStore.AddDiagnosticEvent(model.DiagnosticEvent{
+			ID: store.NewOpaqueID(), ServiceID: route.API.ServiceID, APIID: route.API.ID(),
+			DiagnosticID: diagnostic.ID(), CorrelationID: correlationID, Method: req.Method,
+			Path: req.URL.Path, StatusCode: status, Timestamp: eventStore.Clock.Now(),
+			DurationNanos: time.Since(started).Nanoseconds(), ClientIP: clientIP,
+		})
+	}
+}
+
+func diagnosticSampled(correlationID string, percentage float64) bool {
+	if percentage <= 0 {
+		return false
+	}
+	if percentage >= 100 {
+		return true
+	}
+	hash := fnv.New32a()
+	_, _ = hash.Write([]byte(correlationID))
+	return float64(hash.Sum32()%10000) < percentage*100
 }
 
 const traceLimit = 100
