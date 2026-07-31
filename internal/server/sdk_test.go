@@ -356,10 +356,14 @@ func TestGoManagementSDKConfiguresProtectedGateway(t *testing.T) {
 		t.Fatal(err)
 	}
 	method, template := http.MethodGet, "/items"
+	operationDescription := "Retained operation metadata"
 	if _, err := operationClient.CreateOrUpdate(ctx, defaultResourceGroup, "emulator", "go-sdk-full", "get", armapimanagement.OperationContract{
-		Properties: &armapimanagement.OperationContractProperties{DisplayName: &displayName, Method: &method, URLTemplate: &template},
+		Properties: &armapimanagement.OperationContractProperties{DisplayName: &displayName, Method: &method, URLTemplate: &template, Description: &operationDescription},
 	}, nil); err != nil {
 		t.Fatal(err)
+	}
+	if gotOperation, err := operationClient.Get(ctx, defaultResourceGroup, "emulator", "go-sdk-full", "get", nil); err != nil || gotOperation.Properties == nil || gotOperation.Properties.Description == nil || *gotOperation.Properties.Description != operationDescription {
+		t.Fatalf("lossless operation GET = %+v, %v", gotOperation, err)
 	}
 	importedPath, importedRequired := "go-sdk-imported", false
 	importFormat := armapimanagement.ContentFormatOpenapiJSON
@@ -803,7 +807,7 @@ func TestGoManagementSDKConfiguresProtectedGateway(t *testing.T) {
 		t.Fatal(err)
 	}
 	clonedOperation, err := operationClient.Get(ctx, defaultResourceGroup, "emulator", "go-sdk-full;rev=2", "get", nil)
-	if err != nil || clonedOperation.Properties == nil || clonedOperation.Properties.Method == nil || *clonedOperation.Properties.Method != method {
+	if err != nil || clonedOperation.Properties == nil || clonedOperation.Properties.Method == nil || *clonedOperation.Properties.Method != method || clonedOperation.Properties.Description == nil || *clonedOperation.Properties.Description != operationDescription {
 		t.Fatalf("cloned revision operation = %+v, %v", clonedOperation, err)
 	}
 	if clonedSchema, err := schemaClient.Get(ctx, defaultResourceGroup, "emulator", "go-sdk-full;rev=2", "components", nil); err != nil || clonedSchema.Properties == nil || clonedSchema.Properties.ContentType == nil || *clonedSchema.Properties.ContentType != schemaContentType {

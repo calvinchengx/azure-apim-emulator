@@ -140,7 +140,7 @@ func TestAPIAndOperationLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	operation, err := st.UpsertOperation(model.Operation{APIID: api.ID(), Name: "get", Method: "GET", URLTemplate: "/"})
+	operation, err := st.UpsertOperation(model.Operation{APIID: api.ID(), Name: "get", Method: "GET", URLTemplate: "/", Document: map[string]any{"properties": map[string]any{"description": "retained"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,7 +160,7 @@ func TestAPIAndOperationLifecycle(t *testing.T) {
 		t.Fatalf("ListOperations = %#v, %v", operations, err)
 	}
 	got, err := st.GetOperation(strings.ToUpper(operation.APIID + "/operations/" + operation.Name))
-	if err != nil || got.Method != "GET" {
+	if err != nil || got.Method != "GET" || got.Document["properties"].(map[string]any)["description"] != "retained" {
 		t.Fatalf("GetOperation = %#v, %v", got, err)
 	}
 	if _, err := st.GetOperation("/missing"); !errors.Is(err, ErrNotFound) {
@@ -181,6 +181,58 @@ func TestAPIAndOperationLifecycle(t *testing.T) {
 	if err := st.DeleteOperation(other.ID() + "/operations/other"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("second operation delete = %v", err)
 	}
+}
+
+func TestUpsertOperationTransactionErrors(t *testing.T) {
+	t.Run("document encoding", func(t *testing.T) {
+		st, err := Open("", clock.New())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer st.Close()
+		if _, err := st.UpsertOperation(model.Operation{Document: map[string]any{"bad": make(chan int)}}); err == nil {
+			t.Fatal("operation accepted an unsupported document")
+		}
+	})
+	t.Run("begin", func(t *testing.T) {
+		st, err := Open("", clock.New())
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = st.Close()
+		if _, err := st.UpsertOperation(model.Operation{}); err == nil {
+			t.Fatal("closed store accepted an operation")
+		}
+	})
+	t.Run("operation row", func(t *testing.T) {
+		st, err := Open("", clock.New())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer st.Close()
+		if _, err := st.UpsertOperation(model.Operation{APIID: "/missing", Name: "operation"}); err == nil {
+			t.Fatal("operation with a missing API was accepted")
+		}
+	})
+	t.Run("document row", func(t *testing.T) {
+		st, err := Open("", clock.New())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer st.Close()
+		service, _ := st.UpsertService(model.Service{Name: "svc"})
+		api, _ := st.UpsertAPI(model.API{ServiceID: service.ID(), Name: "api"})
+		if _, err := st.db.Exec(`CREATE TRIGGER reject_operation_document BEFORE INSERT ON operation_documents BEGIN SELECT RAISE(FAIL, 'rejected'); END`); err != nil {
+			t.Fatal(err)
+		}
+		operation := model.Operation{APIID: api.ID(), Name: "operation"}
+		if _, err := st.UpsertOperation(operation); err == nil {
+			t.Fatal("rejected operation document was accepted")
+		}
+		if _, err := st.GetOperation(operation.APIID + "/operations/" + operation.Name); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("operation transaction was not rolled back: %v", err)
+		}
+	})
 }
 
 func TestScopedDeleteRollsBackFailures(t *testing.T) {
@@ -491,7 +543,8 @@ func TestScanFunctionsRejectMalformedRows(t *testing.T) {
 		},
 		{
 			"operations",
-			`CREATE TABLE operations (id, api_id, name, display_name, method, url_template, etag)`,
+			`CREATE TABLE operations (id, api_id, name, display_name, method, url_template, etag);
+			 CREATE TABLE operation_documents (operation_id, document_json)`,
 			`INSERT INTO operations VALUES ('id', NULL, '', '', '', '', '')`,
 			func(db *sql.DB) error { _, err := scanOperations(db); return err },
 		},
@@ -1140,6 +1193,7 @@ func TestCloneAPIRevisionTransactions(t *testing.T) {
 		{"metadata", `CREATE TRIGGER reject_clone_metadata BEFORE INSERT ON api_revision_metadata WHEN NEW.revision='2' BEGIN SELECT RAISE(FAIL, 'rejected'); END`},
 		{"version metadata", `CREATE TRIGGER reject_clone_version BEFORE INSERT ON api_version_metadata WHEN NEW.api_id LIKE '%;rev=2' BEGIN SELECT RAISE(FAIL, 'rejected'); END`},
 		{"operations", `CREATE TRIGGER reject_clone_operation BEFORE INSERT ON operations WHEN NEW.api_id LIKE '%;rev=2' BEGIN SELECT RAISE(FAIL, 'rejected'); END`},
+		{"operation documents", `CREATE TRIGGER reject_clone_operation_document BEFORE INSERT ON operation_documents WHEN NEW.operation_id LIKE '%;rev=2%' BEGIN SELECT RAISE(FAIL, 'rejected'); END`},
 		{"schemas", `CREATE TRIGGER reject_clone_schema BEFORE INSERT ON api_schemas WHEN NEW.api_id LIKE '%;rev=2' BEGIN SELECT RAISE(FAIL, 'rejected'); END`},
 		{"policy", `CREATE TRIGGER reject_clone_policy BEFORE INSERT ON policies WHEN NEW.scope_id LIKE '%;rev=2' BEGIN SELECT RAISE(FAIL, 'rejected'); END`},
 		{"tags", `CREATE TRIGGER reject_clone_tag BEFORE INSERT ON resource_tags WHEN NEW.resource_id LIKE '%;rev=2%' BEGIN SELECT RAISE(FAIL, 'rejected'); END`},
@@ -1611,6 +1665,7 @@ func TestImportAPITransactionFailures(t *testing.T) {
 		{"definition", `CREATE TRIGGER reject BEFORE INSERT ON api_definitions BEGIN SELECT RAISE(FAIL, 'rejected'); END`, nil, nil},
 		{"operation delete", `CREATE TRIGGER reject BEFORE DELETE ON operations BEGIN SELECT RAISE(FAIL, 'rejected'); END`, nil, nil},
 		{"operation insert", `CREATE TRIGGER reject BEFORE INSERT ON operations BEGIN SELECT RAISE(FAIL, 'rejected'); END`, []model.Operation{{Name: "new"}}, nil},
+		{"operation document", `CREATE TRIGGER reject BEFORE INSERT ON operation_documents BEGIN SELECT RAISE(FAIL, 'rejected'); END`, []model.Operation{{Name: "new"}}, nil},
 		{"schema delete", `CREATE TRIGGER reject BEFORE DELETE ON api_schemas BEGIN SELECT RAISE(FAIL, 'rejected'); END`, nil, nil},
 		{"schema insert", `CREATE TRIGGER reject BEFORE INSERT ON api_schemas BEGIN SELECT RAISE(FAIL, 'rejected'); END`, nil, &model.APISchema{Document: map[string]any{}}},
 	}
@@ -1648,6 +1703,22 @@ func TestImportAPITransactionFailures(t *testing.T) {
 		api := model.API{Document: map[string]any{"bad": make(chan int)}}
 		if _, err := st.ImportAPI(api, model.APIDefinition{}, nil, nil); err == nil {
 			t.Fatal("import accepted an unsupported API document")
+		}
+	})
+	t.Run("operation document encoding", func(t *testing.T) {
+		st, err := Open("", clock.New())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer st.Close()
+		service, err := st.UpsertService(model.Service{Name: "svc"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		api := model.API{ServiceID: service.ID(), Name: "api"}
+		operations := []model.Operation{{Name: "get", Document: map[string]any{"bad": make(chan int)}}}
+		if _, err := st.ImportAPI(api, model.APIDefinition{}, operations, nil); err == nil {
+			t.Fatal("import accepted an unsupported operation document")
 		}
 	})
 }

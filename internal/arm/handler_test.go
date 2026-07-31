@@ -548,11 +548,14 @@ func TestAPIBranches(t *testing.T) {
 	assertStatus(t, handler, http.MethodPut, basePath+"/apis/a/operations/get"+apiQuery, `{`, http.StatusBadRequest)
 	assertStatus(t, handler, http.MethodPut, basePath+"/apis/a/operations/get"+apiQuery, `{"properties":{"displayName":"Get"}}`, http.StatusBadRequest)
 	assertStatus(t, handler, http.MethodPut, basePath+"/apis/a/operations/get"+apiQuery, `{"properties":{"displayName":"Get","method":"GET","urlTemplate":"/"}}`, http.StatusCreated)
-	assertStatus(t, handler, http.MethodPut, basePath+"/apis/a/operations/get"+apiQuery, `{"properties":{"displayName":"Get","method":"GET","urlTemplate":"/"}}`, http.StatusOK)
+	assertStatus(t, handler, http.MethodPut, basePath+"/apis/a/operations/get"+apiQuery, `{"properties":{"displayName":"Get","method":"GET","urlTemplate":"/","description":"Original","request":{"headers":[{"name":"X-Test","required":true}]},"templateParameters":[{"name":"id","type":"string"}]}}`, http.StatusOK)
 	assertStatus(t, handler, http.MethodPatch, basePath+"/apis/a/operations/missing"+apiQuery, `{}`, http.StatusNotFound)
 	assertStatus(t, handler, http.MethodPatch, basePath+"/apis/a/operations/get"+apiQuery, `{`, http.StatusBadRequest)
-	assertStatus(t, handler, http.MethodPatch, basePath+"/apis/a/operations/get"+apiQuery, `{"properties":{"displayName":"Updated","method":"POST","urlTemplate":"/updated"}}`, http.StatusOK)
-	assertStatus(t, handler, http.MethodGet, basePath+"/apis/a/operations/get"+apiQuery, "", http.StatusOK)
+	assertStatus(t, handler, http.MethodPatch, basePath+"/apis/a/operations/get"+apiQuery, `{"properties":{"displayName":"Updated","method":"POST","urlTemplate":"/updated","description":null,"responses":[{"statusCode":200}]}}`, http.StatusOK)
+	operationGet := request(t, handler, http.MethodGet, basePath+"/apis/a/operations/get"+apiQuery, "")
+	if !strings.Contains(operationGet.Body.String(), `"X-Test"`) || !strings.Contains(operationGet.Body.String(), `"statusCode":200`) || strings.Contains(operationGet.Body.String(), `"description"`) {
+		t.Fatalf("lossless operation patch = %s", operationGet.Body.String())
+	}
 	list = request(t, handler, http.MethodGet, basePath+"/apis/a/operations"+apiQuery, "")
 	if strings.Count(list.Body.String(), `"type":"Microsoft.ApiManagement/service/apis/operations"`) != 1 || !strings.Contains(list.Body.String(), `"method":"POST"`) {
 		t.Fatalf("operation list = %s", list.Body.String())
@@ -578,7 +581,10 @@ func TestAPIBranches(t *testing.T) {
 	if !strings.Contains(clonedDocument.Body.String(), `"owner":"platform"`) || strings.Contains(clonedDocument.Body.String(), "sourceApiId") {
 		t.Fatalf("cloned API document = %s", clonedDocument.Body.String())
 	}
-	assertStatus(t, handler, http.MethodGet, basePath+"/apis/a;rev=3/operations/get"+apiQuery, "", http.StatusOK)
+	clonedOperation := request(t, handler, http.MethodGet, basePath+"/apis/a;rev=3/operations/get"+apiQuery, "")
+	if clonedOperation.Code != http.StatusOK || !strings.Contains(clonedOperation.Body.String(), `"X-Test"`) || !strings.Contains(clonedOperation.Body.String(), `"statusCode":200`) {
+		t.Fatalf("cloned operation document = %d: %s", clonedOperation.Code, clonedOperation.Body.String())
+	}
 	assertStatus(t, handler, http.MethodGet, basePath+"/apis/a;rev=3/policies/policy"+apiQuery, "", http.StatusOK)
 	revisions = request(t, handler, http.MethodGet, basePath+"/apis/a/revisions"+apiQuery, "")
 	if !strings.Contains(revisions.Body.String(), `"count":3`) || !strings.Contains(revisions.Body.String(), `"description":"Cloned revision"`) {
@@ -655,6 +661,26 @@ func TestAPIDocumentHelpersAndLegacyPatch(t *testing.T) {
 	replaced := request(t, handler, http.MethodPut, basePath+"/apis/legacy"+apiQuery, `{"properties":{"displayName":"Replaced","path":"legacy","serviceUrl":"https://legacy"}}`)
 	if replaced.Code != http.StatusOK || strings.Contains(replaced.Body.String(), `"custom"`) {
 		t.Fatalf("API PUT replacement = %d: %s", replaced.Code, replaced.Body.String())
+	}
+}
+
+func TestOperationDocumentFallbacks(t *testing.T) {
+	wired := operationWire(model.Operation{APIID: "/api", Name: "operation", Document: map[string]any{"properties": "invalid"}})
+	if _, ok := wired["properties"].(map[string]any); !ok {
+		t.Fatalf("operation wire properties = %#v", wired)
+	}
+	handler, st := testHandler(t)
+	seedService(t, st)
+	api, err := st.UpsertAPI(model.API{ServiceID: serviceModel().ID(), Name: "api", DisplayName: "API", ServiceURL: "https://backend"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.UpsertOperation(model.Operation{APIID: api.ID(), Name: "legacy", DisplayName: "Legacy", Method: "GET", URLTemplate: "/legacy"}); err != nil {
+		t.Fatal(err)
+	}
+	response := request(t, handler, http.MethodPatch, basePath+"/apis/api/operations/legacy"+apiQuery, `{"properties":{"description":"retained"}}`)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"description":"retained"`) {
+		t.Fatalf("legacy operation patch = %d: %s", response.Code, response.Body.String())
 	}
 }
 

@@ -1540,10 +1540,7 @@ func applyAPIPayload(api *model.API, body apiPayload) {
 }
 
 func cleanAPIDocument(document map[string]any) {
-	delete(document, "id")
-	delete(document, "name")
-	delete(document, "type")
-	delete(document, "etag")
+	cleanResourceDocument(document)
 	properties, _ := document["properties"].(map[string]any)
 	delete(properties, "format")
 	delete(properties, "value")
@@ -2494,10 +2491,20 @@ func (h *Handler) operationResource(w http.ResponseWriter, r *http.Request, oper
 			operation = existing
 		}
 		var body operationPayload
-		if err := decode(r, &body); err != nil {
+		var document map[string]any
+		if err := decodeDocument(r, &body, &document); err != nil {
 			writeError(w, http.StatusBadRequest, "InvalidRequestContent", err.Error(), "")
 			return
 		}
+		if r.Method == http.MethodPatch {
+			if operation.Document == nil {
+				operation.Document = operationWire(operation)
+			}
+			mergeObject(operation.Document, document)
+		} else {
+			operation.Document = document
+		}
+		cleanResourceDocument(operation.Document)
 		applyOperationPayload(&operation, body)
 		if operation.Method == "" || operation.URLTemplate == "" {
 			writeError(w, http.StatusBadRequest, "ValidationError", "method and urlTemplate are required.", "properties")
@@ -2542,6 +2549,13 @@ func applyOperationPayload(operation *model.Operation, body operationPayload) {
 	if body.Properties.URLTemplate != nil {
 		operation.URLTemplate = *body.Properties.URLTemplate
 	}
+}
+
+func cleanResourceDocument(document map[string]any) {
+	delete(document, "id")
+	delete(document, "name")
+	delete(document, "type")
+	delete(document, "etag")
 }
 
 func (h *Handler) product(w http.ResponseWriter, r *http.Request, rt route) {
@@ -3056,7 +3070,15 @@ func apiReleaseWire(v model.APIRelease) map[string]any {
 			"updatedDateTime": time.Unix(v.UpdatedAt, 0).UTC().Format(time.RFC3339)}}
 }
 func operationWire(v model.Operation) map[string]any {
-	return map[string]any{"id": v.APIID + "/operations/" + v.Name, "name": v.Name, "type": "Microsoft.ApiManagement/service/apis/operations", "properties": map[string]any{"displayName": v.DisplayName, "method": v.Method, "urlTemplate": v.URLTemplate}}
+	result := cloneObject(v.Document)
+	result["id"], result["name"], result["type"] = v.APIID+"/operations/"+v.Name, v.Name, "Microsoft.ApiManagement/service/apis/operations"
+	properties, ok := result["properties"].(map[string]any)
+	if !ok {
+		properties = map[string]any{}
+		result["properties"] = properties
+	}
+	properties["displayName"], properties["method"], properties["urlTemplate"] = v.DisplayName, v.Method, v.URLTemplate
+	return result
 }
 func apiSchemaWire(v model.APISchema) map[string]any {
 	return map[string]any{"id": v.ID(), "name": v.Name, "type": "Microsoft.ApiManagement/service/apis/schemas", "properties": map[string]any{"contentType": v.ContentType, "document": v.Document}}

@@ -269,6 +269,7 @@ type Operation struct {
 	Method      string
 	URLTemplate string
 	ETag        string
+	Document    map[string]any
 }
 
 // Product is an APIM product.

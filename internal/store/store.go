@@ -129,6 +129,10 @@ CREATE TABLE IF NOT EXISTS operations (
   name TEXT NOT NULL, display_name TEXT NOT NULL, method TEXT NOT NULL,
   url_template TEXT NOT NULL, etag TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS operation_documents (
+  operation_id TEXT PRIMARY KEY REFERENCES operations(id) ON DELETE CASCADE,
+  document_json TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS api_schemas (
   id TEXT PRIMARY KEY, api_id TEXT NOT NULL REFERENCES apis(id) ON DELETE CASCADE,
   name TEXT NOT NULL, content_type TEXT NOT NULL, document_json TEXT NOT NULL, etag TEXT NOT NULL
@@ -437,10 +441,18 @@ func (s *Store) ImportAPI(v model.API, definition model.APIDefinition, operation
 	}
 	for _, operation := range operations {
 		operation.APIID, operation.ETag = v.ID(), newETag()
+		operationDocument, err := json.Marshal(operation.Document)
+		if err != nil {
+			return v, err
+		}
 		if _, err := tx.Exec(`INSERT INTO operations
           (id, api_id, name, display_name, method, url_template, etag) VALUES (?, ?, ?, ?, ?, ?, ?)`,
 			operation.APIID+"/operations/"+operation.Name, operation.APIID, operation.Name,
 			operation.DisplayName, strings.ToUpper(operation.Method), operation.URLTemplate, operation.ETag); err != nil {
+			return v, err
+		}
+		if _, err := tx.Exec(`INSERT INTO operation_documents (operation_id, document_json) VALUES (?, ?)`,
+			operation.APIID+"/operations/"+operation.Name, operationDocument); err != nil {
 			return v, err
 		}
 	}
@@ -517,6 +529,12 @@ func (s *Store) CloneAPIRevision(sourceID string, v model.API) (model.API, error
 	if _, err := tx.Exec(`INSERT INTO operations (id, api_id, name, display_name, method, url_template, etag)
 	    SELECT ? || '/operations/' || name, ?, name, display_name, method, url_template, ?
 	    FROM operations WHERE lower(api_id)=lower(?)`, v.ID(), v.ID(), childETag, sourceID); err != nil {
+		return v, err
+	}
+	if _, err := tx.Exec(`INSERT INTO operation_documents (operation_id, document_json)
+	    SELECT ? || substr(operation_id, length(?) + 1), document_json
+	    FROM operation_documents WHERE lower(operation_id) LIKE lower(?)`,
+		v.ID(), sourceID, sourceID+"/operations/%"); err != nil {
 		return v, err
 	}
 	if _, err := tx.Exec(`INSERT INTO api_schemas (id, api_id, name, content_type, document_json, etag)
@@ -1349,22 +1367,43 @@ func (s *Store) DeleteAPI(id string) error {
 func (s *Store) UpsertOperation(v model.Operation) (model.Operation, error) {
 	v.ETag = newETag()
 	id := v.APIID + "/operations/" + v.Name
-	_, err := s.db.Exec(`INSERT INTO operations
+	document, err := json.Marshal(v.Document)
+	if err != nil {
+		return v, err
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return v, err
+	}
+	defer tx.Rollback()
+	_, err = tx.Exec(`INSERT INTO operations
     (id, api_id, name, display_name, method, url_template, etag) VALUES (?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET display_name=excluded.display_name, method=excluded.method,
       url_template=excluded.url_template, etag=excluded.etag`, id, v.APIID, v.Name,
 		v.DisplayName, strings.ToUpper(v.Method), v.URLTemplate, v.ETag)
-	return v, err
+	if err != nil {
+		return v, err
+	}
+	if _, err := tx.Exec(`INSERT INTO operation_documents (operation_id, document_json) VALUES (?, ?)
+	    ON CONFLICT(operation_id) DO UPDATE SET document_json=excluded.document_json`, id, document); err != nil {
+		return v, err
+	}
+	return v, tx.Commit()
 }
 
 // GetOperation finds one operation by ARM ID.
 func (s *Store) GetOperation(id string) (model.Operation, error) {
 	var v model.Operation
-	err := s.db.QueryRow(`SELECT api_id, name, display_name, method, url_template, etag
+	var document string
+	err := s.db.QueryRow(`SELECT api_id, name, display_name, method, url_template, etag,
+	    COALESCE((SELECT document_json FROM operation_documents WHERE lower(operation_id)=lower(operations.id)), '{}')
 	    FROM operations WHERE lower(id)=lower(?)`, id).
-		Scan(&v.APIID, &v.Name, &v.DisplayName, &v.Method, &v.URLTemplate, &v.ETag)
+		Scan(&v.APIID, &v.Name, &v.DisplayName, &v.Method, &v.URLTemplate, &v.ETag, &document)
 	if errors.Is(err, sql.ErrNoRows) {
 		return model.Operation{}, ErrNotFound
+	}
+	if err == nil {
+		_ = json.Unmarshal([]byte(document), &v.Document)
 	}
 	return v, err
 }
@@ -1801,7 +1840,9 @@ func scanAPIs(db *sql.DB) ([]model.API, error) {
 }
 
 func scanOperations(db *sql.DB) ([]model.Operation, error) {
-	rows, err := db.Query(`SELECT api_id, name, display_name, method, url_template, etag FROM operations ORDER BY id`)
+	rows, err := db.Query(`SELECT api_id, name, display_name, method, url_template, etag,
+	    COALESCE((SELECT document_json FROM operation_documents WHERE operation_id=operations.id), '{}')
+	    FROM operations ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
@@ -1809,9 +1850,11 @@ func scanOperations(db *sql.DB) ([]model.Operation, error) {
 	var values []model.Operation
 	for rows.Next() {
 		var v model.Operation
-		if err := rows.Scan(&v.APIID, &v.Name, &v.DisplayName, &v.Method, &v.URLTemplate, &v.ETag); err != nil {
+		var document string
+		if err := rows.Scan(&v.APIID, &v.Name, &v.DisplayName, &v.Method, &v.URLTemplate, &v.ETag, &document); err != nil {
 			return nil, err
 		}
+		_ = json.Unmarshal([]byte(document), &v.Document)
 		values = append(values, v)
 	}
 	return values, rows.Err()

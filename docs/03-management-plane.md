@@ -70,6 +70,13 @@ document. The official Go SDK witness round-trips and patches `description`, a
 field intentionally outside the gateway's minimal routing model. This pattern
 is being extended to each remaining resource family.
 
+API operations use the same companion-document model. Direct PUT replaces,
+PATCH recursively merges, API import creates document rows transactionally, and
+revision cloning copies them with the operation. Request/response contracts,
+template parameters, descriptions, and other non-routing properties therefore
+survive GET and list projections while method and URL template remain indexed
+for gateway compilation.
+
 ## Common ARM semantics
 
 Implement centrally and test across resources:

@@ -32,7 +32,7 @@ part of the identity expansion.
 - APIs, revisions, releases, versions, operations, schemas, tags, products,
   groups, users, subscriptions, named values, backends, certificates, fragments,
   loggers, and diagnostics for stable API versions.
-  APIs now have canonical lossless documents and recursive PATCH semantics; the same persistence pattern remains to be extended across other core resources.
+  APIs and operations now have canonical lossless documents and recursive PATCH semantics; the same persistence pattern remains to be extended across other core resources.
 - OpenAPI import/export and linked imports.
 - Complete ARM common semantics: ETags, paging, filters, patch, LROs, errors, and secret operations.
   Conditional ETag evaluation and common collection paging/filter grammar are implemented centrally; required-header and endpoint-specific filter auditing plus the remaining semantics are still open.
