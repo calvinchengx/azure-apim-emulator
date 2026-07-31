@@ -10,9 +10,11 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -31,6 +33,17 @@ const (
 )
 
 type rejectingAuth struct{}
+
+type testRoundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f testRoundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return f(request)
+}
+
+type failingReadCloser struct{}
+
+func (failingReadCloser) Read([]byte) (int, error) { return 0, errors.New("read failed") }
+func (failingReadCloser) Close() error             { return nil }
 
 func (rejectingAuth) ValidateRequest(*http.Request) (*auth.Principal, error) {
 	return nil, errors.New("rejected")
@@ -378,6 +391,188 @@ func TestAPIBranches(t *testing.T) {
 	assertStatus(t, handler, http.MethodDelete, basePath+"/apis/a/operations/get"+apiQuery, "", http.StatusNoContent)
 	assertStatus(t, handler, http.MethodDelete, basePath+"/apis/a"+apiQuery, "", http.StatusNoContent)
 	assertStatus(t, handler, http.MethodDelete, basePath+"/apis/a"+apiQuery, "", http.StatusNoContent)
+}
+
+func TestOpenAPIImportExportAndLinkedImport(t *testing.T) {
+	linked := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/definition":
+			_, _ = w.Write([]byte("openapi: 3.0.3\ninfo:\n  title: Linked API\nservers:\n  - url: https://linked.example.test\npaths:\n  /linked:\n    post:\n      operationId: postLinked\n"))
+		case "/large":
+			_, _ = w.Write([]byte(strings.Repeat("x", maxImportBytes+1)))
+		default:
+			w.WriteHeader(http.StatusBadGateway)
+		}
+	}))
+	defer linked.Close()
+	handler, st := testHandler(t)
+	handler.ImportClient = linked.Client()
+	seedService(t, st)
+	definition := `{"openapi":"3.1.0","info":{"title":"Imported API"},"servers":[{"url":"https://backend.example.test/v1"}],"paths":{"/items":{"get":{"operationId":"listItems","summary":"List items"},"post":{}}},"components":{"schemas":{"Item":{"type":"object"}}}}`
+	body, _ := json.Marshal(map[string]any{"properties": map[string]any{"path": "imported", "format": "openapi+json", "value": definition, "subscriptionRequired": false}})
+	path := basePath + "/apis/imported" + apiQuery
+	assertStatus(t, handler, http.MethodPut, path, string(body), http.StatusCreated)
+	api, err := st.GetAPI(serviceModel().ID() + "/apis/imported")
+	if err != nil || api.DisplayName != "Imported API" || api.ServiceURL != "https://backend.example.test/v1" || len(api.Protocols) != 1 || api.Protocols[0] != "https" {
+		t.Fatalf("imported API = %+v, %v", api, err)
+	}
+	operations, err := st.ListOperations(api.ID())
+	if err != nil || len(operations) != 2 || operations[0].Name != "listItems" || operations[1].Name != "post-items" {
+		t.Fatalf("imported operations = %+v, %v", operations, err)
+	}
+	schemas, err := st.ListAPISchemas(api.ID())
+	if err != nil || len(schemas) != 1 || schemas[0].Name != "openapi" || schemas[0].Document["components"] == nil {
+		t.Fatalf("imported schemas = %+v, %v", schemas, err)
+	}
+	if _, _, _, err := handler.renderAPIExport(api, "openapi+json-link"); err != nil {
+		t.Fatal(err)
+	}
+	retained, err := st.GetAPIDefinition(strings.ToUpper(api.ID()))
+	if err != nil || retained.Value != definition || retained.SourceURL != "" {
+		t.Fatalf("retained definition = %+v, %v", retained, err)
+	}
+
+	linkedBody, _ := json.Marshal(map[string]any{"properties": map[string]any{"path": "imported", "format": "openapi-link", "value": linked.URL + "/definition", "subscriptionRequired": false}})
+	assertStatus(t, handler, http.MethodPut, path, string(linkedBody), http.StatusOK)
+	operations, _ = st.ListOperations(api.ID())
+	retained, _ = st.GetAPIDefinition(api.ID())
+	if len(operations) != 1 || operations[0].Name != "postLinked" || retained.SourceURL != linked.URL+"/definition" {
+		t.Fatalf("linked import = %+v, %+v", operations, retained)
+	}
+	if _, err := st.UpsertAPISchema(model.APISchema{APIID: api.ID(), Name: "other", ContentType: "application/json", Document: map[string]any{}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.UpsertAPISchema(model.APISchema{APIID: api.ID(), Name: "openapi", ContentType: "application/json", Document: map[string]any{"definitions": map[string]any{"Linked": map[string]any{"type": "object"}}}}); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, format := range []string{"openapi-link", "openapi+json-link", "swagger-link"} {
+		exportPath := basePath + "/apis/imported?format=" + url.QueryEscape(format) + "&export=true&api-version=2024-05-01"
+		recorder := request(t, handler, http.MethodGet, exportPath, "")
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("export %s = %d %s", format, recorder.Code, recorder.Body.String())
+		}
+		var result struct {
+			Format string `json:"format"`
+			Value  struct {
+				Link string `json:"link"`
+			} `json:"value"`
+		}
+		if err := json.Unmarshal(recorder.Body.Bytes(), &result); err != nil || result.Format == "" || result.Value.Link == "" {
+			t.Fatalf("export result = %+v, %v", result, err)
+		}
+		download := httptest.NewRecorder()
+		handler.ServeHTTP(download, httptest.NewRequest(http.MethodGet, result.Value.Link, nil))
+		if download.Code != http.StatusOK || download.Header().Get("Content-Type") == "" || !strings.Contains(download.Body.String(), "postLinked") {
+			t.Fatalf("download %s = %d %s", format, download.Code, download.Body.String())
+		}
+		if format == "openapi-link" {
+			st.Clock.Advance(301)
+			expired := httptest.NewRecorder()
+			handler.ServeHTTP(expired, httptest.NewRequest(http.MethodGet, result.Value.Link, nil))
+			if expired.Code != http.StatusGone {
+				t.Fatalf("expired export = %d %s", expired.Code, expired.Body.String())
+			}
+			st.Clock.Advance(-301)
+		}
+	}
+	swagger := `{"swagger":"2.0","info":{"title":"Swagger API"},"host":"swagger.example.test","basePath":"/v2","paths":{},"definitions":{"Pet":{"type":"object"}}}`
+	swaggerBody, _ := json.Marshal(map[string]any{"properties": map[string]any{"path": "swagger", "format": "swagger-json", "value": swagger}})
+	assertStatus(t, handler, http.MethodPut, basePath+"/apis/swagger"+apiQuery, string(swaggerBody), http.StatusCreated)
+	if values, err := st.ListAPISchemas(serviceModel().ID() + "/apis/swagger"); err != nil || len(values) != 1 || values[0].ContentType != "application/vnd.ms-azure-apim.swagger.definitions+json" || values[0].Document["definitions"] == nil {
+		t.Fatalf("Swagger schema = %+v, %v", values, err)
+	}
+
+	assertStatus(t, handler, http.MethodPut, basePath+"/apis/bad"+apiQuery, `{"properties":{"path":"bad","format":"unknown","value":"x"}}`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPut, basePath+"/apis/bad"+apiQuery, `{"properties":{"path":"bad","format":"openapi+json"}}`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPatch, path, `{"properties":{"format":"openapi+json","value":"{}"}}`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPut, basePath+"/apis/bad"+apiQuery, `{"properties":{"path":"bad","format":"openapi+json","value":"{}"}}`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPut, basePath+"/apis/bad"+apiQuery, `{"properties":{"path":"bad","format":"openapi-link","value":"relative"}}`, http.StatusBadRequest)
+	badStatus, _ := json.Marshal(map[string]any{"properties": map[string]any{"path": "bad", "format": "openapi-link", "value": linked.URL + "/missing"}})
+	assertStatus(t, handler, http.MethodPut, basePath+"/apis/bad"+apiQuery, string(badStatus), http.StatusBadRequest)
+	tooLarge, _ := json.Marshal(map[string]any{"properties": map[string]any{"path": "bad", "format": "openapi-link", "value": linked.URL + "/large"}})
+	assertStatus(t, handler, http.MethodPut, basePath+"/apis/bad"+apiQuery, string(tooLarge), http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodGet, basePath+"/apis/imported?format=wsdl-link&export=true&api-version=2024-05-01", "", http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodGet, basePath+"/apis/missing?format=openapi-link&export=true&api-version=2024-05-01", "", http.StatusNotFound)
+
+	invalidDownload := httptest.NewRecorder()
+	handler.ServeHTTP(invalidDownload, httptest.NewRequest(http.MethodGet, basePath+"/apis/imported?export=download&api-version=2024-05-01", nil))
+	if invalidDownload.Code != http.StatusForbidden {
+		t.Fatalf("invalid export signature = %d", invalidDownload.Code)
+	}
+	missingDownload := httptest.NewRecorder()
+	handler.ServeHTTP(missingDownload, httptest.NewRequest(http.MethodGet, basePath+"/not-an-api?export=download&api-version=2024-05-01", nil))
+	if missingDownload.Code != http.StatusNotFound {
+		t.Fatalf("invalid export route = %d", missingDownload.Code)
+	}
+}
+
+func TestOpenAPIImportTransportAndExportFailures(t *testing.T) {
+	handler, st := testHandler(t)
+	seedService(t, st)
+	request := httptest.NewRequest(http.MethodPut, basePath+"/apis/a"+apiQuery, nil)
+	if _, _, err := handler.resolveImport(request, "openapi+json", strings.Repeat("x", maxImportBytes+1)); err == nil {
+		t.Fatal("oversized inline import succeeded")
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"openapi":"3.0.0","info":{"title":"A"},"paths":{}}`))
+	}))
+	defer server.Close()
+	if source, sourceURL, err := handler.resolveImport(request, "openapi+json-link", server.URL); err != nil || source == "" || sourceURL != server.URL {
+		t.Fatalf("default import client = %q, %q, %v", source, sourceURL, err)
+	}
+	handler.ImportClient = &http.Client{Transport: testRoundTripFunc(func(*http.Request) (*http.Response, error) { return nil, errors.New("transport failed") })}
+	if _, _, err := handler.resolveImport(request, "openapi-link", "https://example.test/openapi"); err == nil {
+		t.Fatal("transport failure accepted")
+	}
+	handler.ImportClient = &http.Client{Transport: testRoundTripFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusOK, Body: failingReadCloser{}, Header: make(http.Header)}, nil
+	})}
+	if _, _, err := handler.resolveImport(request, "openapi-link", "https://example.test/openapi"); err == nil {
+		t.Fatal("read failure accepted")
+	}
+	api, _ := st.UpsertAPI(model.API{ServiceID: serviceModel().ID(), Name: "a", DisplayName: "A", ServiceURL: "https://backend"})
+	expires := st.Clock.Now() + 300
+	signedDownload := func(name, format string) string {
+		id := serviceModel().ID() + "/apis/" + name
+		return basePath + "/apis/" + name + "?api-version=2024-05-01&export=download&format=" + url.QueryEscape(format) + "&expires=" + fmt.Sprint(expires) + "&sig=" + url.QueryEscape(handler.exportSignature(id, format, expires))
+	}
+	missing := httptest.NewRecorder()
+	handler.ServeHTTP(missing, httptest.NewRequest(http.MethodGet, signedDownload("missing", "openapi-link"), nil))
+	if missing.Code != http.StatusNotFound {
+		t.Fatalf("missing signed export = %d %s", missing.Code, missing.Body.String())
+	}
+	unsupported := httptest.NewRecorder()
+	handler.ServeHTTP(unsupported, httptest.NewRequest(http.MethodGet, signedDownload("a", "wsdl-link"), nil))
+	if unsupported.Code != http.StatusBadRequest {
+		t.Fatalf("unsupported signed export = %d %s", unsupported.Code, unsupported.Body.String())
+	}
+
+	dir := t.TempDir()
+	broken, err := store.Open(dir, clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer broken.Close()
+	brokenService, _ := broken.UpsertService(serviceModel())
+	brokenAPI, _ := broken.UpsertAPI(model.API{ServiceID: brokenService.ID(), Name: "a"})
+	db, err := sql.Open("sqlite", filepath.Join(dir, "azure-apim-emulator.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`DROP TABLE api_schemas`); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := (&Handler{Store: broken}).renderAPIExport(brokenAPI, "openapi-link"); err == nil {
+		t.Fatal("missing schema table export succeeded")
+	}
+	if err := broken.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := (&Handler{Store: broken}).renderAPIExport(api, "openapi-link"); err == nil {
+		t.Fatal("closed store export succeeded")
+	}
 }
 
 func TestProductAndSubscriptionBranches(t *testing.T) {

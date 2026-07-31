@@ -143,11 +143,13 @@ func (r *Runtime) Activate(st *store.Store, strict bool) error {
 		for _, value := range serviceFragments {
 			fragments[strings.ToLower(service.ID())][strings.ToLower(value.Name)] = value.Value
 		}
-		serviceDiagnostics, err := st.ListDiagnostics(service.ID())
+		serviceDiagnostics, err := st.ListServiceDiagnostics(service.ID())
 		if err != nil {
 			return err
 		}
-		diagnostics[strings.ToLower(service.ID())] = serviceDiagnostics
+		for _, diagnostic := range serviceDiagnostics {
+			diagnostics[strings.ToLower(diagnostic.ScopeID)] = append(diagnostics[strings.ToLower(diagnostic.ScopeID)], diagnostic)
+		}
 	}
 	policyByScope := map[string]policy.Plan{}
 	for _, item := range policies {
@@ -212,11 +214,7 @@ func (r *Runtime) Activate(st *store.Store, strict bool) error {
 				return fmt.Errorf("API %s references missing version set", api.ID())
 			}
 		}
-		apiDiagnostics, err := st.ListDiagnostics(api.ID())
-		if err != nil {
-			return err
-		}
-		service.Routes = append(service.Routes, &Route{API: api, VersionSet: versionSet, Operations: operationsByAPI[strings.ToLower(api.ID())], Plan: policyByScope[strings.ToLower(api.ID())], AcceptedKeys: keysByAPI[strings.ToLower(api.ID())], Diagnostics: apiDiagnostics})
+		service.Routes = append(service.Routes, &Route{API: api, VersionSet: versionSet, Operations: operationsByAPI[strings.ToLower(api.ID())], Plan: policyByScope[strings.ToLower(api.ID())], AcceptedKeys: keysByAPI[strings.ToLower(api.ID())], Diagnostics: diagnostics[strings.ToLower(api.ID())]})
 	}
 	for _, service := range snapshot.Services {
 		sort.SliceStable(service.Routes, func(i, j int) bool { return len(service.Routes[i].API.Path) > len(service.Routes[j].API.Path) })

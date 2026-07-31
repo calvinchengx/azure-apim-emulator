@@ -74,6 +74,15 @@ func TestGoManagementSDKCreatesAPI(t *testing.T) {
 }
 
 func TestGoManagementSDKConfiguresProtectedGateway(t *testing.T) {
+	importBackend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("imported-backend"))
+	}))
+	defer importBackend.Close()
+	linkedDefinition := ""
+	importSource := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(linkedDefinition))
+	}))
+	defer importSource.Close()
 	backend := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("X-Named") != "go-sdk-named-value" {
 			t.Errorf("named-value policy header = %q", r.Header.Get("X-Named"))
@@ -329,6 +338,66 @@ func TestGoManagementSDKConfiguresProtectedGateway(t *testing.T) {
 		Properties: &armapimanagement.OperationContractProperties{DisplayName: &displayName, Method: &method, URLTemplate: &template},
 	}, nil); err != nil {
 		t.Fatal(err)
+	}
+	importedPath, importedRequired := "go-sdk-imported", false
+	importFormat := armapimanagement.ContentFormatOpenapiJSON
+	importValue := `{"openapi":"3.0.3","info":{"title":"Go SDK imported API"},"servers":[{"url":"` + importBackend.URL + `"}],"paths":{"/items":{"get":{"operationId":"importedGet","summary":"Imported GET","responses":{"200":{"description":"OK"}}}}}}`
+	importPoller, err := apiClient.BeginCreateOrUpdate(ctx, defaultResourceGroup, "emulator", "go-sdk-imported", armapimanagement.APICreateOrUpdateParameter{Properties: &armapimanagement.APICreateOrUpdateProperties{
+		Path: &importedPath, Format: &importFormat, Value: &importValue, SubscriptionRequired: &importedRequired,
+	}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	importedAPI, err := importPoller.PollUntilDone(ctx, nil)
+	if err != nil || importedAPI.Properties == nil || importedAPI.Properties.DisplayName == nil || *importedAPI.Properties.DisplayName != "Go SDK imported API" {
+		t.Fatalf("SDK OpenAPI import = %+v, %v", importedAPI, err)
+	}
+	if importedOperation, err := operationClient.Get(ctx, defaultResourceGroup, "emulator", "go-sdk-imported", "importedGet", nil); err != nil || importedOperation.Properties == nil || importedOperation.Properties.Method == nil || *importedOperation.Properties.Method != http.MethodGet {
+		t.Fatalf("SDK imported operation = %+v, %v", importedOperation, err)
+	}
+	linkedDefinition = `{"openapi":"3.1.0","info":{"title":"Go SDK linked API"},"servers":[{"url":"` + importBackend.URL + `"}],"paths":{"/linked":{"post":{"operationId":"linkedPost","responses":{"200":{"description":"OK"}}}}}}`
+	linkedFormat, linkedValue := armapimanagement.ContentFormatOpenapiJSONLink, importSource.URL
+	linkedPoller, err := apiClient.BeginCreateOrUpdate(ctx, defaultResourceGroup, "emulator", "go-sdk-imported", armapimanagement.APICreateOrUpdateParameter{Properties: &armapimanagement.APICreateOrUpdateProperties{
+		Path: &importedPath, Format: &linkedFormat, Value: &linkedValue, SubscriptionRequired: &importedRequired,
+	}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := linkedPoller.PollUntilDone(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+	if linkedOperation, err := operationClient.Get(ctx, defaultResourceGroup, "emulator", "go-sdk-imported", "linkedPost", nil); err != nil || linkedOperation.Properties == nil || linkedOperation.Properties.URLTemplate == nil || *linkedOperation.Properties.URLTemplate != "/linked" {
+		t.Fatalf("SDK linked operation = %+v, %v", linkedOperation, err)
+	}
+	if _, err := operationClient.Get(ctx, defaultResourceGroup, "emulator", "go-sdk-imported", "importedGet", nil); err == nil {
+		t.Fatal("linked import retained the replaced operation")
+	}
+	importedRequest, _ := http.NewRequest(http.MethodPost, front.URL+"/go-sdk-imported/linked", nil)
+	importedResponse, err := front.Client().Do(importedRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	importedBody, _ := io.ReadAll(importedResponse.Body)
+	importedResponse.Body.Close()
+	if importedResponse.StatusCode != http.StatusOK || string(importedBody) != "imported-backend" {
+		t.Fatalf("imported gateway = %d %q", importedResponse.StatusCode, importedBody)
+	}
+	exportClient, err := armapimanagement.NewAPIExportClient(defaultSubscription, credential, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	exported, err := exportClient.Get(ctx, defaultResourceGroup, "emulator", "go-sdk-imported", armapimanagement.ExportFormatOpenapiJSON, armapimanagement.ExportAPITrue, nil)
+	if err != nil || exported.Value == nil || exported.Value.Link == nil || exported.ExportResultFormat == nil {
+		t.Fatalf("SDK API export = %+v, %v", exported, err)
+	}
+	exportResponse, err := front.Client().Get(*exported.Value.Link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	exportBody, _ := io.ReadAll(exportResponse.Body)
+	exportResponse.Body.Close()
+	if exportResponse.StatusCode != http.StatusOK || !strings.Contains(string(exportBody), `"operationId":"linkedPost"`) {
+		t.Fatalf("SDK API export download = %d %s", exportResponse.StatusCode, exportBody)
 	}
 	productClient, err := armapimanagement.NewProductClient(defaultSubscription, credential, options)
 	if err != nil {

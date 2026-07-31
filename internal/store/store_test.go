@@ -297,6 +297,14 @@ func TestClosedStoreErrors(t *testing.T) {
 			_, err := st.GetAPI(api.ID())
 			return err
 		},
+		"import API": func() error {
+			_, err := st.ImportAPI(api, model.APIDefinition{}, nil, nil)
+			return err
+		},
+		"get API definition": func() error {
+			_, err := st.GetAPIDefinition(api.ID())
+			return err
+		},
 		"get policy": func() error {
 			_, err := st.GetPolicy("policy")
 			return err
@@ -381,8 +389,12 @@ func TestClosedStoreErrors(t *testing.T) {
 			_, err := st.UpsertDiagnostic(model.Diagnostic{})
 			return err
 		},
-		"get diagnostic":    func() error { _, err := st.GetDiagnostic("diagnostic"); return err },
-		"list diagnostics":  func() error { _, err := st.ListDiagnostics("service"); return err },
+		"get diagnostic":   func() error { _, err := st.GetDiagnostic("diagnostic"); return err },
+		"list diagnostics": func() error { _, err := st.ListDiagnostics("service"); return err },
+		"list service diagnostics": func() error {
+			_, err := st.ListServiceDiagnostics("service")
+			return err
+		},
 		"delete diagnostic": func() error { return st.DeleteDiagnostic("diagnostic") },
 		"add diagnostic event": func() error {
 			return st.AddDiagnosticEvent(model.DiagnosticEvent{})
@@ -1349,6 +1361,9 @@ func TestLoggerDiagnosticAndEventLifecycle(t *testing.T) {
 	if values, err := st.ListDiagnostics(strings.ToUpper(api.ID())); err != nil || len(values) != 1 {
 		t.Fatalf("ListDiagnostics = %+v, %v", values, err)
 	}
+	if values, err := st.ListServiceDiagnostics(strings.ToUpper(service.ID())); err != nil || len(values) != 1 {
+		t.Fatalf("ListServiceDiagnostics = %+v, %v", values, err)
+	}
 	if _, err := st.GetDiagnostic("missing"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("missing diagnostic = %v", err)
 	}
@@ -1454,6 +1469,128 @@ func TestDiagnosticTransactionFailures(t *testing.T) {
 	}
 	if err := st.DeleteAPI(api.ID()); err == nil {
 		t.Fatal("diagnostic cleanup trigger was ignored")
+	}
+}
+
+func TestImportedAPILifecycle(t *testing.T) {
+	st, err := Open("", clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	service, _ := st.UpsertService(model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "svc"})
+	api := model.API{ServiceID: service.ID(), Name: "imported", DisplayName: "Imported", Path: "/api/", ServiceURL: "https://backend", Protocols: []string{"https"}}
+	definition := model.APIDefinition{Format: "openapi+json", Value: `{}`, SourceURL: "https://source"}
+	operations := []model.Operation{{Name: "get", DisplayName: "Get", Method: "get", URLTemplate: "/items"}}
+	schema := &model.APISchema{ContentType: "application/json", Document: map[string]any{"components": map[string]any{"Item": map[string]any{"type": "object"}}}}
+	api, err = st.ImportAPI(api, definition, operations, schema)
+	if err != nil || api.ETag == "" || api.Revision != "1" || !api.IsCurrent || api.CreatedAt == 0 {
+		t.Fatalf("ImportAPI = %+v, %v", api, err)
+	}
+	gotDefinition, err := st.GetAPIDefinition(strings.ToUpper(api.ID()))
+	if err != nil || gotDefinition.Format != definition.Format || gotDefinition.Value != definition.Value || gotDefinition.ETag == "" {
+		t.Fatalf("GetAPIDefinition = %+v, %v", gotDefinition, err)
+	}
+	if _, err := st.GetAPIDefinition("missing"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing definition = %v", err)
+	}
+	if values, err := st.ListOperations(api.ID()); err != nil || len(values) != 1 || values[0].Method != "GET" {
+		t.Fatalf("operations = %+v, %v", values, err)
+	}
+	if values, err := st.ListAPISchemas(api.ID()); err != nil || len(values) != 1 || values[0].Name != "openapi" {
+		t.Fatalf("schemas = %+v, %v", values, err)
+	}
+	clone, err := st.CloneAPIRevision(api.ID(), model.API{ServiceID: service.ID(), Name: "imported;rev=2", DisplayName: "Imported", ServiceURL: "https://backend"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if clonedDefinition, err := st.GetAPIDefinition(clone.ID()); err != nil || clonedDefinition.Value != definition.Value {
+		t.Fatalf("cloned definition = %+v, %v", clonedDefinition, err)
+	}
+	created := api.CreatedAt
+	api.Revision = "1"
+	api.CreatedAt = created
+	api, err = st.ImportAPI(api, model.APIDefinition{Format: "openapi", Value: "updated"}, nil, nil)
+	if err != nil || api.CreatedAt != created {
+		t.Fatalf("updated import = %+v, %v", api, err)
+	}
+	if values, _ := st.ListOperations(api.ID()); len(values) != 0 {
+		t.Fatalf("operations not replaced = %+v", values)
+	}
+	if values, _ := st.ListAPISchemas(api.ID()); len(values) != 0 {
+		t.Fatalf("schema not replaced = %+v", values)
+	}
+	other, _ := st.UpsertService(model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "other"})
+	versionSet, _ := st.UpsertAPIVersionSet(model.APIVersionSet{ServiceID: other.ID(), Name: "versions"})
+	if _, err := st.ImportAPI(model.API{ServiceID: service.ID(), Name: "bad", Version: "v1", VersionSetID: versionSet.ID()}, definition, nil, nil); !errors.Is(err, ErrConflict) {
+		t.Fatalf("foreign version set = %v", err)
+	}
+	if _, err := st.ImportAPI(model.API{ServiceID: service.ID(), Name: "bad-schema"}, definition, nil, &model.APISchema{Document: map[string]any{"bad": make(chan int)}}); err == nil {
+		t.Fatal("unencodable schema imported")
+	}
+}
+
+func TestCloneAPIDefinitionFailure(t *testing.T) {
+	dir := t.TempDir()
+	st, err := Open(dir, clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	service, _ := st.UpsertService(model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "svc"})
+	api, _ := st.ImportAPI(model.API{ServiceID: service.ID(), Name: "api"}, model.APIDefinition{Value: "source"}, nil, nil)
+	db, err := sql.Open("sqlite", filepath.Join(dir, "azure-apim-emulator.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`CREATE TRIGGER reject_definition_clone BEFORE INSERT ON api_definitions BEGIN SELECT RAISE(FAIL, 'rejected'); END`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CloneAPIRevision(api.ID(), model.API{ServiceID: service.ID(), Name: "api;rev=2"}); err == nil {
+		t.Fatal("definition clone trigger was ignored")
+	}
+}
+
+func TestImportAPITransactionFailures(t *testing.T) {
+	tests := []struct {
+		name, trigger string
+		operations    []model.Operation
+		schema        *model.APISchema
+	}{
+		{"api", `CREATE TRIGGER reject BEFORE INSERT ON apis BEGIN SELECT RAISE(FAIL, 'rejected'); END`, nil, nil},
+		{"revision", `CREATE TRIGGER reject BEFORE INSERT ON api_revision_metadata BEGIN SELECT RAISE(FAIL, 'rejected'); END`, nil, nil},
+		{"version", `CREATE TRIGGER reject BEFORE INSERT ON api_version_metadata BEGIN SELECT RAISE(FAIL, 'rejected'); END`, nil, nil},
+		{"definition", `CREATE TRIGGER reject BEFORE INSERT ON api_definitions BEGIN SELECT RAISE(FAIL, 'rejected'); END`, nil, nil},
+		{"operation delete", `CREATE TRIGGER reject BEFORE DELETE ON operations BEGIN SELECT RAISE(FAIL, 'rejected'); END`, nil, nil},
+		{"operation insert", `CREATE TRIGGER reject BEFORE INSERT ON operations BEGIN SELECT RAISE(FAIL, 'rejected'); END`, []model.Operation{{Name: "new"}}, nil},
+		{"schema delete", `CREATE TRIGGER reject BEFORE DELETE ON api_schemas BEGIN SELECT RAISE(FAIL, 'rejected'); END`, nil, nil},
+		{"schema insert", `CREATE TRIGGER reject BEFORE INSERT ON api_schemas BEGIN SELECT RAISE(FAIL, 'rejected'); END`, nil, &model.APISchema{Document: map[string]any{}}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			dir := t.TempDir()
+			st, err := Open(dir, clock.New())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer st.Close()
+			service, _ := st.UpsertService(model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "svc"})
+			api, _ := st.UpsertAPI(model.API{ServiceID: service.ID(), Name: "api"})
+			_, _ = st.UpsertOperation(model.Operation{APIID: api.ID(), Name: "old"})
+			_, _ = st.UpsertAPISchema(model.APISchema{APIID: api.ID(), Name: "openapi", ContentType: "application/json", Document: map[string]any{}})
+			db, err := sql.Open("sqlite", filepath.Join(dir, "azure-apim-emulator.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+			if _, err := db.Exec(test.trigger); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := st.ImportAPI(api, model.APIDefinition{}, test.operations, test.schema); err == nil {
+				t.Fatal("triggered import succeeded")
+			}
+		})
 	}
 }
 

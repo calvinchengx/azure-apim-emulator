@@ -43,6 +43,15 @@ type API struct {
 	ETag                 string
 }
 
+// APIDefinition retains the source document used to import an API.
+type APIDefinition struct {
+	APIID     string
+	Format    string
+	Value     string
+	SourceURL string
+	ETag      string
+}
+
 // ID returns the API ARM resource ID.
 func (a API) ID() string { return a.ServiceID + "/apis/" + a.Name }
 

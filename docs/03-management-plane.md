@@ -87,6 +87,14 @@ Linked imports use a controlled HTTP fetcher with timeouts, size limits,
 redirect policy, TLS configuration, and emulator SSRF warnings. Tests use local
 fixture servers.
 
+The current P1 implementation accepts OpenAPI 2.0 and 3.x JSON/YAML inline or
+by HTTP(S) link, enforces a 4 MiB retrieval bound, and transactionally replaces
+the API, generated operations, imported component schema, and retained source.
+Exports regenerate canonical OpenAPI 3 YAML/JSON or Swagger 2 JSON and return a
+signed link that expires after five minutes on the controllable clock. Deeper
+OpenAPI semantic validation, imported representations and policies, redirect
+and SSRF controls, and the non-OpenAPI formats remain tracked parity work.
+
 ## SDK endpoint and authentication
 
 Management clients point to `https://management.azure.localhost:{port}` while
@@ -96,4 +104,3 @@ management plane validates signature, issuer, audience, lifetime, and principal.
 Default local authorization grants a valid ARM token full APIM access. Optional
 RBAC mode evaluates built-in/custom role assignments at subscription, resource
 group, service, and workspace scopes, including deny behavior observable by SDKs.
-

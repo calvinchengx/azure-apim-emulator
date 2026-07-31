@@ -8,16 +8,19 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"mime"
 	"net/http"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/calvinchengx/azure-apim-emulator/internal/auth"
 	certutil "github.com/calvinchengx/azure-apim-emulator/internal/certificate"
 	"github.com/calvinchengx/azure-apim-emulator/internal/model"
+	openapic "github.com/calvinchengx/azure-apim-emulator/internal/openapi"
 	"github.com/calvinchengx/azure-apim-emulator/internal/policy"
 	"github.com/calvinchengx/azure-apim-emulator/internal/store"
 )
@@ -31,6 +34,8 @@ type Handler struct {
 	Auth           auth.RequestValidator
 	Activate       func() error
 	ValidatePolicy func(string) error
+	ImportClient   *http.Client
+	ExportKey      []byte
 }
 
 // ServeHTTP routes APIM provider requests.
@@ -38,6 +43,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	requestID := store.NewOpaqueID()
 	w.Header().Set("x-ms-request-id", requestID)
 	w.Header().Set("x-ms-correlation-request-id", requestID)
+	if r.URL.Query().Get("export") == "download" {
+		h.apiExportDownload(w, r)
+		return
+	}
 	if _, err := h.Auth.ValidateRequest(r); err != nil {
 		writeError(w, http.StatusUnauthorized, "AuthenticationFailed", err.Error(), "")
 		return
@@ -1186,12 +1195,18 @@ type apiPayload struct {
 		SourceAPIID            *string   `json:"sourceApiId"`
 		APIVersion             *string   `json:"apiVersion"`
 		APIVersionSetID        *string   `json:"apiVersionSetId"`
+		Format                 *string   `json:"format"`
+		Value                  *string   `json:"value"`
 	} `json:"properties"`
 }
 
 func (h *Handler) apiResource(w http.ResponseWriter, r *http.Request, api model.API) {
 	switch r.Method {
 	case http.MethodGet:
+		if r.URL.Query().Get("export") == "true" {
+			h.apiExport(w, r, api)
+			return
+		}
 		got, err := h.Store.GetAPI(api.ID())
 		if err != nil {
 			h.storeError(w, err, api.ID())
@@ -1233,6 +1248,53 @@ func (h *Handler) apiResource(w http.ResponseWriter, r *http.Request, api model.
 			cloneSourceID = sourceID
 		}
 		applyAPIPayload(&api, body)
+		var imported *struct {
+			definition model.APIDefinition
+			operations []model.Operation
+			schema     *model.APISchema
+		}
+		if body.Properties.Format != nil {
+			if r.Method != http.MethodPut || body.Properties.Value == nil {
+				writeError(w, http.StatusBadRequest, "ValidationError", "format and value are required for API import.", "properties")
+				return
+			}
+			source, sourceURL, err := h.resolveImport(r, *body.Properties.Format, *body.Properties.Value)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, "ValidationError", err.Error(), "properties.value")
+				return
+			}
+			parsed, err := openapic.Parse(source)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, "ValidationError", err.Error(), "properties.value")
+				return
+			}
+			if body.Properties.DisplayName == nil {
+				api.DisplayName = parsed.Title
+			}
+			if body.Properties.ServiceURL == nil {
+				api.ServiceURL = parsed.ServiceURL
+			}
+			if body.Properties.Protocols == nil && api.ServiceURL != "" {
+				protocol := "http"
+				if parsedURL, err := url.Parse(api.ServiceURL); err == nil && parsedURL.Scheme == "https" {
+					protocol = "https"
+				}
+				api.Protocols = []string{protocol}
+			}
+			var schema *model.APISchema
+			if len(parsed.Schemas) != 0 {
+				contentType, key := "application/vnd.oai.openapi.components+json", "components"
+				if parsed.Version == "2.0" {
+					contentType, key = "application/vnd.ms-azure-apim.swagger.definitions+json", "definitions"
+				}
+				schema = &model.APISchema{ContentType: contentType, Document: map[string]any{key: parsed.Schemas}}
+			}
+			imported = &struct {
+				definition model.APIDefinition
+				operations []model.Operation
+				schema     *model.APISchema
+			}{model.APIDefinition{Format: *body.Properties.Format, Value: source, SourceURL: sourceURL}, parsed.Operations, schema}
+		}
 		if api.DisplayName == "" || api.ServiceURL == "" {
 			writeError(w, http.StatusBadRequest, "ValidationError", "displayName and serviceUrl are required.", "properties")
 			return
@@ -1243,7 +1305,9 @@ func (h *Handler) apiResource(w http.ResponseWriter, r *http.Request, api model.
 		}
 		var got model.API
 		var err error
-		if cloneSourceID != "" {
+		if imported != nil {
+			got, err = h.Store.ImportAPI(api, imported.definition, imported.operations, imported.schema)
+		} else if cloneSourceID != "" {
 			got, err = h.Store.CloneAPIRevision(cloneSourceID, api)
 		} else {
 			got, err = h.Store.UpsertAPI(api)
@@ -1274,6 +1338,132 @@ func (h *Handler) apiResource(w http.ResponseWriter, r *http.Request, api model.
 	default:
 		methodNotAllowed(w)
 	}
+}
+
+const maxImportBytes = 4 << 20
+
+func (h *Handler) resolveImport(r *http.Request, format, value string) (string, string, error) {
+	linked := format == "openapi-link" || format == "openapi+json-link" || format == "swagger-link-json"
+	if !linked {
+		if format != "openapi" && format != "openapi+json" && format != "swagger-json" {
+			return "", "", fmt.Errorf("unsupported import format %q", format)
+		}
+		if len(value) > maxImportBytes {
+			return "", "", errors.New("API definition exceeds the 4 MiB import limit")
+		}
+		return value, "", nil
+	}
+	sourceURL, err := url.Parse(value)
+	if err != nil || (sourceURL.Scheme != "http" && sourceURL.Scheme != "https") || sourceURL.Host == "" {
+		return "", "", errors.New("linked API definition must be an absolute HTTP or HTTPS URL")
+	}
+	client := h.ImportClient
+	if client == nil {
+		client = &http.Client{Timeout: 10 * time.Second}
+	}
+	request, _ := http.NewRequestWithContext(r.Context(), http.MethodGet, sourceURL.String(), nil)
+	response, err := client.Do(request)
+	if err != nil {
+		return "", "", fmt.Errorf("retrieve linked API definition: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return "", "", fmt.Errorf("linked API definition returned HTTP %d", response.StatusCode)
+	}
+	content, err := io.ReadAll(io.LimitReader(response.Body, maxImportBytes+1))
+	if err != nil {
+		return "", "", fmt.Errorf("read linked API definition: %w", err)
+	}
+	if len(content) > maxImportBytes {
+		return "", "", errors.New("API definition exceeds the 4 MiB import limit")
+	}
+	return string(content), sourceURL.String(), nil
+}
+
+func (h *Handler) apiExport(w http.ResponseWriter, r *http.Request, api model.API) {
+	got, err := h.Store.GetAPI(api.ID())
+	if err != nil {
+		h.storeError(w, err, api.ID())
+		return
+	}
+	format := r.URL.Query().Get("format")
+	_, resultFormat, _, err := h.renderAPIExport(got, format)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "ValidationError", err.Error(), "format")
+		return
+	}
+	expires := h.Store.Clock.Now() + 300
+	signature := h.exportSignature(got.ID(), format, expires)
+	query := url.Values{"api-version": {r.URL.Query().Get("api-version")}, "export": {"download"}, "format": {format}, "expires": {fmt.Sprint(expires)}, "sig": {signature}}
+	link := absolute(r, r.URL.Path+"?"+query.Encode())
+	writeJSON(w, http.StatusOK, map[string]any{"id": got.ID(), "format": resultFormat, "value": map[string]any{"link": link}})
+}
+
+func (h *Handler) apiExportDownload(w http.ResponseWriter, r *http.Request) {
+	version := r.URL.Query().Get("api-version")
+	parsed, ok := parse(split(r.URL.Path))
+	if !supportedVersions[version] || !ok || len(parsed.Tail) != 2 || !equal(parsed.Tail[0], "apis") {
+		writeError(w, http.StatusNotFound, "ResourceNotFound", "The API export was not found.", r.URL.Path)
+		return
+	}
+	expires, err := strconv.ParseInt(r.URL.Query().Get("expires"), 10, 64)
+	api := model.API{ServiceID: model.Service{SubscriptionID: parsed.SubscriptionID, ResourceGroup: parsed.ResourceGroup, Name: parsed.ServiceName}.ID(), Name: parsed.Tail[1]}
+	format := r.URL.Query().Get("format")
+	if err != nil || !hmac.Equal([]byte(r.URL.Query().Get("sig")), []byte(h.exportSignature(api.ID(), format, expires))) {
+		writeError(w, http.StatusForbidden, "AuthorizationFailed", "The API export link is invalid.", "sig")
+		return
+	}
+	if h.Store.Clock.Now() > expires {
+		writeError(w, http.StatusGone, "ExportExpired", "The API export link has expired.", "expires")
+		return
+	}
+	got, err := h.Store.GetAPI(api.ID())
+	if err != nil {
+		h.storeError(w, err, api.ID())
+		return
+	}
+	content, _, contentType, err := h.renderAPIExport(got, format)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "ValidationError", err.Error(), "format")
+		return
+	}
+	w.Header().Set("Content-Type", contentType)
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(content)
+}
+
+func (h *Handler) renderAPIExport(api model.API, format string) ([]byte, string, string, error) {
+	operations, err := h.Store.ListOperations(api.ID())
+	if err != nil {
+		return nil, "", "", err
+	}
+	schemas, err := h.Store.ListAPISchemas(api.ID())
+	if err != nil {
+		return nil, "", "", err
+	}
+	definitions := map[string]any{}
+	for _, schema := range schemas {
+		if schema.Name != "openapi" {
+			continue
+		}
+		if values, ok := schema.Document["components"].(map[string]any); ok {
+			definitions = values
+		}
+		if values, ok := schema.Document["definitions"].(map[string]any); ok {
+			definitions = values
+		}
+	}
+	return openapic.Export(api, operations, definitions, format)
+}
+
+func (h *Handler) exportSignature(apiID, format string, expires int64) string {
+	key := h.ExportKey
+	if len(key) == 0 {
+		key = []byte("azure-apim-emulator-local-export")
+	}
+	mac := hmac.New(sha256.New, key)
+	_, _ = fmt.Fprintf(mac, "%s\n%s\n%d", strings.ToLower(apiID), format, expires)
+	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 }
 
 func (h *Handler) revisionSource(id string) (model.API, string, error) {

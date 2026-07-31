@@ -82,6 +82,10 @@ CREATE TABLE IF NOT EXISTS api_revision_metadata (
   revision TEXT NOT NULL, description TEXT NOT NULL, is_current INTEGER NOT NULL,
   created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS api_definitions (
+  api_id TEXT PRIMARY KEY REFERENCES apis(id) ON DELETE CASCADE,
+  format TEXT NOT NULL, value TEXT NOT NULL, source_url TEXT NOT NULL, etag TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS api_version_sets (
   id TEXT PRIMARY KEY, service_id TEXT NOT NULL REFERENCES services(id) ON DELETE CASCADE,
   name TEXT NOT NULL, display_name TEXT NOT NULL, versioning_scheme TEXT NOT NULL,
@@ -359,6 +363,95 @@ func (s *Store) UpsertAPI(v model.API) (model.API, error) {
 	return v, tx.Commit()
 }
 
+// ImportAPI atomically replaces an API, its imported operations, schema, and retained definition.
+func (s *Store) ImportAPI(v model.API, definition model.APIDefinition, operations []model.Operation, schema *model.APISchema) (model.API, error) {
+	if err := s.validateAPIVersionSet(v); err != nil {
+		return v, err
+	}
+	v.ETag = newETag()
+	if v.Revision == "" {
+		_, v.Revision = splitRevision(v.Name)
+		v.IsCurrent = !strings.Contains(strings.ToLower(v.Name), ";rev=")
+	}
+	now := s.Clock.Now()
+	if v.CreatedAt == 0 {
+		v.CreatedAt = now
+	}
+	v.UpdatedAt = now
+	protocols, _ := json.Marshal(v.Protocols)
+	tx, err := s.db.Begin()
+	if err != nil {
+		return v, err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`INSERT INTO apis
+      (id, service_id, name, display_name, path, service_url, protocols_json, subscription_required, etag)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET
+        display_name=excluded.display_name, path=excluded.path, service_url=excluded.service_url,
+        protocols_json=excluded.protocols_json, subscription_required=excluded.subscription_required, etag=excluded.etag`,
+		v.ID(), v.ServiceID, v.Name, v.DisplayName, strings.Trim(v.Path, "/"), v.ServiceURL,
+		string(protocols), v.SubscriptionRequired, v.ETag); err != nil {
+		return v, err
+	}
+	if _, err := tx.Exec(`INSERT INTO api_revision_metadata
+      (api_id, revision, description, is_current, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(api_id) DO UPDATE SET revision=excluded.revision, description=excluded.description,
+        is_current=excluded.is_current, updated_at=excluded.updated_at`, v.ID(), v.Revision,
+		v.RevisionDescription, v.IsCurrent, v.CreatedAt, v.UpdatedAt); err != nil {
+		return v, err
+	}
+	if _, err := tx.Exec(`INSERT INTO api_version_metadata (api_id, version, version_set_id)
+      VALUES (?, ?, NULLIF(?, '')) ON CONFLICT(api_id) DO UPDATE SET
+        version=excluded.version, version_set_id=excluded.version_set_id`, v.ID(), v.Version, v.VersionSetID); err != nil {
+		return v, err
+	}
+	definition.APIID, definition.ETag = v.ID(), newETag()
+	if _, err := tx.Exec(`INSERT INTO api_definitions (api_id, format, value, source_url, etag)
+      VALUES (?, ?, ?, ?, ?) ON CONFLICT(api_id) DO UPDATE SET format=excluded.format,
+        value=excluded.value, source_url=excluded.source_url, etag=excluded.etag`, definition.APIID,
+		definition.Format, definition.Value, definition.SourceURL, definition.ETag); err != nil {
+		return v, err
+	}
+	if _, err := tx.Exec(`DELETE FROM operations WHERE lower(api_id)=lower(?)`, v.ID()); err != nil {
+		return v, err
+	}
+	for _, operation := range operations {
+		operation.APIID, operation.ETag = v.ID(), newETag()
+		if _, err := tx.Exec(`INSERT INTO operations
+          (id, api_id, name, display_name, method, url_template, etag) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			operation.APIID+"/operations/"+operation.Name, operation.APIID, operation.Name,
+			operation.DisplayName, strings.ToUpper(operation.Method), operation.URLTemplate, operation.ETag); err != nil {
+			return v, err
+		}
+	}
+	if _, err := tx.Exec(`DELETE FROM api_schemas WHERE lower(id)=lower(?)`, v.ID()+"/schemas/openapi"); err != nil {
+		return v, err
+	}
+	if schema != nil {
+		document, err := json.Marshal(schema.Document)
+		if err != nil {
+			return v, err
+		}
+		schema.APIID, schema.Name, schema.ETag = v.ID(), "openapi", newETag()
+		if _, err := tx.Exec(`INSERT INTO api_schemas (id, api_id, name, content_type, document_json, etag)
+          VALUES (?, ?, ?, ?, ?, ?)`, schema.ID(), schema.APIID, schema.Name, schema.ContentType, document, schema.ETag); err != nil {
+			return v, err
+		}
+	}
+	return v, tx.Commit()
+}
+
+// GetAPIDefinition returns the retained source document for an imported API.
+func (s *Store) GetAPIDefinition(apiID string) (model.APIDefinition, error) {
+	var v model.APIDefinition
+	err := s.db.QueryRow(`SELECT api_id, format, value, source_url, etag FROM api_definitions WHERE lower(api_id)=lower(?)`, apiID).
+		Scan(&v.APIID, &v.Format, &v.Value, &v.SourceURL, &v.ETag)
+	if errors.Is(err, sql.ErrNoRows) {
+		return model.APIDefinition{}, ErrNotFound
+	}
+	return v, err
+}
+
 // CloneAPIRevision atomically creates a revision and copies runtime-owned children.
 func (s *Store) CloneAPIRevision(sourceID string, v model.API) (model.API, error) {
 	if err := s.validateAPIVersionSet(v); err != nil {
@@ -402,6 +495,11 @@ func (s *Store) CloneAPIRevision(sourceID string, v model.API) (model.API, error
 	if _, err := tx.Exec(`INSERT INTO api_schemas (id, api_id, name, content_type, document_json, etag)
 	    SELECT ? || '/schemas/' || name, ?, name, content_type, document_json, ?
 	    FROM api_schemas WHERE lower(api_id)=lower(?)`, v.ID(), v.ID(), newETag(), sourceID); err != nil {
+		return v, err
+	}
+	if _, err := tx.Exec(`INSERT INTO api_definitions (api_id, format, value, source_url, etag)
+      SELECT ?, format, value, source_url, ? FROM api_definitions WHERE lower(api_id)=lower(?)`,
+		v.ID(), newETag(), sourceID); err != nil {
 		return v, err
 	}
 	if _, err := tx.Exec(`INSERT INTO resource_tags (resource_id, tag_id)
@@ -1546,6 +1644,13 @@ func (s *Store) ListDiagnostics(scopeID string) ([]model.Diagnostic, error) {
 	return scanDiagnostics(s.db.Query(`SELECT service_id, scope_id, name, logger_id, always_log,
       log_client_ip, verbosity, sampling_type, sampling_percentage, document_json, etag
       FROM diagnostics WHERE lower(scope_id)=lower(?) ORDER BY id`, scopeID))
+}
+
+// ListServiceDiagnostics returns every diagnostic owned by a service or its API children.
+func (s *Store) ListServiceDiagnostics(serviceID string) ([]model.Diagnostic, error) {
+	return scanDiagnostics(s.db.Query(`SELECT service_id, scope_id, name, logger_id, always_log,
+      log_client_ip, verbosity, sampling_type, sampling_percentage, document_json, etag
+      FROM diagnostics WHERE lower(service_id)=lower(?) ORDER BY id`, serviceID))
 }
 
 func scanDiagnostics(rows *sql.Rows, err error) ([]model.Diagnostic, error) {

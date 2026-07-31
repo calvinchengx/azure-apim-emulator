@@ -15,6 +15,7 @@ Snapshot date: 2026-07-31
 | official management SDKs | sdk-verified | P0-P1 | Go `v1.1.1`, JavaScript `10.0.0`, Python `5.0.0`, and .NET `1.3.1` service/API/operation/subscription plus protected-gateway workflows |
 | preview `2025-09-01-preview` | planned | P8 | isolated preview suite |
 | HTTP gateway and routing | implemented | P0-P1 | operation template, subscription, backend recorder integration test |
+| OpenAPI import/export | partial | P1/P5 | transactional OpenAPI 2.0 and 3.x JSON/YAML inline and linked import, retained source and revision cloning, deterministic operations/schema projection, signed five-minute OpenAPI 3/Swagger 2 export links, official Go `APIClient`/`APIOperationClient`/`APIExportClient` plus gateway integration; broader OpenAPI semantic validation, policy/representation import, WADL/WSDL/GraphQL/gRPC formats, and Azure differential fixtures pending |
 | policy XML/inheritance | partial | P0-P2 | API-scope XML round-trip/compiler, service-scoped `{{named-value}}` substitution including secrets, last-known-good activation, and structured traces; broader scope inheritance pending |
 | policy inventory | planned | P1-P2 | generated reference audit |
 | C# expression member inventory | planned | P2 | .NET vectors and Azure differential fuzzing |
