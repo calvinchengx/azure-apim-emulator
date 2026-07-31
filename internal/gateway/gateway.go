@@ -2,6 +2,7 @@
 package gateway
 
 import (
+	"bufio"
 	"bytes"
 	"crypto/tls"
 	"encoding/json"
@@ -24,6 +25,7 @@ import (
 	"github.com/calvinchengx/azure-apim-emulator/internal/model"
 	"github.com/calvinchengx/azure-apim-emulator/internal/policy"
 	"github.com/calvinchengx/azure-apim-emulator/internal/store"
+	"golang.org/x/net/websocket"
 )
 
 // Snapshot is the complete active gateway configuration.
@@ -378,6 +380,10 @@ func (r *Runtime) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		writePolicyResponse(w, state)
 		return
 	}
+	if isWebSocketRequest(req) {
+		r.serveWebSocket(w, req, state.BackendURL, state.Path)
+		return
+	}
 	client, err := backendHTTPClient(r.client, service, state.BackendID)
 	if err != nil {
 		r.policyFailure(w, req, route.Plan, state, err)
@@ -411,6 +417,106 @@ func (r *Runtime) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		_, _ = io.WriteString(w, state.Body)
 	} else {
 		writeGatewayBody(w, response)
+	}
+}
+
+func isWebSocketRequest(req *http.Request) bool {
+	if !strings.EqualFold(req.Header.Get("Upgrade"), "websocket") {
+		return false
+	}
+	for _, value := range strings.Split(req.Header.Get("Connection"), ",") {
+		if strings.EqualFold(strings.TrimSpace(value), "upgrade") {
+			return true
+		}
+	}
+	return false
+}
+
+func (r *Runtime) serveWebSocket(w http.ResponseWriter, req *http.Request, backend, path string) {
+	base, err := websocketBackendURL(backend, path, req.URL.RawQuery)
+	if err != nil {
+		gatewayError(w, http.StatusBadGateway, "BackendConnectionFailure", "The WebSocket backend URL is invalid.")
+		return
+	}
+	config, _ := websocket.NewConfig(base.String(), "http://"+base.Host)
+	config.Header = websocketHeaders(req.Header)
+	binary := strings.EqualFold(req.Header.Get("Sec-WebSocket-Protocol"), "binary")
+	if binary {
+		config.Protocol = []string{"binary"}
+	}
+	server := websocket.Server{Handler: websocket.Handler(func(client *websocket.Conn) {
+		if binary {
+			client.PayloadType = websocket.BinaryFrame
+		} else {
+			client.PayloadType = websocket.TextFrame
+		}
+		backendConfig := *config
+		backendConn, dialErr := websocket.DialConfig(&backendConfig)
+		if dialErr != nil {
+			_ = client.Close()
+			return
+		}
+		backendConn.PayloadType = client.PayloadType
+		defer backendConn.Close()
+		done := make(chan struct{}, 1)
+		go func() {
+			proxyWebSocketMessages(backendConn, client)
+			_ = backendConn.Close()
+			done <- struct{}{}
+		}()
+		proxyWebSocketMessages(client, backendConn)
+		_ = client.Close()
+		<-done
+	})}
+	server.ServeHTTP(w, req)
+}
+
+func websocketBackendURL(backend, path, query string) (*url.URL, error) {
+	base, err := url.Parse(backend)
+	if err != nil || base.Host == "" {
+		return nil, fmt.Errorf("invalid WebSocket backend URL")
+	}
+	switch base.Scheme {
+	case "http":
+		base.Scheme = "ws"
+	case "https":
+		base.Scheme = "wss"
+	case "ws", "wss":
+	default:
+		return nil, fmt.Errorf("unsupported WebSocket backend scheme %q", base.Scheme)
+	}
+	base.Path = strings.TrimRight(base.Path, "/") + "/" + strings.TrimLeft(path, "/")
+	base.RawQuery = query
+	return base, nil
+}
+
+func websocketHeaders(source http.Header) http.Header {
+	result := make(http.Header)
+	for name, values := range source {
+		lower := strings.ToLower(name)
+		if lower == "connection" || lower == "upgrade" || strings.HasPrefix(lower, "sec-websocket-") {
+			continue
+		}
+		result[name] = append([]string(nil), values...)
+	}
+	return result
+}
+
+func proxyWebSocketMessages(destination, source *websocket.Conn) {
+	for {
+		if source.PayloadType == websocket.TextFrame {
+			var message string
+			if err := websocket.Message.Receive(source, &message); err != nil {
+				return
+			}
+			_ = websocket.Message.Send(destination, message)
+			continue
+		}
+		var message []byte
+		if err := websocket.Message.Receive(source, &message); err != nil {
+			return
+		}
+		_ = websocket.Message.Send(destination, message)
 	}
 }
 
@@ -547,6 +653,20 @@ func parseAPIMDuration(value any, fallback time.Duration) time.Duration {
 type diagnosticWriter struct {
 	http.ResponseWriter
 	status int
+}
+
+func (w *diagnosticWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	hijacker, ok := w.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, fmt.Errorf("response writer does not support hijacking")
+	}
+	return hijacker.Hijack()
+}
+
+func (w *diagnosticWriter) Flush() {
+	if flusher, ok := w.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+	}
 }
 
 func (w *diagnosticWriter) WriteHeader(status int) {

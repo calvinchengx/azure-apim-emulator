@@ -44,7 +44,7 @@ Snapshot date: 2026-08-01
 | self-hosted/workspace gateways | planned | P4 | multi-process disconnect/config tests |
 | SOAP | planned | P5 | WSDL clients and Azure differential |
 | GraphQL | planned | P5 | real GraphQL clients and resolver fixtures |
-| WebSocket/SSE | partial | P1/P5 | SSE event-stream flushing and cancellation-compatible pass-through; WebSocket upgrade tunneling pending |
+| WebSocket/SSE | implemented | P1/P5 | SSE event-stream flushing, text/binary WebSocket upgrade tunneling, backend proxying, and cancellation-compatible pass-through |
 | gRPC | planned | P5 | generated clients and trailer/stream fixtures |
 | networking/private/custom domains | partial | P1/P6 | persisted custom-hostname routing with exact host precedence, backend TLS chain-validation/client-certificate behavior, retry execution, and local gateway reachability; private networking, custom-domain certificate/TLS state, and Azure differential fixtures pending |
 | tiers/SKUs/regions/deployment | planned | P6 | capability audit and tier fixtures |

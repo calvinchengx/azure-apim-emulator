@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"bufio"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -13,6 +14,7 @@ import (
 	"fmt"
 	"io"
 	"math/big"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -24,6 +26,7 @@ import (
 	"github.com/calvinchengx/azure-apim-emulator/internal/model"
 	"github.com/calvinchengx/azure-apim-emulator/internal/policy"
 	"github.com/calvinchengx/azure-apim-emulator/internal/store"
+	"golang.org/x/net/websocket"
 	"software.sslmate.com/src/go-pkcs12"
 )
 
@@ -346,6 +349,133 @@ func TestGatewayOperationAndSubscriptionRejections(t *testing.T) {
 	if missingSubscription.Code != http.StatusUnauthorized {
 		t.Fatalf("missing subscription = %d", missingSubscription.Code)
 	}
+}
+
+func TestWebSocketGatewayTunnel(t *testing.T) {
+	backendServer := websocket.Server{Handler: websocket.Handler(func(conn *websocket.Conn) {
+		if len(conn.Config().Protocol) > 0 && conn.Config().Protocol[0] == "binary" {
+			conn.PayloadType = websocket.BinaryFrame
+			var message []byte
+			if err := websocket.Message.Receive(conn, &message); err == nil {
+				_ = websocket.Message.Send(conn, message)
+			}
+			return
+		}
+		conn.PayloadType = websocket.TextFrame
+		var message string
+		if err := websocket.Message.Receive(conn, &message); err == nil {
+			_ = websocket.Message.Send(conn, message)
+		}
+	})}
+	backend := httptest.NewServer(backendServer)
+	defer backend.Close()
+	runtime := New("emulator", nil)
+	route := &Route{API: model.API{Name: "socket", Path: "socket", ServiceURL: backend.URL}, Operations: []model.Operation{{Method: http.MethodGet, URLTemplate: "/"}}}
+	runtime.current.Store(&Snapshot{Services: map[string]*Service{"emulator": {Name: "emulator", Routes: []*Route{route}}}})
+	front := httptest.NewServer(runtime)
+	defer front.Close()
+	frontURL := "ws" + strings.TrimPrefix(front.URL, "http") + "/socket"
+	conn, err := websocket.Dial(frontURL, "", "http://example.test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if err := websocket.Message.Send(conn, "hello"); err != nil {
+		t.Fatal(err)
+	}
+	var message string
+	if err := websocket.Message.Receive(conn, &message); err != nil || message != "hello" {
+		t.Fatalf("websocket echo = %q, %v", message, err)
+	}
+	time.Sleep(10 * time.Millisecond)
+	_ = websocket.Message.Send(conn, "after-close")
+	var ignored string
+	_ = websocket.Message.Receive(conn, &ignored)
+	binaryConn, err := websocket.Dial(frontURL, "binary", "http://example.test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer binaryConn.Close()
+	if err := websocket.Message.Send(binaryConn, []byte("bytes")); err != nil {
+		t.Fatal(err)
+	}
+	var binaryMessage []byte
+	if err := websocket.Message.Receive(binaryConn, &binaryMessage); err != nil || string(binaryMessage) != "bytes" {
+		t.Fatalf("binary websocket echo = %q, %v", binaryMessage, err)
+	}
+	closed := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	closedURL := closed.URL
+	closed.Close()
+	failedRuntime := New("emulator", nil)
+	failedRoute := &Route{API: model.API{Name: "socket", Path: "socket", ServiceURL: closedURL}, Operations: []model.Operation{{Method: http.MethodGet, URLTemplate: "/"}}}
+	failedRuntime.current.Store(&Snapshot{Services: map[string]*Service{"emulator": {Name: "emulator", Routes: []*Route{failedRoute}}}})
+	failedFront := httptest.NewServer(failedRuntime)
+	failedConn, err := websocket.Dial("ws"+strings.TrimPrefix(failedFront.URL, "http")+"/socket", "", "http://example.test")
+	if err == nil {
+		_ = failedConn.Close()
+	}
+	failedFront.Close()
+}
+
+func TestWebSocketRequestDetection(t *testing.T) {
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	if isWebSocketRequest(request) {
+		t.Fatal("ordinary request detected as WebSocket")
+	}
+	request.Header.Set("Upgrade", "websocket")
+	if isWebSocketRequest(request) {
+		t.Fatal("upgrade without connection token detected")
+	}
+	request.Header.Set("Connection", "keep-alive, Upgrade")
+	if !isWebSocketRequest(request) {
+		t.Fatal("WebSocket request not detected")
+	}
+	bad := httptest.NewRecorder()
+	New("emulator", nil).serveWebSocket(bad, request, "://invalid", "/")
+	if bad.Code != http.StatusBadGateway {
+		t.Fatalf("invalid WebSocket backend = %d", bad.Code)
+	}
+	for _, test := range []struct {
+		backend string
+		want    string
+	}{
+		{"http://backend.test/base", "ws://backend.test/base/items?q=1"},
+		{"https://backend.test", "wss://backend.test/items?q=1"},
+		{"ws://backend.test", "ws://backend.test/items?q=1"},
+	} {
+		got, err := websocketBackendURL(test.backend, "/items", "q=1")
+		if err != nil || got.String() != test.want {
+			t.Fatalf("WebSocket URL %q = %v, %v", test.backend, got, err)
+		}
+	}
+	if _, err := websocketBackendURL("ftp://backend.test", "/", ""); err == nil {
+		t.Fatal("unsupported WebSocket scheme accepted")
+	}
+}
+
+func TestDiagnosticWriterCapabilities(t *testing.T) {
+	unsupported := &diagnosticWriter{ResponseWriter: httptest.NewRecorder()}
+	if _, _, err := unsupported.Hijack(); err == nil {
+		t.Fatal("unsupported hijack succeeded")
+	}
+	unsupported.Flush()
+	left, right := net.Pipe()
+	defer left.Close()
+	defer right.Close()
+	supported := &diagnosticWriter{ResponseWriter: &hijackResponseWriter{conn: left}}
+	conn, _, err := supported.Hijack()
+	if err != nil || conn != left {
+		t.Fatalf("supported hijack = %v, %v", conn, err)
+	}
+}
+
+type hijackResponseWriter struct{ conn net.Conn }
+
+func (w *hijackResponseWriter) Header() http.Header             { return make(http.Header) }
+func (w *hijackResponseWriter) Write(value []byte) (int, error) { return len(value), nil }
+func (w *hijackResponseWriter) WriteHeader(int)                 {}
+func (w *hijackResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	return w.conn, bufio.NewReadWriter(bufio.NewReader(w.conn), bufio.NewWriter(w.conn)), nil
 }
 
 type flushWriter struct {
