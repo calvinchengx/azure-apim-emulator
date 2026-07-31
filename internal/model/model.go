@@ -144,6 +144,7 @@ type APISchema struct {
 	Name        string
 	ContentType string
 	Document    map[string]any
+	ARMDocument map[string]any
 	ETag        string
 }
 

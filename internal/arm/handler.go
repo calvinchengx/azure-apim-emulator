@@ -1214,7 +1214,8 @@ func (h *Handler) apiSchemaResource(w http.ResponseWriter, r *http.Request, valu
 				Document    map[string]any `json:"document"`
 			} `json:"properties"`
 		}
-		if err := decode(r, &body); err != nil {
+		var document map[string]any
+		if err := decodeDocument(r, &body, &document); err != nil {
 			writeError(w, http.StatusBadRequest, "InvalidRequestContent", err.Error(), "")
 			return
 		}
@@ -1222,7 +1223,8 @@ func (h *Handler) apiSchemaResource(w http.ResponseWriter, r *http.Request, valu
 			writeError(w, http.StatusBadRequest, "ValidationError", "properties.contentType must be a valid media type.", "properties.contentType")
 			return
 		}
-		value.ContentType, value.Document = body.Properties.ContentType, body.Properties.Document
+		value.ContentType, value.Document, value.ARMDocument = body.Properties.ContentType, body.Properties.Document, document
+		cleanResourceDocument(value.ARMDocument)
 		got, err := h.Store.UpsertAPISchema(value)
 		if err != nil {
 			h.storeError(w, err, value.ID())
@@ -3324,7 +3326,15 @@ func operationWire(v model.Operation) map[string]any {
 	return result
 }
 func apiSchemaWire(v model.APISchema) map[string]any {
-	return map[string]any{"id": v.ID(), "name": v.Name, "type": "Microsoft.ApiManagement/service/apis/schemas", "properties": map[string]any{"contentType": v.ContentType, "document": v.Document}}
+	result := cloneObject(v.ARMDocument)
+	result["id"], result["name"], result["type"] = v.ID(), v.Name, "Microsoft.ApiManagement/service/apis/schemas"
+	properties, ok := result["properties"].(map[string]any)
+	if !ok {
+		properties = map[string]any{}
+		result["properties"] = properties
+	}
+	properties["contentType"], properties["document"] = v.ContentType, v.Document
+	return result
 }
 func tagWire(v model.Tag) map[string]any {
 	result := cloneObject(v.Document)

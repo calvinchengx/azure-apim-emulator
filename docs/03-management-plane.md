@@ -100,6 +100,13 @@ name. Unknown metadata survives PUT, recursive PATCH, direct GET/list, and the
 API, operation, and product association projections. The official Go SDK
 witness covers the complete modeled tag lifecycle and every association type.
 
+API schemas retain their canonical ARM envelopes separately from the nested
+schema definition in `properties.document`. Unknown root and property metadata
+survives PUT, GET, list, OpenAPI import, and API revision cloning while resource
+identity, content type, and schema content remain authoritative. Companion
+writes and imports are transactional, legacy rows receive an empty envelope,
+and the official Go SDK witness verifies the typed components document.
+
 Policy fragments retain canonical documents with PUT replacement semantics.
 Unknown metadata survives GET/list while validated XML, description, requested
 wire format, and provisioning state remain authoritative. The JavaScript SDK

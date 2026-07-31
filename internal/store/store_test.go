@@ -605,7 +605,8 @@ func TestScanFunctionsRejectMalformedRows(t *testing.T) {
 		},
 		{
 			"API schemas",
-			`CREATE TABLE api_schemas (id, api_id, name, content_type, document_json, etag)`,
+			`CREATE TABLE api_schemas (id, api_id, name, content_type, document_json, etag);
+			 CREATE TABLE api_schema_documents (schema_id, document_json)`,
 			`INSERT INTO api_schemas VALUES ('id', 'api', NULL, '', '{}', '')`,
 			func(db *sql.DB) error { _, err := (&Store{db: db}).ListAPISchemas("api"); return err },
 		},
@@ -1667,6 +1668,7 @@ func TestCloneAPIRevisionTransactions(t *testing.T) {
 		{"operations", `CREATE TRIGGER reject_clone_operation BEFORE INSERT ON operations WHEN NEW.api_id LIKE '%;rev=2' BEGIN SELECT RAISE(FAIL, 'rejected'); END`},
 		{"operation documents", `CREATE TRIGGER reject_clone_operation_document BEFORE INSERT ON operation_documents WHEN NEW.operation_id LIKE '%;rev=2%' BEGIN SELECT RAISE(FAIL, 'rejected'); END`},
 		{"schemas", `CREATE TRIGGER reject_clone_schema BEFORE INSERT ON api_schemas WHEN NEW.api_id LIKE '%;rev=2' BEGIN SELECT RAISE(FAIL, 'rejected'); END`},
+		{"schema documents", `CREATE TRIGGER reject_clone_schema_document BEFORE INSERT ON api_schema_documents WHEN NEW.schema_id LIKE '%;rev=2%' BEGIN SELECT RAISE(FAIL, 'rejected'); END`},
 		{"policy", `CREATE TRIGGER reject_clone_policy BEFORE INSERT ON policies WHEN NEW.scope_id LIKE '%;rev=2' BEGIN SELECT RAISE(FAIL, 'rejected'); END`},
 		{"tags", `CREATE TRIGGER reject_clone_tag BEFORE INSERT ON resource_tags WHEN NEW.resource_id LIKE '%;rev=2%' BEGIN SELECT RAISE(FAIL, 'rejected'); END`},
 	} {
@@ -2072,7 +2074,7 @@ func TestImportedAPILifecycle(t *testing.T) {
 	api := model.API{ServiceID: service.ID(), Name: "imported", DisplayName: "Imported", Path: "/api/", ServiceURL: "https://backend", Protocols: []string{"https"}}
 	definition := model.APIDefinition{Format: "openapi+json", Value: `{}`, SourceURL: "https://source"}
 	operations := []model.Operation{{Name: "get", DisplayName: "Get", Method: "get", URLTemplate: "/items"}}
-	schema := &model.APISchema{ContentType: "application/json", Document: map[string]any{"components": map[string]any{"Item": map[string]any{"type": "object"}}}}
+	schema := &model.APISchema{ContentType: "application/json", Document: map[string]any{"components": map[string]any{"Item": map[string]any{"type": "object"}}}, ARMDocument: map[string]any{"properties": map[string]any{"custom": true}}}
 	api, err = st.ImportAPI(api, definition, operations, schema)
 	if err != nil || api.ETag == "" || api.Revision != "1" || !api.IsCurrent || api.CreatedAt == 0 {
 		t.Fatalf("ImportAPI = %+v, %v", api, err)
@@ -2087,7 +2089,7 @@ func TestImportedAPILifecycle(t *testing.T) {
 	if values, err := st.ListOperations(api.ID()); err != nil || len(values) != 1 || values[0].Method != "GET" {
 		t.Fatalf("operations = %+v, %v", values, err)
 	}
-	if values, err := st.ListAPISchemas(api.ID()); err != nil || len(values) != 1 || values[0].Name != "openapi" {
+	if values, err := st.ListAPISchemas(api.ID()); err != nil || len(values) != 1 || values[0].Name != "openapi" || values[0].ARMDocument["properties"].(map[string]any)["custom"] != true {
 		t.Fatalf("schemas = %+v, %v", values, err)
 	}
 	clone, err := st.CloneAPIRevision(api.ID(), model.API{ServiceID: service.ID(), Name: "imported;rev=2", DisplayName: "Imported", ServiceURL: "https://backend"})
@@ -2096,6 +2098,9 @@ func TestImportedAPILifecycle(t *testing.T) {
 	}
 	if clonedDefinition, err := st.GetAPIDefinition(clone.ID()); err != nil || clonedDefinition.Value != definition.Value {
 		t.Fatalf("cloned definition = %+v, %v", clonedDefinition, err)
+	}
+	if schemas, err := st.ListAPISchemas(clone.ID()); err != nil || len(schemas) != 1 || schemas[0].ARMDocument["properties"].(map[string]any)["custom"] != true {
+		t.Fatalf("cloned schemas = %+v, %v", schemas, err)
 	}
 	created := api.CreatedAt
 	api.Revision = "1"
@@ -2117,6 +2122,9 @@ func TestImportedAPILifecycle(t *testing.T) {
 	}
 	if _, err := st.ImportAPI(model.API{ServiceID: service.ID(), Name: "bad-schema"}, definition, nil, &model.APISchema{Document: map[string]any{"bad": make(chan int)}}); err == nil {
 		t.Fatal("unencodable schema imported")
+	}
+	if _, err := st.ImportAPI(model.API{ServiceID: service.ID(), Name: "bad-arm-schema"}, definition, nil, &model.APISchema{Document: map[string]any{}, ARMDocument: map[string]any{"bad": make(chan int)}}); err == nil {
+		t.Fatal("unencodable schema ARM document imported")
 	}
 }
 
@@ -2158,6 +2166,7 @@ func TestImportAPITransactionFailures(t *testing.T) {
 		{"operation document", `CREATE TRIGGER reject BEFORE INSERT ON operation_documents BEGIN SELECT RAISE(FAIL, 'rejected'); END`, []model.Operation{{Name: "new"}}, nil},
 		{"schema delete", `CREATE TRIGGER reject BEFORE DELETE ON api_schemas BEGIN SELECT RAISE(FAIL, 'rejected'); END`, nil, nil},
 		{"schema insert", `CREATE TRIGGER reject BEFORE INSERT ON api_schemas BEGIN SELECT RAISE(FAIL, 'rejected'); END`, nil, &model.APISchema{Document: map[string]any{}}},
+		{"schema document", `CREATE TRIGGER reject BEFORE INSERT ON api_schema_documents BEGIN SELECT RAISE(FAIL, 'rejected'); END`, nil, &model.APISchema{Document: map[string]any{}, ARMDocument: map[string]any{}}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -2227,16 +2236,16 @@ func TestAPISchemaLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	schema, err := st.UpsertAPISchema(model.APISchema{APIID: api.ID(), Name: "payload", ContentType: "application/json", Document: map[string]any{"definitions": map[string]any{"Item": map[string]any{"type": "object"}}}})
+	schema, err := st.UpsertAPISchema(model.APISchema{APIID: api.ID(), Name: "payload", ContentType: "application/json", Document: map[string]any{"definitions": map[string]any{"Item": map[string]any{"type": "object"}}}, ARMDocument: map[string]any{"properties": map[string]any{"custom": true}}})
 	if err != nil || schema.ID() != api.ID()+"/schemas/payload" || schema.ETag == "" {
 		t.Fatalf("schema = %+v, %v", schema, err)
 	}
 	got, err := st.GetAPISchema(strings.ToUpper(schema.ID()))
-	if err != nil || got.ContentType != "application/json" || got.Document["definitions"] == nil {
+	if err != nil || got.ContentType != "application/json" || got.Document["definitions"] == nil || got.ARMDocument["properties"].(map[string]any)["custom"] != true {
 		t.Fatalf("get schema = %+v, %v", got, err)
 	}
 	values, err := st.ListAPISchemas(api.ID())
-	if err != nil || len(values) != 1 {
+	if err != nil || len(values) != 1 || values[0].ARMDocument["properties"].(map[string]any)["custom"] != true {
 		t.Fatalf("list schemas = %+v, %v", values, err)
 	}
 	if err := st.DeleteAPISchema(schema.ID()); err != nil {
@@ -2247,6 +2256,58 @@ func TestAPISchemaLifecycle(t *testing.T) {
 	}
 	if err := st.DeleteAPISchema(schema.ID()); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("second delete = %v", err)
+	}
+}
+
+func TestUpsertAPISchemaTransactionErrors(t *testing.T) {
+	bad := make(chan int)
+	st, err := Open("", clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.UpsertAPISchema(model.APISchema{Document: map[string]any{"bad": bad}}); err == nil {
+		t.Fatal("schema document encoding succeeded")
+	}
+	if _, err := st.UpsertAPISchema(model.APISchema{Document: map[string]any{}, ARMDocument: map[string]any{"bad": bad}}); err == nil {
+		t.Fatal("schema ARM document encoding succeeded")
+	}
+	if err := st.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.UpsertAPISchema(model.APISchema{}); err == nil {
+		t.Fatal("schema transaction began on closed store")
+	}
+
+	dir := t.TempDir()
+	st, err = Open(dir, clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if _, err := st.UpsertAPISchema(model.APISchema{APIID: "missing", Name: "schema"}); err == nil {
+		t.Fatal("schema accepted missing API")
+	}
+	service, _ := st.UpsertService(model.Service{Name: "svc"})
+	api, _ := st.UpsertAPI(model.API{ServiceID: service.ID(), Name: "api"})
+	original, err := st.UpsertAPISchema(model.APISchema{APIID: api.ID(), Name: "schema", ContentType: "application/json", Document: map[string]any{"version": "original"}, ARMDocument: map[string]any{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", filepath.Join(dir, "azure-apim-emulator.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`CREATE TRIGGER reject_schema_document BEFORE INSERT ON api_schema_documents BEGIN SELECT RAISE(FAIL, 'rejected'); END`); err != nil {
+		t.Fatal(err)
+	}
+	original.Document = map[string]any{"version": "rejected"}
+	if _, err := st.UpsertAPISchema(original); err == nil {
+		t.Fatal("schema companion rejection succeeded")
+	}
+	got, err := st.GetAPISchema(original.ID())
+	if err != nil || got.Document["version"] != "original" {
+		t.Fatalf("schema rollback = %+v, %v", got, err)
 	}
 }
 

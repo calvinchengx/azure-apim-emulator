@@ -153,6 +153,10 @@ CREATE TABLE IF NOT EXISTS api_schemas (
   id TEXT PRIMARY KEY, api_id TEXT NOT NULL REFERENCES apis(id) ON DELETE CASCADE,
   name TEXT NOT NULL, content_type TEXT NOT NULL, document_json TEXT NOT NULL, etag TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS api_schema_documents (
+  schema_id TEXT PRIMARY KEY REFERENCES api_schemas(id) ON DELETE CASCADE,
+  document_json TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS tags (
   id TEXT PRIMARY KEY, service_id TEXT NOT NULL REFERENCES services(id) ON DELETE CASCADE,
   name TEXT NOT NULL, display_name TEXT NOT NULL, etag TEXT NOT NULL
@@ -504,9 +508,16 @@ func (s *Store) ImportAPI(v model.API, definition model.APIDefinition, operation
 		if err != nil {
 			return v, err
 		}
+		armDocument, err := json.Marshal(schema.ARMDocument)
+		if err != nil {
+			return v, err
+		}
 		schema.APIID, schema.Name, schema.ETag = v.ID(), "openapi", newETag()
 		if _, err := tx.Exec(`INSERT INTO api_schemas (id, api_id, name, content_type, document_json, etag)
-          VALUES (?, ?, ?, ?, ?, ?)`, schema.ID(), schema.APIID, schema.Name, schema.ContentType, document, schema.ETag); err != nil {
+	          VALUES (?, ?, ?, ?, ?, ?)`, schema.ID(), schema.APIID, schema.Name, schema.ContentType, document, schema.ETag); err != nil {
+			return v, err
+		}
+		if _, err := tx.Exec(`INSERT INTO api_schema_documents (schema_id, document_json) VALUES (?, ?)`, schema.ID(), armDocument); err != nil {
 			return v, err
 		}
 	}
@@ -578,8 +589,14 @@ func (s *Store) CloneAPIRevision(sourceID string, v model.API) (model.API, error
 		return v, err
 	}
 	if _, err := tx.Exec(`INSERT INTO api_schemas (id, api_id, name, content_type, document_json, etag)
-	    SELECT ? || '/schemas/' || name, ?, name, content_type, document_json, ?
-	    FROM api_schemas WHERE lower(api_id)=lower(?)`, v.ID(), v.ID(), newETag(), sourceID); err != nil {
+		    SELECT ? || '/schemas/' || name, ?, name, content_type, document_json, ?
+		    FROM api_schemas WHERE lower(api_id)=lower(?)`, v.ID(), v.ID(), newETag(), sourceID); err != nil {
+		return v, err
+	}
+	if _, err := tx.Exec(`INSERT INTO api_schema_documents (schema_id, document_json)
+		    SELECT ? || substr(schema_id, length(?) + 1), document_json
+		    FROM api_schema_documents WHERE lower(schema_id) LIKE lower(?)`,
+		v.ID(), sourceID, sourceID+"/schemas/%"); err != nil {
 		return v, err
 	}
 	if _, err := tx.Exec(`INSERT INTO api_definitions (api_id, format, value, source_url, etag)
@@ -995,33 +1012,55 @@ func (s *Store) DeleteBackend(id string) error { return deleteScopedResource(s.d
 
 // UpsertAPISchema creates or replaces an API schema.
 func (s *Store) UpsertAPISchema(v model.APISchema) (model.APISchema, error) {
+	document, err := json.Marshal(v.Document)
+	if err != nil {
+		return v, err
+	}
+	armDocument, err := json.Marshal(v.ARMDocument)
+	if err != nil {
+		return v, err
+	}
 	v.ETag = newETag()
-	document, _ := json.Marshal(v.Document)
-	_, err := s.db.Exec(`INSERT INTO api_schemas (id, api_id, name, content_type, document_json, etag)
+	tx, err := s.db.Begin()
+	if err != nil {
+		return v, err
+	}
+	defer tx.Rollback()
+	_, err = tx.Exec(`INSERT INTO api_schemas (id, api_id, name, content_type, document_json, etag)
         VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET content_type=excluded.content_type,
           document_json=excluded.document_json, etag=excluded.etag`,
 		v.ID(), v.APIID, v.Name, v.ContentType, string(document), v.ETag)
-	return v, err
+	if err != nil {
+		return v, err
+	}
+	if _, err := tx.Exec(`INSERT INTO api_schema_documents (schema_id, document_json) VALUES (?, ?)
+	    ON CONFLICT(schema_id) DO UPDATE SET document_json=excluded.document_json`, v.ID(), armDocument); err != nil {
+		return v, err
+	}
+	return v, tx.Commit()
 }
 
 // GetAPISchema finds one API schema.
 func (s *Store) GetAPISchema(id string) (model.APISchema, error) {
 	var v model.APISchema
-	var document string
-	err := s.db.QueryRow(`SELECT api_id, name, content_type, document_json, etag
-        FROM api_schemas WHERE lower(id)=lower(?)`, id).Scan(&v.APIID, &v.Name, &v.ContentType, &document, &v.ETag)
+	var document, armDocument string
+	err := s.db.QueryRow(`SELECT api_id, name, content_type, document_json, etag,
+		COALESCE((SELECT document_json FROM api_schema_documents WHERE lower(schema_id)=lower(api_schemas.id)), '{}')
+	        FROM api_schemas WHERE lower(id)=lower(?)`, id).Scan(&v.APIID, &v.Name, &v.ContentType, &document, &v.ETag, &armDocument)
 	if errors.Is(err, sql.ErrNoRows) {
 		return model.APISchema{}, ErrNotFound
 	}
 	if err == nil {
 		_ = json.Unmarshal([]byte(document), &v.Document)
+		_ = json.Unmarshal([]byte(armDocument), &v.ARMDocument)
 	}
 	return v, err
 }
 
 // ListAPISchemas returns schemas for an API in stable ID order.
 func (s *Store) ListAPISchemas(apiID string) ([]model.APISchema, error) {
-	rows, err := s.db.Query(`SELECT api_id, name, content_type, document_json, etag
+	rows, err := s.db.Query(`SELECT api_id, name, content_type, document_json, etag,
+		COALESCE((SELECT document_json FROM api_schema_documents WHERE lower(schema_id)=lower(api_schemas.id)), '{}')
         FROM api_schemas WHERE lower(api_id)=lower(?) ORDER BY id`, apiID)
 	if err != nil {
 		return nil, err
@@ -1030,11 +1069,12 @@ func (s *Store) ListAPISchemas(apiID string) ([]model.APISchema, error) {
 	values := make([]model.APISchema, 0)
 	for rows.Next() {
 		var v model.APISchema
-		var document string
-		if err := rows.Scan(&v.APIID, &v.Name, &v.ContentType, &document, &v.ETag); err != nil {
+		var document, armDocument string
+		if err := rows.Scan(&v.APIID, &v.Name, &v.ContentType, &document, &v.ETag, &armDocument); err != nil {
 			return nil, err
 		}
 		_ = json.Unmarshal([]byte(document), &v.Document)
+		_ = json.Unmarshal([]byte(armDocument), &v.ARMDocument)
 		values = append(values, v)
 	}
 	return values, rows.Err()

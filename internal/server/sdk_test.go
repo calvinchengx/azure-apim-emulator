@@ -697,8 +697,12 @@ func TestGoManagementSDKConfiguresProtectedGateway(t *testing.T) {
 		t.Fatal(err)
 	}
 	gotSchema, err := schemaClient.Get(ctx, defaultResourceGroup, "emulator", "go-sdk-full", "components", nil)
-	if err != nil || gotSchema.Properties == nil || gotSchema.Properties.ContentType == nil || *gotSchema.Properties.ContentType != schemaContentType {
+	if err != nil || gotSchema.Properties == nil || gotSchema.Properties.ContentType == nil || *gotSchema.Properties.ContentType != schemaContentType || gotSchema.Properties.Document == nil {
 		t.Fatalf("schema GET = %+v, %v", gotSchema, err)
+	}
+	components, ok := gotSchema.Properties.Document.Components.(map[string]any)
+	if !ok || components["schemas"] == nil {
+		t.Fatalf("schema document = %#v", gotSchema.Properties.Document.Components)
 	}
 	if entityTag, err := schemaClient.GetEntityTag(ctx, defaultResourceGroup, "emulator", "go-sdk-full", "components", nil); err != nil || entityTag.ETag == nil {
 		t.Fatalf("schema ETag = %+v, %v", entityTag, err)

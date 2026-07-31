@@ -1661,12 +1661,16 @@ func TestAPISchemaLifecycle(t *testing.T) {
 	assertStatus(t, handler, http.MethodGet, path, "", http.StatusNotFound)
 	assertStatus(t, handler, http.MethodPut, path, `{`, http.StatusBadRequest)
 	assertStatus(t, handler, http.MethodPut, path, `{"properties":{"contentType":"invalid"}}`, http.StatusBadRequest)
-	body := `{"properties":{"contentType":"application/vnd.oai.openapi.components+json","document":{"components":{"schemas":{"Item":{"type":"object","properties":{"id":{"type":"string"}}}}}}}}`
+	body := `{"id":"malicious","name":"malicious","type":"malicious","customRoot":{"retained":true},"properties":{"contentType":"application/vnd.oai.openapi.components+json","document":{"components":{"schemas":{"Item":{"type":"object","properties":{"id":{"type":"string"}}}}}},"customMetadata":{"owner":"sdk"}}}`
 	assertStatus(t, handler, http.MethodPut, path, body, http.StatusCreated)
-	assertStatus(t, handler, http.MethodPut, path, `{"properties":{"contentType":"application/json","document":{"definitions":{"Item":{"type":"string"}}}}}`, http.StatusOK)
 	got := request(t, handler, http.MethodGet, path, "")
-	if !strings.Contains(got.Body.String(), `"definitions":{"Item":{"type":"string"}}`) {
+	if !strings.Contains(got.Body.String(), `"customRoot":{"retained":true}`) || !strings.Contains(got.Body.String(), `"customMetadata":{"owner":"sdk"}`) || strings.Contains(got.Body.String(), `"id":"malicious"`) {
 		t.Fatalf("schema GET = %s", got.Body.String())
+	}
+	assertStatus(t, handler, http.MethodPut, path, `{"properties":{"contentType":"application/json","document":{"definitions":{"Item":{"type":"string"}}},"replacement":true}}`, http.StatusOK)
+	got = request(t, handler, http.MethodGet, path, "")
+	if !strings.Contains(got.Body.String(), `"definitions":{"Item":{"type":"string"}}`) || !strings.Contains(got.Body.String(), `"replacement":true`) || strings.Contains(got.Body.String(), "customRoot") {
+		t.Fatalf("replaced schema GET = %s", got.Body.String())
 	}
 	assertStatus(t, handler, http.MethodHead, path, "", http.StatusOK)
 	list := request(t, handler, http.MethodGet, collection, "")
@@ -1677,6 +1681,14 @@ func TestAPISchemaLifecycle(t *testing.T) {
 	assertStatus(t, handler, http.MethodPost, path, "", http.StatusMethodNotAllowed)
 	assertStatus(t, handler, http.MethodDelete, path, "", http.StatusNoContent)
 	assertStatus(t, handler, http.MethodDelete, path, "", http.StatusNoContent)
+}
+
+func TestAPISchemaDocumentFallback(t *testing.T) {
+	wire := apiSchemaWire(model.APISchema{APIID: "api", Name: "schema", ContentType: "application/json", Document: map[string]any{"type": "object"}, ARMDocument: map[string]any{"properties": "invalid"}})
+	properties, ok := wire["properties"].(map[string]any)
+	if !ok || properties["contentType"] != "application/json" || properties["document"] == nil {
+		t.Fatalf("schema wire = %#v", wire)
+	}
 }
 
 func testPKCS12(t *testing.T, password string) string {
