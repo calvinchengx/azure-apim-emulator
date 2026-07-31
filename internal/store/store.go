@@ -174,6 +174,10 @@ CREATE TABLE IF NOT EXISTS users (
   primary_key TEXT NOT NULL, secondary_key TEXT NOT NULL, etag TEXT NOT NULL,
   UNIQUE(service_id, email)
 );
+CREATE TABLE IF NOT EXISTS user_documents (
+  user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  document_json TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS group_users (
   group_id TEXT NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -1207,6 +1211,11 @@ func scanGroups(rows *sql.Rows, err error) ([]model.Group, error) {
 
 // UpsertUser creates or replaces a service user.
 func (s *Store) UpsertUser(v model.User) (model.User, error) {
+	sanitizeUserDocument(v.Document)
+	document, err := json.Marshal(v.Document)
+	if err != nil {
+		return v, err
+	}
 	if v.RegistrationAt == 0 {
 		v.RegistrationAt = s.Clock.Now()
 	}
@@ -1221,7 +1230,12 @@ func (s *Store) UpsertUser(v model.User) (model.User, error) {
 	}
 	v.ETag = newETag()
 	identities, _ := json.Marshal(v.Identities)
-	_, err := s.db.Exec(`INSERT INTO users
+	tx, err := s.db.Begin()
+	if err != nil {
+		return v, err
+	}
+	defer tx.Rollback()
+	_, err = tx.Exec(`INSERT INTO users
         (id, service_id, name, first_name, last_name, email, state, note, identities_json,
          registration_at, password, primary_key, secondary_key, etag)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET
@@ -1230,13 +1244,32 @@ func (s *Store) UpsertUser(v model.User) (model.User, error) {
           password=excluded.password, primary_key=excluded.primary_key, secondary_key=excluded.secondary_key,
           etag=excluded.etag`, v.ID(), v.ServiceID, v.Name, v.FirstName, v.LastName, v.Email,
 		v.State, v.Note, identities, v.RegistrationAt, v.Password, v.PrimaryKey, v.SecondaryKey, v.ETag)
-	return v, err
+	if err != nil {
+		return v, err
+	}
+	if _, err := tx.Exec(`INSERT INTO user_documents (user_id, document_json) VALUES (?, ?)
+	    ON CONFLICT(user_id) DO UPDATE SET document_json=excluded.document_json`, v.ID(), document); err != nil {
+		return v, err
+	}
+	return v, tx.Commit()
+}
+
+func sanitizeUserDocument(document map[string]any) {
+	delete(document, "password")
+	delete(document, "primaryKey")
+	delete(document, "secondaryKey")
+	properties, _ := document["properties"].(map[string]any)
+	delete(properties, "password")
+	delete(properties, "primaryKey")
+	delete(properties, "secondaryKey")
 }
 
 // GetUser finds one service user.
 func (s *Store) GetUser(id string) (model.User, error) {
 	values, err := scanUsers(s.db.Query(`SELECT service_id, name, first_name, last_name, email, state, note,
-        identities_json, registration_at, password, primary_key, secondary_key, etag FROM users WHERE lower(id)=lower(?)`, id))
+		identities_json, registration_at, password, primary_key, secondary_key, etag,
+		COALESCE((SELECT document_json FROM user_documents WHERE lower(user_id)=lower(users.id)), '{}')
+		FROM users WHERE lower(id)=lower(?)`, id))
 	if err != nil {
 		return model.User{}, err
 	}
@@ -1249,8 +1282,9 @@ func (s *Store) GetUser(id string) (model.User, error) {
 // ListUsers returns users for a service in stable ID order.
 func (s *Store) ListUsers(serviceID string) ([]model.User, error) {
 	return scanUsers(s.db.Query(`SELECT service_id, name, first_name, last_name, email, state, note,
-        identities_json, registration_at, password, primary_key, secondary_key, etag
-        FROM users WHERE lower(service_id)=lower(?) ORDER BY id`, serviceID))
+		identities_json, registration_at, password, primary_key, secondary_key, etag,
+		COALESCE((SELECT document_json FROM user_documents WHERE lower(user_id)=lower(users.id)), '{}')
+		FROM users WHERE lower(service_id)=lower(?) ORDER BY id`, serviceID))
 }
 
 // DeleteUser removes a user and its memberships.
@@ -1282,8 +1316,9 @@ func (s *Store) HasGroupUser(groupID, userID string) (bool, error) {
 // ListGroupUsers returns users associated with a group.
 func (s *Store) ListGroupUsers(groupID string) ([]model.User, error) {
 	return scanUsers(s.db.Query(`SELECT users.service_id, users.name, users.first_name, users.last_name,
-        users.email, users.state, users.note, users.identities_json, users.registration_at,
-        users.password, users.primary_key, users.secondary_key, users.etag FROM users
+		users.email, users.state, users.note, users.identities_json, users.registration_at,
+		users.password, users.primary_key, users.secondary_key, users.etag,
+		COALESCE((SELECT document_json FROM user_documents WHERE lower(user_id)=lower(users.id)), '{}') FROM users
         JOIN group_users ON lower(group_users.user_id)=lower(users.id)
         WHERE lower(group_users.group_id)=lower(?) ORDER BY users.id`, groupID))
 }
@@ -1305,12 +1340,13 @@ func scanUsers(rows *sql.Rows, err error) ([]model.User, error) {
 	values := make([]model.User, 0)
 	for rows.Next() {
 		var v model.User
-		var identities string
+		var identities, document string
 		if err := rows.Scan(&v.ServiceID, &v.Name, &v.FirstName, &v.LastName, &v.Email, &v.State,
-			&v.Note, &identities, &v.RegistrationAt, &v.Password, &v.PrimaryKey, &v.SecondaryKey, &v.ETag); err != nil {
+			&v.Note, &identities, &v.RegistrationAt, &v.Password, &v.PrimaryKey, &v.SecondaryKey, &v.ETag, &document); err != nil {
 			return nil, err
 		}
 		_ = json.Unmarshal([]byte(identities), &v.Identities)
+		_ = json.Unmarshal([]byte(document), &v.Document)
 		values = append(values, v)
 	}
 	return values, rows.Err()

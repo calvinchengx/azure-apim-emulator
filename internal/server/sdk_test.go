@@ -519,7 +519,7 @@ func TestGoManagementSDKConfiguresProtectedGateway(t *testing.T) {
 	if err != nil || updatedUser.Properties == nil || updatedUser.Properties.Note == nil || *updatedUser.Properties.Note != userNote {
 		t.Fatalf("user update = %+v, %v", updatedUser, err)
 	}
-	if gotUser, err := userClient.Get(ctx, defaultResourceGroup, "emulator", "go-sdk-user", nil); err != nil || gotUser.Properties == nil || len(gotUser.Properties.Identities) != 1 || gotUser.Properties.Identities[0].ID == nil || *gotUser.Properties.Identities[0].ID != identityID {
+	if gotUser, err := userClient.Get(ctx, defaultResourceGroup, "emulator", "go-sdk-user", nil); err != nil || gotUser.Properties == nil || gotUser.Properties.Note == nil || *gotUser.Properties.Note != userNote || len(gotUser.Properties.Identities) != 1 || gotUser.Properties.Identities[0].ID == nil || *gotUser.Properties.Identities[0].ID != identityID {
 		t.Fatalf("user GET = %+v, %v", gotUser, err)
 	}
 	if entityTag, err := userClient.GetEntityTag(ctx, defaultResourceGroup, "emulator", "go-sdk-user", nil); err != nil || entityTag.ETag == nil {

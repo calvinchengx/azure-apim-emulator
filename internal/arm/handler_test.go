@@ -1201,15 +1201,31 @@ func TestUserAndGroupMembershipBranches(t *testing.T) {
 	assertStatus(t, handler, http.MethodPut, userPath, `{`, http.StatusBadRequest)
 	assertStatus(t, handler, http.MethodPut, userPath, `{"properties":{}}`, http.StatusBadRequest)
 	assertStatus(t, handler, http.MethodPut, userPath, `{"properties":{"firstName":"Calvin","lastName":"Cheng","email":"calvin@example.test","state":"invalid"}}`, http.StatusBadRequest)
-	body := `{"properties":{"firstName":"Calvin","lastName":"Cheng","email":"calvin@example.test","state":"active","password":"secret","note":"initial","identities":[{"provider":"Azure","id":"object"}]}}`
+	body := `{"password":"root-secret","customRoot":{"retained":true},"properties":{"firstName":"Calvin","lastName":"Cheng","email":"calvin@example.test","state":"active","password":"secret","primaryKey":"injected-primary","secondaryKey":"injected-secondary","note":"initial","identities":[{"provider":"Azure","id":"object"}],"customMetadata":{"keep":"one","remove":"old"}}}`
 	assertStatus(t, handler, http.MethodPut, userPath, body, http.StatusCreated)
+	stored, err := st.GetUser(model.User{ServiceID: serviceModel().ID(), Name: "calvin"}.ID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	storedProperties := stored.Document["properties"].(map[string]any)
+	if stored.Document["password"] != nil || storedProperties["password"] != nil || storedProperties["primaryKey"] != nil || storedProperties["secondaryKey"] != nil || storedProperties["customMetadata"] == nil {
+		t.Fatalf("stored user document = %#v", stored.Document)
+	}
 	assertStatus(t, handler, http.MethodPut, userPath, body, http.StatusOK)
 	assertStatus(t, handler, http.MethodPatch, basePath+"/users/missing"+apiQuery, `{}`, http.StatusNotFound)
 	assertStatus(t, handler, http.MethodPatch, userPath, `{`, http.StatusBadRequest)
-	assertStatus(t, handler, http.MethodPatch, userPath, `{"properties":{"firstName":"Updated","state":"blocked"}}`, http.StatusOK)
+	assertStatus(t, handler, http.MethodPatch, userPath, `{"properties":{"firstName":"Updated","state":"blocked","customMetadata":{"add":"two","remove":null}}}`, http.StatusOK)
 	got := request(t, handler, http.MethodGet, userPath, "")
-	if !strings.Contains(got.Body.String(), `"firstName":"Updated"`) || !strings.Contains(got.Body.String(), `"provider":"Azure"`) || strings.Contains(got.Body.String(), "secret") || strings.Contains(got.Body.String(), "primaryKey") || got.Header().Get("ETag") == "" {
+	if !strings.Contains(got.Body.String(), `"firstName":"Updated"`) || !strings.Contains(got.Body.String(), `"provider":"Azure"`) || !strings.Contains(got.Body.String(), `"retained":true`) || !strings.Contains(got.Body.String(), `"keep":"one"`) || !strings.Contains(got.Body.String(), `"add":"two"`) || strings.Contains(got.Body.String(), "secret") || strings.Contains(got.Body.String(), "primaryKey") || strings.Contains(got.Body.String(), "secondaryKey") || strings.Contains(got.Body.String(), `"remove"`) || got.Header().Get("ETag") == "" {
 		t.Fatalf("user GET = %d %s", got.Code, got.Body.String())
+	}
+	for _, field := range []string{"firstName", "lastName", "email", "state"} {
+		assertStatus(t, handler, http.MethodPatch, userPath, `{"properties":{"`+field+`":null}}`, http.StatusBadRequest)
+	}
+	assertStatus(t, handler, http.MethodPatch, userPath, `{"properties":{"note":null,"identities":null}}`, http.StatusOK)
+	got = request(t, handler, http.MethodGet, userPath, "")
+	if !strings.Contains(got.Body.String(), `"note":""`) || !strings.Contains(got.Body.String(), `"identities":[]`) || strings.Contains(got.Body.String(), `"provider":"Azure"`) {
+		t.Fatalf("cleared user = %s", got.Body.String())
 	}
 	assertStatus(t, handler, http.MethodHead, userPath, "", http.StatusOK)
 	list := request(t, handler, http.MethodGet, collectionPath, "")
@@ -1230,7 +1246,7 @@ func TestUserAndGroupMembershipBranches(t *testing.T) {
 	assertStatus(t, handler, http.MethodPut, membership, "", http.StatusCreated)
 	assertStatus(t, handler, http.MethodPut, membership, "", http.StatusOK)
 	assertStatus(t, handler, http.MethodHead, membership, "", http.StatusNoContent)
-	if list := request(t, handler, http.MethodGet, groupUsers, ""); !strings.Contains(list.Body.String(), `"count":1`) {
+	if list := request(t, handler, http.MethodGet, groupUsers, ""); !strings.Contains(list.Body.String(), `"count":1`) || !strings.Contains(list.Body.String(), `"retained":true`) || strings.Contains(list.Body.String(), "secret") {
 		t.Fatalf("group users = %s", list.Body.String())
 	}
 	if list := request(t, handler, http.MethodGet, basePath+"/users/calvin/groups"+apiQuery, ""); !strings.Contains(list.Body.String(), `"count":1`) {
@@ -1258,6 +1274,24 @@ func TestUserAndGroupMembershipBranches(t *testing.T) {
 	assertStatus(t, handler, http.MethodDelete, membership, "", http.StatusNoContent)
 	assertStatus(t, handler, http.MethodDelete, userPath, "", http.StatusNoContent)
 	assertStatus(t, handler, http.MethodDelete, userPath, "", http.StatusNoContent)
+}
+
+func TestUserDocumentFallbacks(t *testing.T) {
+	wire := userWire(model.User{Name: "invalid", Document: map[string]any{"properties": "invalid", "password": "secret"}})
+	if _, ok := wire["properties"].(map[string]any); !ok || wire["password"] != nil {
+		t.Fatalf("user wire = %#v", wire)
+	}
+
+	handler, st := testHandler(t)
+	seedService(t, st)
+	user := model.User{ServiceID: serviceModel().ID(), Name: "legacy", FirstName: "Legacy", LastName: "User", Email: "legacy@example.test", State: "active"}
+	if _, err := st.UpsertUser(user); err != nil {
+		t.Fatal(err)
+	}
+	response := request(t, handler, http.MethodPatch, basePath+"/users/legacy"+apiQuery, `{"properties":{"note":"hydrated"}}`)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"note":"hydrated"`) {
+		t.Fatalf("legacy user PATCH = %d %s", response.Code, response.Body.String())
+	}
 }
 
 func TestPolicyFragmentBranches(t *testing.T) {

@@ -960,10 +960,21 @@ func (h *Handler) user(w http.ResponseWriter, r *http.Request, rt route) {
 				Identities *[]model.UserIdentity `json:"identities"`
 			} `json:"properties"`
 		}
-		if err := decode(r, &body); err != nil {
+		var document map[string]any
+		if err := decodeDocument(r, &body, &document); err != nil {
 			writeError(w, http.StatusBadRequest, "InvalidRequestContent", err.Error(), "")
 			return
 		}
+		if r.Method == http.MethodPatch {
+			if value.Document == nil {
+				value.Document = userWire(value)
+			}
+			mergeObject(value.Document, document)
+		} else {
+			value.Document = document
+		}
+		cleanResourceDocument(value.Document)
+		sanitizeUserDocument(value.Document)
 		if body.Properties.FirstName != nil {
 			value.FirstName = *body.Properties.FirstName
 		}
@@ -985,6 +996,7 @@ func (h *Handler) user(w http.ResponseWriter, r *http.Request, rt route) {
 		if body.Properties.Identities != nil {
 			value.Identities = *body.Properties.Identities
 		}
+		clearNullUserProperties(&value, document)
 		if strings.TrimSpace(value.FirstName) == "" || strings.TrimSpace(value.LastName) == "" || strings.TrimSpace(value.Email) == "" {
 			writeError(w, http.StatusBadRequest, "ValidationError", "firstName, lastName, and email are required.", "properties")
 			return
@@ -3203,7 +3215,53 @@ func userWire(v model.User) map[string]any {
 	for _, identity := range v.Identities {
 		identities = append(identities, map[string]any{"provider": identity.Provider, "id": identity.ID})
 	}
-	return map[string]any{"id": v.ID(), "name": v.Name, "type": "Microsoft.ApiManagement/service/users", "properties": map[string]any{"firstName": v.FirstName, "lastName": v.LastName, "email": v.Email, "state": v.State, "note": v.Note, "identities": identities, "registrationDate": time.Unix(v.RegistrationAt, 0).UTC().Format(time.RFC3339)}}
+	result := cloneObject(v.Document)
+	result["id"], result["name"], result["type"] = v.ID(), v.Name, "Microsoft.ApiManagement/service/users"
+	delete(result, "password")
+	delete(result, "primaryKey")
+	delete(result, "secondaryKey")
+	properties, ok := result["properties"].(map[string]any)
+	if !ok {
+		properties = map[string]any{}
+		result["properties"] = properties
+	}
+	delete(properties, "password")
+	delete(properties, "primaryKey")
+	delete(properties, "secondaryKey")
+	properties["firstName"], properties["lastName"], properties["email"] = v.FirstName, v.LastName, v.Email
+	properties["state"], properties["note"], properties["identities"] = v.State, v.Note, identities
+	properties["registrationDate"] = time.Unix(v.RegistrationAt, 0).UTC().Format(time.RFC3339)
+	return result
+}
+func sanitizeUserDocument(document map[string]any) {
+	delete(document, "password")
+	delete(document, "primaryKey")
+	delete(document, "secondaryKey")
+	properties, _ := document["properties"].(map[string]any)
+	delete(properties, "password")
+	delete(properties, "primaryKey")
+	delete(properties, "secondaryKey")
+}
+func clearNullUserProperties(value *model.User, patch map[string]any) {
+	properties, _ := patch["properties"].(map[string]any)
+	if field, present := properties["firstName"]; present && field == nil {
+		value.FirstName = ""
+	}
+	if field, present := properties["lastName"]; present && field == nil {
+		value.LastName = ""
+	}
+	if field, present := properties["email"]; present && field == nil {
+		value.Email = ""
+	}
+	if field, present := properties["state"]; present && field == nil {
+		value.State = ""
+	}
+	if field, present := properties["note"]; present && field == nil {
+		value.Note = ""
+	}
+	if field, present := properties["identities"]; present && field == nil {
+		value.Identities = nil
+	}
 }
 func policyFragmentWire(v model.PolicyFragment, format string) map[string]any {
 	if format != "xml" && format != "rawxml" {

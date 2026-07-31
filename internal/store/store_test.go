@@ -641,13 +641,15 @@ func TestScanFunctionsRejectMalformedRows(t *testing.T) {
 		},
 		{
 			"users",
-			`CREATE TABLE users (service_id, name, first_name, last_name, email, state, note, identities_json, registration_at, password, primary_key, secondary_key, etag)`,
-			`INSERT INTO users VALUES ('service', NULL, '', '', '', '', '', '[]', 0, '', '', '', '')`,
+			`CREATE TABLE users (id, service_id, name, first_name, last_name, email, state, note, identities_json, registration_at, password, primary_key, secondary_key, etag);
+			 CREATE TABLE user_documents (user_id, document_json)`,
+			`INSERT INTO users VALUES ('user', 'service', NULL, '', '', '', '', '', '[]', 0, '', '', '', '')`,
 			func(db *sql.DB) error { _, err := (&Store{db: db}).ListUsers("service"); return err },
 		},
 		{
 			"group users",
 			`CREATE TABLE users (id, service_id, name, first_name, last_name, email, state, note, identities_json, registration_at, password, primary_key, secondary_key, etag);
+			 CREATE TABLE user_documents (user_id, document_json);
 			 CREATE TABLE group_users (group_id, user_id)`,
 			`INSERT INTO users VALUES ('user', 'service', NULL, '', '', '', '', '', '[]', 0, '', '', '', '');
 			 INSERT INTO group_users VALUES ('group', 'user')`,
@@ -731,6 +733,57 @@ func TestScanFunctionsRejectMalformedRows(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestUpsertUserTransactionErrors(t *testing.T) {
+	t.Run("document encoding", func(t *testing.T) {
+		st, err := Open("", clock.New())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer st.Close()
+		if _, err := st.UpsertUser(model.User{Document: map[string]any{"bad": make(chan int)}}); err == nil {
+			t.Fatal("user accepted an unsupported document")
+		}
+	})
+	t.Run("begin", func(t *testing.T) {
+		st, err := Open("", clock.New())
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = st.Close()
+		if _, err := st.UpsertUser(model.User{}); err == nil {
+			t.Fatal("closed store accepted a user")
+		}
+	})
+	t.Run("user row", func(t *testing.T) {
+		st, err := Open("", clock.New())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer st.Close()
+		if _, err := st.UpsertUser(model.User{ServiceID: "/missing", Name: "user"}); err == nil {
+			t.Fatal("user with a missing service was accepted")
+		}
+	})
+	t.Run("document row", func(t *testing.T) {
+		st, err := Open("", clock.New())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer st.Close()
+		service, _ := st.UpsertService(model.Service{Name: "svc"})
+		if _, err := st.db.Exec(`CREATE TRIGGER reject_user_document BEFORE INSERT ON user_documents BEGIN SELECT RAISE(FAIL, 'rejected'); END`); err != nil {
+			t.Fatal(err)
+		}
+		user := model.User{ServiceID: service.ID(), Name: "user"}
+		if _, err := st.UpsertUser(user); err == nil {
+			t.Fatal("rejected user document was accepted")
+		}
+		if _, err := st.GetUser(user.ID()); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("user transaction was not rolled back: %v", err)
+		}
+	})
 }
 
 func TestUpsertPolicyFragmentTransactionErrors(t *testing.T) {
@@ -1090,9 +1143,9 @@ func TestUserAndGroupMemberships(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	user := model.User{ServiceID: service.ID(), Name: "calvin", FirstName: "Calvin", LastName: "Cheng", Email: "calvin@example.test", State: "active", Identities: []model.UserIdentity{{Provider: "Azure", ID: "object"}}}
+	user := model.User{ServiceID: service.ID(), Name: "calvin", FirstName: "Calvin", LastName: "Cheng", Email: "calvin@example.test", State: "active", Identities: []model.UserIdentity{{Provider: "Azure", ID: "object"}}, Document: map[string]any{"password": "root", "primaryKey": "root-key", "secondaryKey": "root-key-2", "custom": true, "properties": map[string]any{"password": "nested", "primaryKey": "nested-key", "secondaryKey": "nested-key-2"}}}
 	user, err = st.UpsertUser(user)
-	if err != nil || user.ETag == "" || user.RegistrationAt == 0 || user.Password == "" || user.PrimaryKey == "" || user.SecondaryKey == "" {
+	if err != nil || user.ETag == "" || user.RegistrationAt == 0 || user.Password == "" || user.PrimaryKey == "" || user.SecondaryKey == "" || user.Document["password"] != nil || user.Document["custom"] != true {
 		t.Fatalf("UpsertUser = %+v, %v", user, err)
 	}
 	updated := user
@@ -1102,7 +1155,7 @@ func TestUserAndGroupMemberships(t *testing.T) {
 		t.Fatalf("updated user = %+v, %v", updated, err)
 	}
 	got, err := st.GetUser(strings.ToUpper(user.ID()))
-	if err != nil || len(got.Identities) != 1 || got.Identities[0].ID != "object" {
+	if err != nil || len(got.Identities) != 1 || got.Identities[0].ID != "object" || got.Document["password"] != nil || got.Document["properties"].(map[string]any)["primaryKey"] != nil {
 		t.Fatalf("GetUser = %+v, %v", got, err)
 	}
 	if _, err := st.GetUser("/missing"); !errors.Is(err, ErrNotFound) {

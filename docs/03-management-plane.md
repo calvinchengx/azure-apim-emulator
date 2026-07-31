@@ -112,6 +112,15 @@ PATCH recursively merges it with explicit note clearing, and resolved target
 IDs plus server-managed creation/update timestamps remain authoritative. The
 official Go SDK witness verifies update persistence with a subsequent GET.
 
+Users retain canonical documents transactionally across direct, list, and
+group-membership projections. PUT replaces extension data and PATCH recursively
+merges it with nullable note/identity clearing. Password and primary/secondary
+key fields are removed at both the handler and store boundaries and again from
+wire projections; generated credentials remain only in secret columns used by
+SSO and shared-access-token operations. The official Go SDK witness covers the
+modeled lifecycle and verifies updated notes and identities with a subsequent
+GET.
+
 ## Common ARM semantics
 
 Implement centrally and test across resources:

@@ -197,6 +197,7 @@ type User struct {
 	PrimaryKey     string
 	SecondaryKey   string
 	ETag           string
+	Document       map[string]any
 }
 
 // ID returns the user ARM resource ID.
