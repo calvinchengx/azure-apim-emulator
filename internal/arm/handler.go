@@ -523,10 +523,20 @@ func (h *Handler) tag(w http.ResponseWriter, r *http.Request, rt route) {
 				DisplayName *string `json:"displayName"`
 			} `json:"properties"`
 		}
-		if err := decode(r, &body); err != nil {
+		var document map[string]any
+		if err := decodeDocument(r, &body, &document); err != nil {
 			writeError(w, http.StatusBadRequest, "InvalidRequestContent", err.Error(), "")
 			return
 		}
+		if r.Method == http.MethodPatch {
+			if value.Document == nil {
+				value.Document = tagWire(value)
+			}
+			mergeObject(value.Document, document)
+		} else {
+			value.Document = document
+		}
+		cleanResourceDocument(value.Document)
 		if body.Properties.DisplayName != nil {
 			value.DisplayName = *body.Properties.DisplayName
 		}
@@ -3139,7 +3149,15 @@ func apiSchemaWire(v model.APISchema) map[string]any {
 	return map[string]any{"id": v.ID(), "name": v.Name, "type": "Microsoft.ApiManagement/service/apis/schemas", "properties": map[string]any{"contentType": v.ContentType, "document": v.Document}}
 }
 func tagWire(v model.Tag) map[string]any {
-	return map[string]any{"id": v.ID(), "name": v.Name, "type": "Microsoft.ApiManagement/service/tags", "properties": map[string]any{"displayName": v.DisplayName}}
+	result := cloneObject(v.Document)
+	result["id"], result["name"], result["type"] = v.ID(), v.Name, "Microsoft.ApiManagement/service/tags"
+	properties, ok := result["properties"].(map[string]any)
+	if !ok {
+		properties = map[string]any{}
+		result["properties"] = properties
+	}
+	properties["displayName"] = v.DisplayName
+	return result
 }
 func groupWire(v model.Group) map[string]any {
 	result := cloneObject(v.Document)

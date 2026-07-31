@@ -145,6 +145,10 @@ CREATE TABLE IF NOT EXISTS tags (
   id TEXT PRIMARY KEY, service_id TEXT NOT NULL REFERENCES services(id) ON DELETE CASCADE,
   name TEXT NOT NULL, display_name TEXT NOT NULL, etag TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS tag_documents (
+  tag_id TEXT PRIMARY KEY REFERENCES tags(id) ON DELETE CASCADE,
+  document_json TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS resource_tags (
   resource_id TEXT NOT NULL, tag_id TEXT NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
   PRIMARY KEY (resource_id, tag_id)
@@ -972,26 +976,50 @@ func (s *Store) DeleteAPISchema(id string) error {
 // UpsertTag creates or replaces a service tag.
 func (s *Store) UpsertTag(v model.Tag) (model.Tag, error) {
 	v.ETag = newETag()
-	_, err := s.db.Exec(`INSERT INTO tags (id, service_id, name, display_name, etag) VALUES (?, ?, ?, ?, ?)
+	document, err := json.Marshal(v.Document)
+	if err != nil {
+		return v, err
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return v, err
+	}
+	defer tx.Rollback()
+	_, err = tx.Exec(`INSERT INTO tags (id, service_id, name, display_name, etag) VALUES (?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET display_name=excluded.display_name, etag=excluded.etag`,
 		v.ID(), v.ServiceID, v.Name, v.DisplayName, v.ETag)
-	return v, err
+	if err != nil {
+		return v, err
+	}
+	if _, err := tx.Exec(`INSERT INTO tag_documents (tag_id, document_json) VALUES (?, ?)
+	    ON CONFLICT(tag_id) DO UPDATE SET document_json=excluded.document_json`, v.ID(), document); err != nil {
+		return v, err
+	}
+	return v, tx.Commit()
 }
 
 // GetTag finds one service tag.
 func (s *Store) GetTag(id string) (model.Tag, error) {
 	var v model.Tag
-	err := s.db.QueryRow(`SELECT service_id, name, display_name, etag FROM tags WHERE lower(id)=lower(?)`, id).
-		Scan(&v.ServiceID, &v.Name, &v.DisplayName, &v.ETag)
+	var document string
+	err := s.db.QueryRow(`SELECT service_id, name, display_name, etag,
+	    COALESCE((SELECT document_json FROM tag_documents WHERE lower(tag_id)=lower(tags.id)), '{}')
+	    FROM tags WHERE lower(id)=lower(?)`, id).
+		Scan(&v.ServiceID, &v.Name, &v.DisplayName, &v.ETag, &document)
 	if errors.Is(err, sql.ErrNoRows) {
 		return model.Tag{}, ErrNotFound
+	}
+	if err == nil {
+		_ = json.Unmarshal([]byte(document), &v.Document)
 	}
 	return v, err
 }
 
 // ListTags returns tags for a service in stable ID order.
 func (s *Store) ListTags(serviceID string) ([]model.Tag, error) {
-	return scanTags(s.db.Query(`SELECT service_id, name, display_name, etag FROM tags WHERE lower(service_id)=lower(?) ORDER BY id`, serviceID))
+	return scanTags(s.db.Query(`SELECT service_id, name, display_name, etag,
+	    COALESCE((SELECT document_json FROM tag_documents WHERE lower(tag_id)=lower(tags.id)), '{}')
+	    FROM tags WHERE lower(service_id)=lower(?) ORDER BY id`, serviceID))
 }
 
 // DeleteTag removes a tag and all associations.
@@ -1012,7 +1040,8 @@ func (s *Store) DetachTag(resourceID, tagID string) error {
 
 // GetResourceTag returns one associated tag.
 func (s *Store) GetResourceTag(resourceID, tagID string) (model.Tag, error) {
-	values, err := scanTags(s.db.Query(`SELECT tags.service_id, tags.name, tags.display_name, tags.etag
+	values, err := scanTags(s.db.Query(`SELECT tags.service_id, tags.name, tags.display_name, tags.etag,
+	    COALESCE((SELECT document_json FROM tag_documents WHERE lower(tag_id)=lower(tags.id)), '{}')
         FROM tags JOIN resource_tags ON lower(resource_tags.tag_id)=lower(tags.id)
         WHERE lower(resource_tags.resource_id)=lower(?) AND lower(tags.id)=lower(?)`, resourceID, tagID))
 	if err != nil {
@@ -1026,7 +1055,8 @@ func (s *Store) GetResourceTag(resourceID, tagID string) (model.Tag, error) {
 
 // ListResourceTags returns associated tags in stable ID order.
 func (s *Store) ListResourceTags(resourceID string) ([]model.Tag, error) {
-	return scanTags(s.db.Query(`SELECT tags.service_id, tags.name, tags.display_name, tags.etag
+	return scanTags(s.db.Query(`SELECT tags.service_id, tags.name, tags.display_name, tags.etag,
+	    COALESCE((SELECT document_json FROM tag_documents WHERE lower(tag_id)=lower(tags.id)), '{}')
         FROM tags JOIN resource_tags ON lower(resource_tags.tag_id)=lower(tags.id)
         WHERE lower(resource_tags.resource_id)=lower(?) ORDER BY tags.id`, resourceID))
 }
@@ -1039,9 +1069,11 @@ func scanTags(rows *sql.Rows, err error) ([]model.Tag, error) {
 	values := make([]model.Tag, 0)
 	for rows.Next() {
 		var v model.Tag
-		if err := rows.Scan(&v.ServiceID, &v.Name, &v.DisplayName, &v.ETag); err != nil {
+		var document string
+		if err := rows.Scan(&v.ServiceID, &v.Name, &v.DisplayName, &v.ETag, &document); err != nil {
 			return nil, err
 		}
+		_ = json.Unmarshal([]byte(document), &v.Document)
 		values = append(values, v)
 	}
 	return values, rows.Err()

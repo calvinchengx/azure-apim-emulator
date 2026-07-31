@@ -608,13 +608,15 @@ func TestScanFunctionsRejectMalformedRows(t *testing.T) {
 		},
 		{
 			"tags",
-			`CREATE TABLE tags (service_id, name, display_name, etag)`,
-			`INSERT INTO tags VALUES ('service', NULL, '', '')`,
+			`CREATE TABLE tags (id, service_id, name, display_name, etag);
+			 CREATE TABLE tag_documents (tag_id, document_json)`,
+			`INSERT INTO tags VALUES ('tag', 'service', NULL, '', '')`,
 			func(db *sql.DB) error { _, err := (&Store{db: db}).ListTags("service"); return err },
 		},
 		{
 			"resource tags",
 			`CREATE TABLE tags (id, service_id, name, display_name, etag);
+			 CREATE TABLE tag_documents (tag_id, document_json);
 			 CREATE TABLE resource_tags (resource_id, tag_id)`,
 			`INSERT INTO tags VALUES ('tag', 'service', NULL, '', '');
 			 INSERT INTO resource_tags VALUES ('resource', 'tag')`,
@@ -727,6 +729,57 @@ func TestScanFunctionsRejectMalformedRows(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestUpsertTagTransactionErrors(t *testing.T) {
+	t.Run("document encoding", func(t *testing.T) {
+		st, err := Open("", clock.New())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer st.Close()
+		if _, err := st.UpsertTag(model.Tag{Document: map[string]any{"bad": make(chan int)}}); err == nil {
+			t.Fatal("tag accepted an unsupported document")
+		}
+	})
+	t.Run("begin", func(t *testing.T) {
+		st, err := Open("", clock.New())
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = st.Close()
+		if _, err := st.UpsertTag(model.Tag{}); err == nil {
+			t.Fatal("closed store accepted a tag")
+		}
+	})
+	t.Run("tag row", func(t *testing.T) {
+		st, err := Open("", clock.New())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer st.Close()
+		if _, err := st.UpsertTag(model.Tag{ServiceID: "/missing", Name: "tag"}); err == nil {
+			t.Fatal("tag with a missing service was accepted")
+		}
+	})
+	t.Run("document row", func(t *testing.T) {
+		st, err := Open("", clock.New())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer st.Close()
+		service, _ := st.UpsertService(model.Service{Name: "svc"})
+		if _, err := st.db.Exec(`CREATE TRIGGER reject_tag_document BEFORE INSERT ON tag_documents BEGIN SELECT RAISE(FAIL, 'rejected'); END`); err != nil {
+			t.Fatal(err)
+		}
+		tag := model.Tag{ServiceID: service.ID(), Name: "tag"}
+		if _, err := st.UpsertTag(tag); err == nil {
+			t.Fatal("rejected tag document was accepted")
+		}
+		if _, err := st.GetTag(tag.ID()); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("tag transaction was not rolled back: %v", err)
+		}
+	})
 }
 
 func TestUpsertAPIVersionSetTransactionErrors(t *testing.T) {

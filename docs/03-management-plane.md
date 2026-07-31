@@ -95,6 +95,11 @@ explicit clearing of optional header/query/description fields, and project the
 authoritative scheme fields on GET and list responses. The official Go SDK
 witness verifies description persistence after update.
 
+Tags retain canonical documents transactionally with their indexed display
+name. Unknown metadata survives PUT, recursive PATCH, direct GET/list, and the
+API, operation, and product association projections. The official Go SDK
+witness covers the complete modeled tag lifecycle and every association type.
+
 ## Common ARM semantics
 
 Implement centrally and test across resources:

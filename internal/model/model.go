@@ -153,6 +153,7 @@ type Tag struct {
 	Name        string
 	DisplayName string
 	ETag        string
+	Document    map[string]any
 }
 
 // ID returns the tag ARM resource ID.

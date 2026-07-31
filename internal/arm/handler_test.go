@@ -1002,12 +1002,12 @@ func TestTagAndResourceAssociationBranches(t *testing.T) {
 	assertStatus(t, handler, http.MethodPut, tagPath, `{"properties":{}}`, http.StatusBadRequest)
 	assertStatus(t, handler, http.MethodPut, tagPath, `{"properties":{"displayName":"  "}}`, http.StatusBadRequest)
 	assertStatus(t, handler, http.MethodPut, tagPath, `{"properties":{"displayName":"Public"}}`, http.StatusCreated)
-	assertStatus(t, handler, http.MethodPut, tagPath, `{"properties":{"displayName":"Public API"}}`, http.StatusOK)
+	assertStatus(t, handler, http.MethodPut, tagPath, `{"customRoot":{"retained":true},"properties":{"displayName":"Public API","customMetadata":{"keep":"one","remove":"old"}}}`, http.StatusOK)
 	assertStatus(t, handler, http.MethodPatch, basePath+"/tags/missing"+apiQuery, `{}`, http.StatusNotFound)
 	assertStatus(t, handler, http.MethodPatch, tagPath, `{`, http.StatusBadRequest)
-	assertStatus(t, handler, http.MethodPatch, tagPath, `{"properties":{"displayName":"Updated"}}`, http.StatusOK)
+	assertStatus(t, handler, http.MethodPatch, tagPath, `{"properties":{"displayName":"Updated","customMetadata":{"add":"two","remove":null}}}`, http.StatusOK)
 	got := request(t, handler, http.MethodGet, tagPath, "")
-	if !strings.Contains(got.Body.String(), `"displayName":"Updated"`) || got.Header().Get("ETag") == "" {
+	if !strings.Contains(got.Body.String(), `"displayName":"Updated"`) || !strings.Contains(got.Body.String(), `"retained":true`) || !strings.Contains(got.Body.String(), `"add":"two"`) || strings.Contains(got.Body.String(), `"remove"`) || got.Header().Get("ETag") == "" {
 		t.Fatalf("tag GET = %d %s", got.Code, got.Body.String())
 	}
 	assertStatus(t, handler, http.MethodHead, tagPath, "", http.StatusOK)
@@ -1035,7 +1035,7 @@ func TestTagAndResourceAssociationBranches(t *testing.T) {
 		assertStatus(t, handler, http.MethodGet, path, "", http.StatusOK)
 		assertStatus(t, handler, http.MethodHead, path, "", http.StatusOK)
 		collection := request(t, handler, http.MethodGet, collectionPaths[i], "")
-		if !strings.Contains(collection.Body.String(), `"count":1`) {
+		if !strings.Contains(collection.Body.String(), `"count":1`) || !strings.Contains(collection.Body.String(), `"retained":true`) {
 			t.Fatalf("association list %s = %s", collectionPaths[i], collection.Body.String())
 		}
 		assertStatus(t, handler, http.MethodPost, collectionPaths[i], "", http.StatusMethodNotAllowed)
@@ -1052,6 +1052,25 @@ func TestTagAndResourceAssociationBranches(t *testing.T) {
 	}
 	assertStatus(t, handler, http.MethodDelete, tagPath, "", http.StatusNoContent)
 	assertStatus(t, handler, http.MethodDelete, tagPath, "", http.StatusNoContent)
+}
+
+func TestTagDocumentFallbacks(t *testing.T) {
+	handler, st := testHandler(t)
+	seedService(t, st)
+	tag := model.Tag{ServiceID: serviceModel().ID(), Name: "legacy", DisplayName: "Legacy"}
+	if _, err := st.UpsertTag(tag); err != nil {
+		t.Fatal(err)
+	}
+	path := basePath + "/tags/legacy" + apiQuery
+	response := request(t, handler, http.MethodPatch, path, `{"properties":{"customMetadata":{"hydrated":true}}}`)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"hydrated":true`) {
+		t.Fatalf("legacy tag PATCH = %d %s", response.Code, response.Body.String())
+	}
+
+	wire := tagWire(model.Tag{Name: "invalid", Document: map[string]any{"properties": "invalid"}})
+	if _, ok := wire["properties"].(map[string]any); !ok {
+		t.Fatalf("tag wire properties = %#v", wire["properties"])
+	}
 }
 
 func TestGroupAndProductAssociationBranches(t *testing.T) {
