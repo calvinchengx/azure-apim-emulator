@@ -2,7 +2,15 @@ package server
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/base64"
 	"io"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -18,6 +26,7 @@ import (
 	entra "github.com/calvinchengx/entra-emulator/emulator"
 
 	"github.com/calvinchengx/azure-apim-emulator/internal/config"
+	"software.sslmate.com/src/go-pkcs12"
 )
 
 type staticCredential struct{}
@@ -65,12 +74,17 @@ func TestGoManagementSDKCreatesAPI(t *testing.T) {
 }
 
 func TestGoManagementSDKConfiguresProtectedGateway(t *testing.T) {
-	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	backend := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("X-Named") != "go-sdk-named-value" {
 			t.Errorf("named-value policy header = %q", r.Header.Get("X-Named"))
 		}
+		if r.TLS == nil || len(r.TLS.PeerCertificates) != 1 {
+			t.Error("backend request did not present the SDK-created client certificate")
+		}
 		_, _ = w.Write([]byte("go-sdk-backend"))
 	}))
+	backend.TLS = &tls.Config{ClientAuth: tls.RequireAnyClientCert}
+	backend.StartTLS()
 	defer backend.Close()
 	srv := newTestServer(t, false, backend.Client())
 	front := httptest.NewTLSServer(srv.Handler())
@@ -159,6 +173,43 @@ func TestGoManagementSDKConfiguresProtectedGateway(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	certificateClient, err := armapimanagement.NewCertificateClient(defaultSubscription, credential, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	certificateData, certificatePassword := serverTestPKCS12(t, "password"), "password"
+	createdCertificate, err := certificateClient.CreateOrUpdate(ctx, defaultResourceGroup, "emulator", "go-sdk-client", armapimanagement.CertificateCreateOrUpdateParameters{
+		Properties: &armapimanagement.CertificateCreateOrUpdateProperties{Data: &certificateData, Password: &certificatePassword},
+	}, nil)
+	if err != nil || createdCertificate.ID == nil || createdCertificate.Properties == nil || createdCertificate.Properties.Thumbprint == nil {
+		t.Fatalf("certificate create = %+v, %v", createdCertificate, err)
+	}
+	certificateID := *createdCertificate.ID
+	gotCertificate, err := certificateClient.Get(ctx, defaultResourceGroup, "emulator", "go-sdk-client", nil)
+	if err != nil || gotCertificate.Properties == nil || gotCertificate.Properties.Subject == nil {
+		t.Fatalf("certificate GET = %+v, %v", gotCertificate, err)
+	}
+	if entityTag, err := certificateClient.GetEntityTag(ctx, defaultResourceGroup, "emulator", "go-sdk-client", nil); err != nil || entityTag.ETag == nil {
+		t.Fatalf("certificate ETag = %+v, %v", entityTag, err)
+	}
+	certificatePage, err := certificateClient.NewListByServicePager(defaultResourceGroup, "emulator", nil).NextPage(ctx)
+	if err != nil || len(certificatePage.Value) != 1 {
+		t.Fatalf("certificate page = %+v, %v", certificatePage, err)
+	}
+	if _, err := certificateClient.CreateOrUpdate(ctx, defaultResourceGroup, "emulator", "temporary", armapimanagement.CertificateCreateOrUpdateParameters{Properties: &armapimanagement.CertificateCreateOrUpdateProperties{Data: &certificateData, Password: &certificatePassword}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := certificateClient.Delete(ctx, defaultResourceGroup, "emulator", "temporary", "*", nil); err != nil {
+		t.Fatal(err)
+	}
+	vaultSecretID := "https://vault.test/secrets/client"
+	if _, err := certificateClient.CreateOrUpdate(ctx, defaultResourceGroup, "emulator", "vault-client", armapimanagement.CertificateCreateOrUpdateParameters{Properties: &armapimanagement.CertificateCreateOrUpdateProperties{KeyVault: &armapimanagement.KeyVaultContractCreateProperties{SecretIdentifier: &vaultSecretID}}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := certificateClient.RefreshSecret(ctx, defaultResourceGroup, "emulator", "vault-client", nil); err != nil {
+		t.Fatal(err)
+	}
+
 	backendClient, err := armapimanagement.NewBackendClient(defaultSubscription, credential, options)
 	if err != nil {
 		t.Fatal(err)
@@ -166,7 +217,7 @@ func TestGoManagementSDKConfiguresProtectedGateway(t *testing.T) {
 	backendTitle, backendDescription := "Go SDK backend", "Created by the Go SDK"
 	backendProtocol := armapimanagement.BackendProtocolHTTP
 	createdBackend, err := backendClient.CreateOrUpdate(ctx, defaultResourceGroup, "emulator", "go-sdk-backend", armapimanagement.BackendContract{
-		Properties: &armapimanagement.BackendContractProperties{Title: &backendTitle, Description: &backendDescription, URL: &backend.URL, Protocol: &backendProtocol},
+		Properties: &armapimanagement.BackendContractProperties{Title: &backendTitle, Description: &backendDescription, URL: &backend.URL, Protocol: &backendProtocol, Credentials: &armapimanagement.BackendCredentialsContract{CertificateIDs: []*string{&certificateID}}},
 	}, nil)
 	if err != nil || createdBackend.ID == nil {
 		t.Fatalf("backend create = %+v, %v", createdBackend, err)
@@ -394,6 +445,28 @@ func TestGoManagementSDKConfiguresProtectedGateway(t *testing.T) {
 	if _, err := releaseClient.Delete(ctx, defaultResourceGroup, "emulator", "go-sdk-full", "release-2", "*", nil); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func serverTestPKCS12(t *testing.T, password string) string {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	template := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "sdk-client.test"}, NotBefore: time.Unix(1, 0), NotAfter: time.Unix(4102444800, 0), KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	leaf, err := x509.ParseCertificate(der)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pfx, err := pkcs12.Modern.Encode(key, leaf, nil, password)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return base64.StdEncoding.EncodeToString(pfx)
 }
 
 func TestGoManagementSDKAuthenticatesThroughEntraEmulator(t *testing.T) {

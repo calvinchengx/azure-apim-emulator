@@ -1,20 +1,29 @@
 package gateway
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"database/sql"
 	"errors"
 	"fmt"
 	"io"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/calvinchengx/azure-apim-emulator/internal/clock"
 	"github.com/calvinchengx/azure-apim-emulator/internal/model"
 	"github.com/calvinchengx/azure-apim-emulator/internal/policy"
 	"github.com/calvinchengx/azure-apim-emulator/internal/store"
+	"software.sslmate.com/src/go-pkcs12"
 )
 
 func TestRoutingHelpers(t *testing.T) {
@@ -503,12 +512,107 @@ func TestActivateBackendReferences(t *testing.T) {
 	if action.Value != backend.URL || action.BackendID != backend.Name {
 		t.Fatalf("resolved backend = %+v", action)
 	}
+	backend.Document = map[string]any{"properties": map[string]any{"credentials": map[string]any{"certificateIds": []any{"missing"}}}}
+	if _, err := st.UpsertBackend(backend); err != nil {
+		t.Fatal(err)
+	}
+	if err := runtime.Activate(st, false); err == nil {
+		t.Fatal("dangling backend certificate should reject activation")
+	}
+	backend.Document = map[string]any{}
+	if _, err := st.UpsertBackend(backend); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := st.UpsertPolicy(model.Policy{ScopeID: api.ID(), Value: `<policies><inbound><set-backend-service backend-id="missing"/></inbound></policies>`}); err != nil {
 		t.Fatal(err)
 	}
 	if err := runtime.Activate(st, false); err == nil {
 		t.Fatal("missing backend should reject activation")
 	}
+}
+
+func TestBackendClientCertificateTransport(t *testing.T) {
+	pfx := gatewayTestPKCS12(t, "password")
+	certificate := model.Certificate{Name: "client", Data: pfx, Password: "password"}
+	backend := model.Backend{Name: "secure", Document: map[string]any{"properties": map[string]any{"credentials": map[string]any{"certificateIds": []any{"client"}}}}}
+	service := &Service{Backends: map[string]model.Backend{"secure": backend}, Certificates: map[string]model.Certificate{"client": certificate}}
+	seenCertificate := false
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		seenCertificate = request.TLS != nil && len(request.TLS.PeerCertificates) == 1
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	server.TLS = &tls.Config{ClientAuth: tls.RequireAnyClientCert}
+	server.StartTLS()
+	defer server.Close()
+	client, err := backendHTTPClient(server.Client(), service, "secure")
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := client.Get(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if !seenCertificate {
+		t.Fatal("backend did not receive a client certificate")
+	}
+	base := &http.Client{}
+	if got, err := backendHTTPClient(base, service, "secure"); err != nil || got.Transport == nil {
+		t.Fatalf("default certificate transport = %+v, %v", got, err)
+	}
+	if got, err := backendHTTPClient(base, service, ""); err != nil || got != base {
+		t.Fatalf("empty backend = %p, %v", got, err)
+	}
+	if _, err := backendHTTPClient(base, service, "missing"); err == nil {
+		t.Fatal("missing backend should fail")
+	}
+	plain := &Service{Backends: map[string]model.Backend{"plain": {Name: "plain"}}}
+	if got, err := backendHTTPClient(base, plain, "plain"); err != nil || got != base {
+		t.Fatalf("plain backend = %p, %v", got, err)
+	}
+	if _, err := backendHTTPClient(&http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) { return nil, nil })}, service, "secure"); err == nil {
+		t.Fatal("custom transport should reject client certificates")
+	}
+	missingCertificate := &Service{Backends: service.Backends, Certificates: map[string]model.Certificate{}}
+	if _, err := backendHTTPClient(base, missingCertificate, "secure"); err == nil {
+		t.Fatal("missing certificate should fail")
+	}
+	badCertificate := &Service{Backends: service.Backends, Certificates: map[string]model.Certificate{"client": {Data: []byte("bad")}}}
+	if _, err := backendHTTPClient(base, badCertificate, "secure"); err == nil {
+		t.Fatal("invalid certificate should fail")
+	}
+	if err := validateBackendCertificates(service.Backends, service.Certificates); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateBackendCertificates(service.Backends, nil); err == nil {
+		t.Fatal("dangling certificate should fail validation")
+	}
+	runtime := New("emulator", &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) { return nil, nil })})
+	route := &Route{API: model.API{Path: "api", ServiceURL: "https://backend"}, Operations: []model.Operation{{Method: http.MethodGet, URLTemplate: "/"}}, Plan: policy.Plan{Inbound: []policy.Action{{Kind: policy.ActionSetBackend, BackendID: "secure", Value: "https://backend"}}}}
+	runtime.current.Store(&Snapshot{Services: map[string]*Service{"emulator": {Routes: []*Route{route}, Backends: service.Backends, Certificates: service.Certificates}}})
+	assertGatewayStatus(t, runtime, httptest.NewRequest(http.MethodGet, "/api", nil), http.StatusInternalServerError)
+}
+
+func gatewayTestPKCS12(t *testing.T, password string) []byte {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	template := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "client.test"}, NotBefore: time.Unix(1, 0), NotAfter: time.Unix(4102444800, 0), KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	leaf, err := x509.ParseCertificate(der)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pfx, err := pkcs12.Modern.Encode(key, leaf, nil, password)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return pfx
 }
 
 func TestActivateBackendStoreFailure(t *testing.T) {
@@ -533,6 +637,38 @@ func TestActivateBackendStoreFailure(t *testing.T) {
 	}
 	if err := New("emulator", nil).Activate(st, false); err == nil {
 		t.Fatal("activation should fail when backends cannot be read")
+	}
+}
+
+func TestActivateCertificateStoreFailure(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(dir, clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	service, err := st.UpsertService(model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "emulator"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.UpsertCertificate(model.Certificate{ServiceID: service.ID(), Name: "client", KeyVaultSecretID: "vault"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := New("emulator", nil).Activate(st, false); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", filepath.Join(dir, "azure-apim-emulator.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`DROP TABLE certificates`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := New("emulator", nil).Activate(st, false); err == nil {
+		t.Fatal("activation should fail when certificates cannot be read")
 	}
 }
 

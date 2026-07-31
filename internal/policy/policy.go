@@ -58,6 +58,7 @@ type State struct {
 	Request    *http.Request
 	Response   *http.Response
 	BackendURL string
+	BackendID  string
 	Path       string
 	Returned   bool
 	StatusCode int
@@ -238,6 +239,7 @@ func Execute(actions []Action, state *State) error {
 			setHeader(target, Header{Name: action.Name, Value: action.Value, Action: action.Action})
 		case ActionSetBackend:
 			state.BackendURL = action.Value
+			state.BackendID = action.BackendID
 		case ActionRewriteURI:
 			state.Path = action.Value
 		case ActionForward:

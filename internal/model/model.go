@@ -1,6 +1,8 @@
 // Package model contains the version-neutral APIM resource model.
 package model
 
+import "time"
+
 // Service identifies one logical APIM instance.
 type Service struct {
 	SubscriptionID    string
@@ -104,6 +106,23 @@ type Backend struct {
 
 // ID returns the backend ARM resource ID.
 func (v Backend) ID() string { return v.ServiceID + "/backends/" + v.Name }
+
+// Certificate is backend client-certificate material or a Key Vault reference.
+type Certificate struct {
+	ServiceID          string
+	Name               string
+	Subject            string
+	Thumbprint         string
+	Expiration         time.Time
+	Data               []byte
+	Password           string
+	KeyVaultSecretID   string
+	KeyVaultIdentityID string
+	ETag               string
+}
+
+// ID returns the certificate ARM resource ID.
+func (v Certificate) ID() string { return v.ServiceID + "/certificates/" + v.Name }
 
 // Operation is an HTTP operation belonging to an API.
 type Operation struct {

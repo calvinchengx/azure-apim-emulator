@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/calvinchengx/azure-apim-emulator/internal/clock"
 	"github.com/calvinchengx/azure-apim-emulator/internal/model"
@@ -103,6 +104,12 @@ CREATE TABLE IF NOT EXISTS backends (
   id TEXT PRIMARY KEY, service_id TEXT NOT NULL REFERENCES services(id) ON DELETE CASCADE,
   name TEXT NOT NULL, title TEXT NOT NULL, description TEXT NOT NULL, url TEXT NOT NULL,
   protocol TEXT NOT NULL, resource_id TEXT NOT NULL, document_json TEXT NOT NULL, etag TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS certificates (
+  id TEXT PRIMARY KEY, service_id TEXT NOT NULL REFERENCES services(id) ON DELETE CASCADE,
+  name TEXT NOT NULL, subject TEXT NOT NULL, thumbprint TEXT NOT NULL, expiration INTEGER NOT NULL,
+  data BLOB NOT NULL, password TEXT NOT NULL, key_vault_secret_id TEXT NOT NULL,
+  key_vault_identity_id TEXT NOT NULL, etag TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS api_releases (
   id TEXT PRIMARY KEY, api_id TEXT NOT NULL REFERENCES apis(id) ON DELETE CASCADE,
@@ -640,6 +647,70 @@ func (s *Store) ListBackends(serviceID string) ([]model.Backend, error) {
 
 // DeleteBackend removes a backend.
 func (s *Store) DeleteBackend(id string) error { return deleteScopedResource(s.db, "backends", id) }
+
+// UpsertCertificate creates or replaces a certificate.
+func (s *Store) UpsertCertificate(v model.Certificate) (model.Certificate, error) {
+	v.ETag = newETag()
+	if v.Data == nil {
+		v.Data = []byte{}
+	}
+	_, err := s.db.Exec(`INSERT INTO certificates
+        (id, service_id, name, subject, thumbprint, expiration, data, password, key_vault_secret_id, key_vault_identity_id, etag)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET subject=excluded.subject,
+          thumbprint=excluded.thumbprint, expiration=excluded.expiration, data=excluded.data,
+          password=excluded.password, key_vault_secret_id=excluded.key_vault_secret_id,
+          key_vault_identity_id=excluded.key_vault_identity_id, etag=excluded.etag`,
+		v.ID(), v.ServiceID, v.Name, v.Subject, v.Thumbprint, v.Expiration.Unix(), v.Data, v.Password,
+		v.KeyVaultSecretID, v.KeyVaultIdentityID, v.ETag)
+	return v, err
+}
+
+// GetCertificate finds one certificate.
+func (s *Store) GetCertificate(id string) (model.Certificate, error) {
+	var v model.Certificate
+	var expiration int64
+	err := s.db.QueryRow(`SELECT service_id, name, subject, thumbprint, expiration, data, password,
+        key_vault_secret_id, key_vault_identity_id, etag FROM certificates WHERE lower(id)=lower(?)`, id).
+		Scan(&v.ServiceID, &v.Name, &v.Subject, &v.Thumbprint, &expiration, &v.Data, &v.Password,
+			&v.KeyVaultSecretID, &v.KeyVaultIdentityID, &v.ETag)
+	if errors.Is(err, sql.ErrNoRows) {
+		return model.Certificate{}, ErrNotFound
+	}
+	if err == nil && expiration != 0 {
+		v.Expiration = time.Unix(expiration, 0).UTC()
+	}
+	return v, err
+}
+
+// ListCertificates returns certificates for a service in stable ID order.
+func (s *Store) ListCertificates(serviceID string) ([]model.Certificate, error) {
+	rows, err := s.db.Query(`SELECT service_id, name, subject, thumbprint, expiration, data, password,
+        key_vault_secret_id, key_vault_identity_id, etag FROM certificates
+        WHERE lower(service_id)=lower(?) ORDER BY id`, serviceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	values := make([]model.Certificate, 0)
+	for rows.Next() {
+		var v model.Certificate
+		var expiration int64
+		if err := rows.Scan(&v.ServiceID, &v.Name, &v.Subject, &v.Thumbprint, &expiration, &v.Data,
+			&v.Password, &v.KeyVaultSecretID, &v.KeyVaultIdentityID, &v.ETag); err != nil {
+			return nil, err
+		}
+		if expiration != 0 {
+			v.Expiration = time.Unix(expiration, 0).UTC()
+		}
+		values = append(values, v)
+	}
+	return values, rows.Err()
+}
+
+// DeleteCertificate removes a certificate.
+func (s *Store) DeleteCertificate(id string) error {
+	return deleteScopedResource(s.db, "certificates", id)
+}
 
 func (s *Store) validateAPIVersionSet(v model.API) error {
 	if v.VersionSetID == "" {

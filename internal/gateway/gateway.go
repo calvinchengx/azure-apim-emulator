@@ -2,6 +2,7 @@
 package gateway
 
 import (
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"html"
@@ -15,6 +16,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	certutil "github.com/calvinchengx/azure-apim-emulator/internal/certificate"
 	"github.com/calvinchengx/azure-apim-emulator/internal/model"
 	"github.com/calvinchengx/azure-apim-emulator/internal/policy"
 	"github.com/calvinchengx/azure-apim-emulator/internal/store"
@@ -27,8 +29,10 @@ type Snapshot struct {
 
 // Service is compiled runtime state for one APIM service.
 type Service struct {
-	Name   string
-	Routes []*Route
+	Name         string
+	Routes       []*Route
+	Backends     map[string]model.Backend
+	Certificates map[string]model.Certificate
 }
 
 // Route is a compiled API route.
@@ -86,6 +90,7 @@ func (r *Runtime) Activate(st *store.Store, strict bool) error {
 	versionSets := map[string]*model.APIVersionSet{}
 	namedValues := map[string]map[string]string{}
 	backends := map[string]map[string]model.Backend{}
+	certificates := map[string]map[string]model.Certificate{}
 	for _, service := range services {
 		values, err := st.ListAPIVersionSets(service.ID())
 		if err != nil {
@@ -110,6 +115,18 @@ func (r *Runtime) Activate(st *store.Store, strict bool) error {
 		backends[strings.ToLower(service.ID())] = map[string]model.Backend{}
 		for _, value := range serviceBackends {
 			backends[strings.ToLower(service.ID())][strings.ToLower(value.Name)] = value
+		}
+		serviceCertificates, err := st.ListCertificates(service.ID())
+		if err != nil {
+			return err
+		}
+		certificates[strings.ToLower(service.ID())] = map[string]model.Certificate{}
+		for _, value := range serviceCertificates {
+			certificates[strings.ToLower(service.ID())][strings.ToLower(value.ID())] = value
+			certificates[strings.ToLower(service.ID())][strings.ToLower(value.Name)] = value
+		}
+		if err := validateBackendCertificates(backends[strings.ToLower(service.ID())], certificates[strings.ToLower(service.ID())]); err != nil {
+			return err
 		}
 	}
 	policyByScope := map[string]policy.Plan{}
@@ -157,7 +174,7 @@ func (r *Runtime) Activate(st *store.Store, strict bool) error {
 	}
 	snapshot := &Snapshot{Services: map[string]*Service{}}
 	for _, item := range services {
-		snapshot.Services[strings.ToLower(item.Name)] = &Service{Name: item.Name}
+		snapshot.Services[strings.ToLower(item.Name)] = &Service{Name: item.Name, Backends: backends[strings.ToLower(item.ID())], Certificates: certificates[strings.ToLower(item.ID())]}
 	}
 	for _, api := range apis {
 		if !api.IsCurrent {
@@ -301,7 +318,12 @@ func (r *Runtime) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		writePolicyResponse(w, state)
 		return
 	}
-	response, err := r.forward(req, state.BackendURL, state.Path)
+	client, err := backendHTTPClient(r.client, service, state.BackendID)
+	if err != nil {
+		r.policyFailure(w, req, route.Plan, state, err)
+		return
+	}
+	response, err := forwardWithClient(client, req, state.BackendURL, state.Path)
 	if err != nil {
 		r.policyFailure(w, req, route.Plan, state, fmt.Errorf("backend request failed: %w", err))
 		return
@@ -392,6 +414,10 @@ func (r *Runtime) policyFailure(w http.ResponseWriter, req *http.Request, plan p
 }
 
 func (r *Runtime) forward(original *http.Request, backend, path string) (*http.Response, error) {
+	return forwardWithClient(r.client, original, backend, path)
+}
+
+func forwardWithClient(client *http.Client, original *http.Request, backend, path string) (*http.Response, error) {
 	base, err := url.Parse(backend)
 	if err != nil || base.Scheme == "" || base.Host == "" {
 		return nil, fmt.Errorf("invalid backend URL %q", backend)
@@ -402,7 +428,74 @@ func (r *Runtime) forward(original *http.Request, backend, path string) (*http.R
 	request.URL = base
 	request.RequestURI = ""
 	request.Host = base.Host
-	return r.client.Do(request)
+	return client.Do(request)
+}
+
+func backendHTTPClient(base *http.Client, service *Service, backendID string) (*http.Client, error) {
+	if backendID == "" {
+		return base, nil
+	}
+	backend, ok := service.Backends[strings.ToLower(backendID)]
+	if !ok {
+		return nil, fmt.Errorf("backend %q was not found", backendID)
+	}
+	ids := backendCertificateIDs(backend)
+	if len(ids) == 0 {
+		return base, nil
+	}
+	transport, ok := base.Transport.(*http.Transport)
+	if !ok {
+		if base.Transport != nil {
+			return nil, fmt.Errorf("backend client certificates require an HTTP transport")
+		}
+		transport = http.DefaultTransport.(*http.Transport)
+	}
+	transport = transport.Clone()
+	tlsConfig := transport.TLSClientConfig
+	if tlsConfig == nil {
+		tlsConfig = &tls.Config{}
+	} else {
+		tlsConfig = tlsConfig.Clone()
+	}
+	for _, id := range ids {
+		certificate, ok := service.Certificates[strings.ToLower(id)]
+		if !ok {
+			return nil, fmt.Errorf("backend %q references missing certificate %q", backendID, id)
+		}
+		value, err := certutil.TLSCertificate(certificate.Data, certificate.Password)
+		if err != nil {
+			return nil, err
+		}
+		tlsConfig.Certificates = append(tlsConfig.Certificates, value)
+	}
+	transport.TLSClientConfig = tlsConfig
+	result := *base
+	result.Transport = transport
+	return &result, nil
+}
+
+func backendCertificateIDs(backend model.Backend) []string {
+	var document struct {
+		Properties struct {
+			Credentials struct {
+				CertificateIDs []string `json:"certificateIds"`
+			} `json:"credentials"`
+		} `json:"properties"`
+	}
+	encoded, _ := json.Marshal(backend.Document)
+	_ = json.Unmarshal(encoded, &document)
+	return document.Properties.Credentials.CertificateIDs
+}
+
+func validateBackendCertificates(backends map[string]model.Backend, certificates map[string]model.Certificate) error {
+	for name, backend := range backends {
+		for _, id := range backendCertificateIDs(backend) {
+			if _, ok := certificates[strings.ToLower(id)]; !ok {
+				return fmt.Errorf("backend %q references missing certificate %q", name, id)
+			}
+		}
+	}
+	return nil
 }
 
 func serviceFromHost(host, fallback string) string {

@@ -8,6 +8,7 @@ require (
 	github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/apimanagement/armapimanagement v1.1.1
 	github.com/calvinchengx/entra-emulator v0.2.1
 	modernc.org/sqlite v1.53.0
+	software.sslmate.com/src/go-pkcs12 v0.7.3
 )
 
 require (

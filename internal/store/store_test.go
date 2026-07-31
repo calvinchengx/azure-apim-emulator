@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/calvinchengx/azure-apim-emulator/internal/clock"
 	"github.com/calvinchengx/azure-apim-emulator/internal/model"
@@ -281,6 +282,10 @@ func TestClosedStoreErrors(t *testing.T) {
 		"get backend":        func() error { _, err := st.GetBackend("backend"); return err },
 		"list backends":      func() error { _, err := st.ListBackends("service"); return err },
 		"delete backend":     func() error { return st.DeleteBackend("backend") },
+		"upsert certificate": func() error { _, err := st.UpsertCertificate(model.Certificate{}); return err },
+		"get certificate":    func() error { _, err := st.GetCertificate("certificate"); return err },
+		"list certificates":  func() error { _, err := st.ListCertificates("service"); return err },
+		"delete certificate": func() error { return st.DeleteCertificate("certificate") },
 		"runtime": func() error {
 			_, _, _, _, _, _, _, err := st.RuntimeData()
 			return err
@@ -353,6 +358,12 @@ func TestScanFunctionsRejectMalformedRows(t *testing.T) {
 			`CREATE TABLE backends (id, service_id, name, title, description, url, protocol, resource_id, document_json, etag)`,
 			`INSERT INTO backends VALUES ('id', 'service', NULL, '', '', '', '', '', '{}', '')`,
 			func(db *sql.DB) error { _, err := (&Store{db: db}).ListBackends("service"); return err },
+		},
+		{
+			"certificates",
+			`CREATE TABLE certificates (id, service_id, name, subject, thumbprint, expiration, data, password, key_vault_secret_id, key_vault_identity_id, etag)`,
+			`INSERT INTO certificates VALUES ('id', 'service', NULL, '', '', 0, x'', '', '', '', '')`,
+			func(db *sql.DB) error { _, err := (&Store{db: db}).ListCertificates("service"); return err },
 		},
 		{
 			"releases",
@@ -751,6 +762,47 @@ func TestBackendLifecycle(t *testing.T) {
 		t.Fatalf("missing backend = %v", err)
 	}
 	if err := st.DeleteBackend(backend.ID()); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("second delete = %v", err)
+	}
+}
+
+func TestCertificateLifecycle(t *testing.T) {
+	st, err := Open("", clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	service, err := st.UpsertService(model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "certificates"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	expires := time.Unix(4102444800, 0).UTC()
+	certificate, err := st.UpsertCertificate(model.Certificate{ServiceID: service.ID(), Name: "client", Subject: "CN=client", Thumbprint: "ABC", Expiration: expires, Data: []byte("pfx"), Password: "secret"})
+	if err != nil || certificate.ID() != service.ID()+"/certificates/client" || certificate.ETag == "" {
+		t.Fatalf("certificate = %+v, %v", certificate, err)
+	}
+	got, err := st.GetCertificate(strings.ToUpper(certificate.ID()))
+	if err != nil || got.Subject != "CN=client" || !got.Expiration.Equal(expires) || string(got.Data) != "pfx" {
+		t.Fatalf("get certificate = %+v, %v", got, err)
+	}
+	values, err := st.ListCertificates(service.ID())
+	if err != nil || len(values) != 1 || !values[0].Expiration.Equal(expires) {
+		t.Fatalf("list certificates = %+v, %v", values, err)
+	}
+	keyVault, err := st.UpsertCertificate(model.Certificate{ServiceID: service.ID(), Name: "vault", KeyVaultSecretID: "https://vault/secret"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := st.GetCertificate(keyVault.ID()); err != nil || !got.Expiration.IsZero() {
+		t.Fatalf("key vault certificate = %+v, %v", got, err)
+	}
+	if err := st.DeleteCertificate(certificate.ID()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.GetCertificate(certificate.ID()); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing certificate = %v", err)
+	}
+	if err := st.DeleteCertificate(certificate.ID()); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("second delete = %v", err)
 	}
 }
