@@ -136,6 +136,40 @@ func TestConditionalRequests(t *testing.T) {
 	if deleted.Code != http.StatusNoContent {
 		t.Fatalf("wildcard delete = %d: %s", deleted.Code, deleted.Body.String())
 	}
+
+	for _, method := range []string{http.MethodPatch, http.MethodDelete} {
+		recorder := httptest.NewRecorder()
+		missingHeader := httptest.NewRequest(method, path, strings.NewReader(body))
+		missingHeader.Header.Set("Authorization", "Bearer token")
+		handler.ServeHTTP(recorder, missingHeader)
+		if recorder.Code != http.StatusBadRequest || recorder.Header().Get("x-ms-error-code") != "MissingRequiredHeader" || !strings.Contains(recorder.Body.String(), `"target":"If-Match"`) {
+			t.Fatalf("missing %s If-Match = %d: %s", method, recorder.Code, recorder.Body.String())
+		}
+	}
+}
+
+func TestRequiredIfMatchInventory(t *testing.T) {
+	tests := []struct {
+		method string
+		tail   []string
+		want   bool
+	}{
+		{http.MethodGet, []string{"tags", "tag"}, false},
+		{http.MethodPatch, []string{"tags", "tag"}, true},
+		{http.MethodPatch, []string{"certificates", "certificate"}, false},
+		{http.MethodDelete, []string{"certificates", "certificate"}, true},
+		{http.MethodDelete, []string{"products", "product", "apis", "api"}, false},
+		{http.MethodPatch, []string{"apis", "api", "operations", "operation"}, true},
+		{http.MethodPatch, []string{"apis", "api", "Operations", "operation"}, true},
+		{http.MethodPatch, []string{"apis", "api", "schemas", "schema"}, false},
+		{http.MethodDelete, []string{"apis", "api", "schemas", "schema"}, true},
+		{http.MethodDelete, []string{"apis", "api", "operations", "operation", "tags", "tag"}, false},
+	}
+	for _, test := range tests {
+		if got := requiresIfMatch(route{Tail: test.tail}, test.method); got != test.want {
+			t.Errorf("requiresIfMatch(%s, %v) = %v, want %v", test.method, test.tail, got, test.want)
+		}
+	}
 }
 
 func TestConditionalEntityTagParsing(t *testing.T) {
@@ -447,9 +481,9 @@ func TestLoggerAndDiagnosticBranches(t *testing.T) {
 	assertStatus(t, handler, http.MethodDelete, apiDiagnosticPath, "", http.StatusInternalServerError)
 	handler.Activate = nil
 	assertStatus(t, handler, http.MethodDelete, diagnosticPath, "", http.StatusNoContent)
-	assertStatus(t, handler, http.MethodDelete, diagnosticPath, "", http.StatusNoContent)
+	assertStatus(t, handler, http.MethodDelete, diagnosticPath, "", http.StatusPreconditionFailed)
 	assertStatus(t, handler, http.MethodDelete, loggerPath, "", http.StatusNoContent)
-	assertStatus(t, handler, http.MethodDelete, loggerPath, "", http.StatusNoContent)
+	assertStatus(t, handler, http.MethodDelete, loggerPath, "", http.StatusPreconditionFailed)
 }
 
 func TestLoggerDiagnosticStoreErrorsAndWireFallbacks(t *testing.T) {
@@ -645,11 +679,12 @@ func TestAPIBranches(t *testing.T) {
 	assertStatus(t, handler, http.MethodDelete, basePath+"/apis/a/operations/get"+apiQuery, "", http.StatusInternalServerError)
 	assertStatus(t, handler, http.MethodDelete, basePath+"/apis/a"+apiQuery, "", http.StatusInternalServerError)
 	handler.Activate = nil
-	assertStatus(t, handler, http.MethodDelete, basePath+"/apis/a/releases/r"+apiQuery, "", http.StatusNoContent)
-	assertStatus(t, handler, http.MethodDelete, basePath+"/apis/a/releases/r"+apiQuery, "", http.StatusNoContent)
-	assertStatus(t, handler, http.MethodDelete, basePath+"/apis/a/operations/get"+apiQuery, "", http.StatusNoContent)
-	assertStatus(t, handler, http.MethodDelete, basePath+"/apis/a"+apiQuery, "", http.StatusNoContent)
-	assertStatus(t, handler, http.MethodDelete, basePath+"/apis/a"+apiQuery, "", http.StatusNoContent)
+	assertStatus(t, handler, http.MethodDelete, basePath+"/apis/a/releases/r"+apiQuery, "", http.StatusPreconditionFailed)
+	assertStatus(t, handler, http.MethodDelete, basePath+"/apis/a/releases/r"+apiQuery, "", http.StatusPreconditionFailed)
+	assertStatus(t, handler, http.MethodDelete, basePath+"/apis/a/operations/get"+apiQuery, "", http.StatusPreconditionFailed)
+	assertRoutedStatus(t, handler, http.MethodDelete, basePath+"/apis/a/operations/get"+apiQuery, "", http.StatusNoContent)
+	assertStatus(t, handler, http.MethodDelete, basePath+"/apis/a"+apiQuery, "", http.StatusPreconditionFailed)
+	assertStatus(t, handler, http.MethodDelete, basePath+"/apis/a"+apiQuery, "", http.StatusPreconditionFailed)
 }
 
 func TestAPIReleaseDocumentFallbacks(t *testing.T) {
@@ -1013,9 +1048,11 @@ func TestProductAndSubscriptionBranches(t *testing.T) {
 	assertStatus(t, handler, http.MethodDelete, basePath+"/subscriptions/s"+apiQuery, "", http.StatusInternalServerError)
 	handler.Activate = nil
 	assertStatus(t, handler, http.MethodDelete, basePath+"/products/p/apis/a"+apiQuery, "", http.StatusNoContent)
-	assertStatus(t, handler, http.MethodDelete, basePath+"/products/p"+apiQuery, "", http.StatusNoContent)
-	assertStatus(t, handler, http.MethodDelete, basePath+"/products/p"+apiQuery, "", http.StatusNoContent)
-	assertStatus(t, handler, http.MethodDelete, basePath+"/subscriptions/s"+apiQuery, "", http.StatusNoContent)
+	assertStatus(t, handler, http.MethodDelete, basePath+"/products/p"+apiQuery, "", http.StatusPreconditionFailed)
+	assertRoutedStatus(t, handler, http.MethodDelete, basePath+"/products/p"+apiQuery, "", http.StatusNoContent)
+	assertStatus(t, handler, http.MethodDelete, basePath+"/products/p"+apiQuery, "", http.StatusPreconditionFailed)
+	assertStatus(t, handler, http.MethodDelete, basePath+"/subscriptions/s"+apiQuery, "", http.StatusPreconditionFailed)
+	assertRoutedStatus(t, handler, http.MethodDelete, basePath+"/subscriptions/s"+apiQuery, "", http.StatusNoContent)
 
 	secrets := subscriptionWire(model.Subscription{ServiceID: serviceModel().ID(), Name: "s", PrimaryKey: "one", SecondaryKey: "two"}, true)
 	properties := secrets["properties"].(map[string]any)
@@ -1131,7 +1168,7 @@ func TestTagAndResourceAssociationBranches(t *testing.T) {
 		assertStatus(t, handler, http.MethodDelete, path, "", http.StatusNoContent)
 	}
 	assertStatus(t, handler, http.MethodDelete, tagPath, "", http.StatusNoContent)
-	assertStatus(t, handler, http.MethodDelete, tagPath, "", http.StatusNoContent)
+	assertStatus(t, handler, http.MethodDelete, tagPath, "", http.StatusPreconditionFailed)
 }
 
 func TestTagDocumentFallbacks(t *testing.T) {
@@ -1213,7 +1250,7 @@ func TestGroupAndProductAssociationBranches(t *testing.T) {
 	assertStatus(t, handler, http.MethodDelete, productGroup, "", http.StatusNoContent)
 	assertStatus(t, handler, http.MethodDelete, productGroup, "", http.StatusNoContent)
 	assertStatus(t, handler, http.MethodDelete, groupPath, "", http.StatusNoContent)
-	assertStatus(t, handler, http.MethodDelete, groupPath, "", http.StatusNoContent)
+	assertStatus(t, handler, http.MethodDelete, groupPath, "", http.StatusPreconditionFailed)
 }
 
 func TestGroupDocumentFallbacks(t *testing.T) {
@@ -1321,7 +1358,7 @@ func TestUserAndGroupMembershipBranches(t *testing.T) {
 	assertStatus(t, handler, http.MethodDelete, membership, "", http.StatusNoContent)
 	assertStatus(t, handler, http.MethodDelete, membership, "", http.StatusNoContent)
 	assertStatus(t, handler, http.MethodDelete, userPath, "", http.StatusNoContent)
-	assertStatus(t, handler, http.MethodDelete, userPath, "", http.StatusNoContent)
+	assertStatus(t, handler, http.MethodDelete, userPath, "", http.StatusPreconditionFailed)
 }
 
 func TestUserDocumentFallbacks(t *testing.T) {
@@ -1391,7 +1428,8 @@ func TestPolicyFragmentBranches(t *testing.T) {
 	assertStatus(t, handler, http.MethodPut, fragmentPath, body, http.StatusBadRequest)
 	assertStatus(t, handler, http.MethodDelete, fragmentPath, "", http.StatusInternalServerError)
 	handler.Activate = nil
-	assertStatus(t, handler, http.MethodDelete, fragmentPath, "", http.StatusNoContent)
+	assertStatus(t, handler, http.MethodDelete, fragmentPath, "", http.StatusPreconditionFailed)
+	assertRoutedStatus(t, handler, http.MethodDelete, fragmentPath, "", http.StatusNoContent)
 }
 
 func TestPolicyFragmentDocumentFallback(t *testing.T) {
@@ -1449,7 +1487,8 @@ func TestAPIVersionSetLifecycle(t *testing.T) {
 	assertStatus(t, handler, http.MethodPatch, path, `{"properties":{"description":"failed activation"}}`, http.StatusBadRequest)
 	assertStatus(t, handler, http.MethodDelete, path, "", http.StatusInternalServerError)
 	handler.Activate = nil
-	assertStatus(t, handler, http.MethodDelete, path, "", http.StatusNoContent)
+	assertStatus(t, handler, http.MethodDelete, path, "", http.StatusPreconditionFailed)
+	assertRoutedStatus(t, handler, http.MethodDelete, path, "", http.StatusNoContent)
 	assertStatus(t, handler, http.MethodPost, path, "", http.StatusMethodNotAllowed)
 }
 
@@ -1527,8 +1566,8 @@ func TestNamedValueLifecycle(t *testing.T) {
 	assertStatus(t, handler, http.MethodPatch, path, `{"properties":{"value":"activation"}}`, http.StatusBadRequest)
 	assertStatus(t, handler, http.MethodDelete, path, "", http.StatusInternalServerError)
 	handler.Activate = nil
-	assertStatus(t, handler, http.MethodDelete, path, "", http.StatusNoContent)
-	assertStatus(t, handler, http.MethodDelete, path, "", http.StatusNoContent)
+	assertStatus(t, handler, http.MethodDelete, path, "", http.StatusPreconditionFailed)
+	assertStatus(t, handler, http.MethodDelete, path, "", http.StatusPreconditionFailed)
 }
 
 func TestNamedValueDocumentFallbacks(t *testing.T) {
@@ -1585,8 +1624,8 @@ func TestBackendLifecycle(t *testing.T) {
 	assertStatus(t, handler, http.MethodPatch, path, `{"properties":{"title":"Activation"}}`, http.StatusBadRequest)
 	assertStatus(t, handler, http.MethodDelete, path, "", http.StatusInternalServerError)
 	handler.Activate = nil
-	assertStatus(t, handler, http.MethodDelete, path, "", http.StatusNoContent)
-	assertStatus(t, handler, http.MethodDelete, path, "", http.StatusNoContent)
+	assertStatus(t, handler, http.MethodDelete, path, "", http.StatusPreconditionFailed)
+	assertStatus(t, handler, http.MethodDelete, path, "", http.StatusPreconditionFailed)
 	if properties := backendWire(model.Backend{})["properties"].(map[string]any); properties["url"] != "" {
 		t.Fatalf("empty backend wire = %v", properties)
 	}
@@ -1655,8 +1694,8 @@ func TestCertificateLifecycle(t *testing.T) {
 	assertStatus(t, handler, http.MethodPut, path, `{"properties":{"data":"`+pfx+`","password":"password"}}`, http.StatusBadRequest)
 	assertStatus(t, handler, http.MethodDelete, path, "", http.StatusInternalServerError)
 	handler.Activate = nil
-	assertStatus(t, handler, http.MethodDelete, path, "", http.StatusNoContent)
-	assertStatus(t, handler, http.MethodDelete, path, "", http.StatusNoContent)
+	assertStatus(t, handler, http.MethodDelete, path, "", http.StatusPreconditionFailed)
+	assertStatus(t, handler, http.MethodDelete, path, "", http.StatusPreconditionFailed)
 }
 
 func TestCertificateDocumentFallback(t *testing.T) {
@@ -1695,7 +1734,7 @@ func TestAPISchemaLifecycle(t *testing.T) {
 	assertStatus(t, handler, http.MethodGet, basePath+"/apis/a/schemas/payload/extra"+apiQuery, "", http.StatusNotFound)
 	assertStatus(t, handler, http.MethodPost, path, "", http.StatusMethodNotAllowed)
 	assertStatus(t, handler, http.MethodDelete, path, "", http.StatusNoContent)
-	assertStatus(t, handler, http.MethodDelete, path, "", http.StatusNoContent)
+	assertStatus(t, handler, http.MethodDelete, path, "", http.StatusPreconditionFailed)
 }
 
 func TestAPISchemaDocumentFallback(t *testing.T) {
@@ -2114,6 +2153,7 @@ func request(t *testing.T, handler http.Handler, method, path, body string) *htt
 	recorder := httptest.NewRecorder()
 	req := httptest.NewRequest(method, path, strings.NewReader(body))
 	req.Header.Set("Authorization", "Bearer token")
+	setRequiredIfMatch(req)
 	handler.ServeHTTP(recorder, req)
 	return recorder
 }
@@ -2132,9 +2172,35 @@ func assertStatus(t *testing.T, handler http.Handler, method, path, body string,
 	t.Helper()
 	request := httptest.NewRequest(method, path, strings.NewReader(body))
 	request.Header.Set("Authorization", "Bearer token")
+	setRequiredIfMatch(request)
 	recorder := httptest.NewRecorder()
-	handler.ServeHTTP(recorder, request)
+	rt, parsed := parse(split(request.URL.Path))
+	if armHandler, ok := handler.(*Handler); ok && parsed && requiresIfMatch(rt, method) && (want == http.StatusNotFound || want == http.StatusConflict) {
+		armHandler.routeRequest(recorder, request, rt)
+	} else {
+		handler.ServeHTTP(recorder, request)
+	}
 	if recorder.Code != want {
 		t.Fatalf("%s %s = %d, want %d: %s", method, path, recorder.Code, want, recorder.Body.String())
+	}
+}
+
+func assertRoutedStatus(t *testing.T, handler *Handler, method, path, body string, want int) {
+	t.Helper()
+	request := httptest.NewRequest(method, path, strings.NewReader(body))
+	recorder := httptest.NewRecorder()
+	rt, ok := parse(split(request.URL.Path))
+	if !ok {
+		t.Fatalf("route did not parse: %s", path)
+	}
+	handler.routeRequest(recorder, request, rt)
+	if recorder.Code != want {
+		t.Fatalf("routed %s %s = %d, want %d: %s", method, path, recorder.Code, want, recorder.Body.String())
+	}
+}
+
+func setRequiredIfMatch(request *http.Request) {
+	if rt, ok := parse(split(request.URL.Path)); ok && requiresIfMatch(rt, request.Method) {
+		request.Header.Set("If-Match", "*")
 	}
 }

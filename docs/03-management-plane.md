@@ -196,9 +196,11 @@ resource route. `GET` and `HEAD` honor strong `If-Match` and weak
 `If-None-Match` comparisons, including comma-separated validators and `*`.
 `PUT`, `PATCH`, and `DELETE` evaluate their preconditions while management
 mutations are serialized, return `412 PreconditionFailed` on stale state, and
-return `400 InvalidHeaderValue` for malformed entity tags. Endpoint-specific
-rules that require `If-Match` even when the header is omitted remain part of
-the generated operation-contract audit.
+return `400 InvalidHeaderValue` for malformed entity tags. The stable
+`2024-05-01` operation audit is enforced for implemented routes: entity PATCH
+and DELETE operations return `400 MissingRequiredHeader` when `If-Match` is
+absent, PUT keeps it optional, and association deletes do not acquire an entity
+precondition. Exact live-Azure missing-header wording remains differential work.
 
 Current collection routes are normalized centrally to the APIM paged shape.
 They validate int32 `$top` (`>= 1`) and `$skip` (`>= 0`), preserve stable store

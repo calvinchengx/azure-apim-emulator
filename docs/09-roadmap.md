@@ -35,7 +35,7 @@ part of the identity expansion.
   APIs, operations, schemas, releases, products, groups, users, subscriptions, named values, backends, certificates, loggers, diagnostics, API version sets, tags, and policy fragments now have canonical lossless documents; user/subscription/named-value/certificate/logger documents enforce store-level secret redaction, recursive PATCH is implemented where the stable surface exposes PATCH, and the same persistence pattern remains to be extended across other core resources.
 - OpenAPI import/export and linked imports.
 - Complete ARM common semantics: ETags, paging, filters, patch, LROs, errors, and secret operations.
-  Conditional ETag evaluation and common collection paging/filter grammar are implemented centrally; required-header and endpoint-specific filter auditing plus the remaining semantics are still open.
+  Conditional ETag evaluation, stable-contract required `If-Match` enforcement for implemented entity mutations, and common collection paging/filter grammar are implemented centrally; endpoint-specific filter auditing plus the remaining semantics are still open.
 - HTTP routing edge cases, custom domains, backend TLS, pools, retries, circuit breakers, streaming, SSE, and WebSocket.
 - Entra JWT, managed identity, OAuth/OIDC, client certificates, and Key Vault-backed named values.
 - Core policy families: routing, mutation, control flow, auth, limits, cache, validation, send-request, transforms, and tracing.
