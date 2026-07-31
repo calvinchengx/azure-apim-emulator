@@ -1608,9 +1608,17 @@ func TestCertificateLifecycle(t *testing.T) {
 	assertStatus(t, handler, http.MethodPut, path, `{"properties":{"data":"aW52YWxpZA==","password":"wrong"}}`, http.StatusBadRequest)
 	pfx := testPKCS12(t, "password")
 	assertStatus(t, handler, http.MethodPut, path, `{"properties":{"data":"`+pfx+`","password":"wrong"}}`, http.StatusBadRequest)
-	assertStatus(t, handler, http.MethodPut, path, `{"properties":{"data":"`+pfx+`","password":"password"}}`, http.StatusCreated)
+	assertStatus(t, handler, http.MethodPut, path, `{"data":"root-data","password":"root-password","customRoot":{"retained":true},"properties":{"data":"`+pfx+`","password":"password","subject":"injected","thumbprint":"injected","expirationDate":"2000-01-01T00:00:00Z","customMetadata":{"keep":"one"}}}`, http.StatusCreated)
+	stored, err := st.GetCertificate(model.Certificate{ServiceID: serviceModel().ID(), Name: "client"}.ID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	storedProperties := stored.Document["properties"].(map[string]any)
+	if stored.Document["data"] != nil || stored.Document["password"] != nil || storedProperties["data"] != nil || storedProperties["password"] != nil || storedProperties["subject"] != nil || storedProperties["thumbprint"] != nil || storedProperties["expirationDate"] != nil || storedProperties["customMetadata"] == nil {
+		t.Fatalf("stored certificate document = %#v", stored.Document)
+	}
 	got := request(t, handler, http.MethodGet, path, "")
-	if strings.Contains(got.Body.String(), pfx) || !strings.Contains(got.Body.String(), `"subject":"CN=client.test"`) || !strings.Contains(got.Body.String(), `"thumbprint":`) {
+	if strings.Contains(got.Body.String(), pfx) || strings.Contains(got.Body.String(), "root-password") || !strings.Contains(got.Body.String(), `"subject":"CN=client.test"`) || !strings.Contains(got.Body.String(), `"thumbprint":`) || !strings.Contains(got.Body.String(), `"retained":true`) || !strings.Contains(got.Body.String(), `"keep":"one"`) {
 		t.Fatalf("certificate GET = %s", got.Body.String())
 	}
 	assertStatus(t, handler, http.MethodHead, path, "", http.StatusOK)
@@ -1622,14 +1630,25 @@ func TestCertificateLifecycle(t *testing.T) {
 	assertStatus(t, handler, http.MethodGet, basePath+"/certificates/client/too/deep"+apiQuery, "", http.StatusNotFound)
 	assertStatus(t, handler, http.MethodPost, path, "", http.StatusMethodNotAllowed)
 	vaultPath := basePath + "/certificates/vault" + apiQuery
-	assertStatus(t, handler, http.MethodPut, vaultPath, `{"properties":{"keyVault":{"secretIdentifier":"https://vault/secrets/client","identityClientId":"identity"}}}`, http.StatusCreated)
+	assertStatus(t, handler, http.MethodPut, vaultPath, `{"customRoot":{"vault":true},"properties":{"keyVault":{"secretIdentifier":"https://vault/secrets/client","identityClientId":"identity"},"customMetadata":{"source":"vault"}}}`, http.StatusCreated)
 	assertStatus(t, handler, http.MethodPost, basePath+"/certificates/vault/refreshSecret"+apiQuery, "", http.StatusOK)
+	vault := request(t, handler, http.MethodGet, vaultPath, "")
+	if !strings.Contains(vault.Body.String(), `"secretIdentifier":"https://vault/secrets/client"`) || !strings.Contains(vault.Body.String(), `"identityClientId":"identity"`) || !strings.Contains(vault.Body.String(), `"vault":true`) || strings.Contains(vault.Body.String(), `"data"`) || strings.Contains(vault.Body.String(), `"password"`) {
+		t.Fatalf("vault certificate = %s", vault.Body.String())
+	}
 	handler.Activate = func() error { return errors.New("activation") }
 	assertStatus(t, handler, http.MethodPut, path, `{"properties":{"data":"`+pfx+`","password":"password"}}`, http.StatusBadRequest)
 	assertStatus(t, handler, http.MethodDelete, path, "", http.StatusInternalServerError)
 	handler.Activate = nil
 	assertStatus(t, handler, http.MethodDelete, path, "", http.StatusNoContent)
 	assertStatus(t, handler, http.MethodDelete, path, "", http.StatusNoContent)
+}
+
+func TestCertificateDocumentFallback(t *testing.T) {
+	wire := certificateWire(model.Certificate{Name: "invalid", Document: map[string]any{"properties": "invalid", "data": "secret", "password": "secret"}})
+	if _, ok := wire["properties"].(map[string]any); !ok || wire["data"] != nil || wire["password"] != nil {
+		t.Fatalf("certificate wire = %#v", wire)
+	}
 }
 
 func TestAPISchemaLifecycle(t *testing.T) {

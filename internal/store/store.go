@@ -127,6 +127,10 @@ CREATE TABLE IF NOT EXISTS certificates (
   data BLOB NOT NULL, password TEXT NOT NULL, key_vault_secret_id TEXT NOT NULL,
   key_vault_identity_id TEXT NOT NULL, etag TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS certificate_documents (
+  certificate_id TEXT PRIMARY KEY REFERENCES certificates(id) ON DELETE CASCADE,
+  document_json TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS api_releases (
   id TEXT PRIMARY KEY, api_id TEXT NOT NULL REFERENCES apis(id) ON DELETE CASCADE,
   name TEXT NOT NULL, target_api_id TEXT NOT NULL REFERENCES apis(id) ON DELETE CASCADE,
@@ -1494,11 +1498,21 @@ func scanPolicyFragments(rows *sql.Rows, err error) ([]model.PolicyFragment, err
 
 // UpsertCertificate creates or replaces a certificate.
 func (s *Store) UpsertCertificate(v model.Certificate) (model.Certificate, error) {
+	sanitizeCertificateDocument(v.Document)
+	document, err := json.Marshal(v.Document)
+	if err != nil {
+		return v, err
+	}
 	v.ETag = newETag()
 	if v.Data == nil {
 		v.Data = []byte{}
 	}
-	_, err := s.db.Exec(`INSERT INTO certificates
+	tx, err := s.db.Begin()
+	if err != nil {
+		return v, err
+	}
+	defer tx.Rollback()
+	_, err = tx.Exec(`INSERT INTO certificates
         (id, service_id, name, subject, thumbprint, expiration, data, password, key_vault_secret_id, key_vault_identity_id, etag)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET subject=excluded.subject,
           thumbprint=excluded.thumbprint, expiration=excluded.expiration, data=excluded.data,
@@ -1506,22 +1520,46 @@ func (s *Store) UpsertCertificate(v model.Certificate) (model.Certificate, error
           key_vault_identity_id=excluded.key_vault_identity_id, etag=excluded.etag`,
 		v.ID(), v.ServiceID, v.Name, v.Subject, v.Thumbprint, v.Expiration.Unix(), v.Data, v.Password,
 		v.KeyVaultSecretID, v.KeyVaultIdentityID, v.ETag)
-	return v, err
+	if err != nil {
+		return v, err
+	}
+	if _, err := tx.Exec(`INSERT INTO certificate_documents (certificate_id, document_json) VALUES (?, ?)
+	    ON CONFLICT(certificate_id) DO UPDATE SET document_json=excluded.document_json`, v.ID(), document); err != nil {
+		return v, err
+	}
+	return v, tx.Commit()
+}
+
+func sanitizeCertificateDocument(document map[string]any) {
+	delete(document, "data")
+	delete(document, "password")
+	properties, _ := document["properties"].(map[string]any)
+	delete(properties, "data")
+	delete(properties, "password")
+	delete(properties, "subject")
+	delete(properties, "thumbprint")
+	delete(properties, "expirationDate")
 }
 
 // GetCertificate finds one certificate.
 func (s *Store) GetCertificate(id string) (model.Certificate, error) {
 	var v model.Certificate
 	var expiration int64
+	var document string
 	err := s.db.QueryRow(`SELECT service_id, name, subject, thumbprint, expiration, data, password,
-        key_vault_secret_id, key_vault_identity_id, etag FROM certificates WHERE lower(id)=lower(?)`, id).
+		key_vault_secret_id, key_vault_identity_id, etag,
+		COALESCE((SELECT document_json FROM certificate_documents WHERE lower(certificate_id)=lower(certificates.id)), '{}')
+		FROM certificates WHERE lower(id)=lower(?)`, id).
 		Scan(&v.ServiceID, &v.Name, &v.Subject, &v.Thumbprint, &expiration, &v.Data, &v.Password,
-			&v.KeyVaultSecretID, &v.KeyVaultIdentityID, &v.ETag)
+			&v.KeyVaultSecretID, &v.KeyVaultIdentityID, &v.ETag, &document)
 	if errors.Is(err, sql.ErrNoRows) {
 		return model.Certificate{}, ErrNotFound
 	}
-	if err == nil && expiration != 0 {
-		v.Expiration = time.Unix(expiration, 0).UTC()
+	if err == nil {
+		if expiration != 0 {
+			v.Expiration = time.Unix(expiration, 0).UTC()
+		}
+		_ = json.Unmarshal([]byte(document), &v.Document)
 	}
 	return v, err
 }
@@ -1529,7 +1567,9 @@ func (s *Store) GetCertificate(id string) (model.Certificate, error) {
 // ListCertificates returns certificates for a service in stable ID order.
 func (s *Store) ListCertificates(serviceID string) ([]model.Certificate, error) {
 	rows, err := s.db.Query(`SELECT service_id, name, subject, thumbprint, expiration, data, password,
-        key_vault_secret_id, key_vault_identity_id, etag FROM certificates
+		key_vault_secret_id, key_vault_identity_id, etag,
+		COALESCE((SELECT document_json FROM certificate_documents WHERE lower(certificate_id)=lower(certificates.id)), '{}')
+		FROM certificates
         WHERE lower(service_id)=lower(?) ORDER BY id`, serviceID)
 	if err != nil {
 		return nil, err
@@ -1539,13 +1579,15 @@ func (s *Store) ListCertificates(serviceID string) ([]model.Certificate, error) 
 	for rows.Next() {
 		var v model.Certificate
 		var expiration int64
+		var document string
 		if err := rows.Scan(&v.ServiceID, &v.Name, &v.Subject, &v.Thumbprint, &expiration, &v.Data,
-			&v.Password, &v.KeyVaultSecretID, &v.KeyVaultIdentityID, &v.ETag); err != nil {
+			&v.Password, &v.KeyVaultSecretID, &v.KeyVaultIdentityID, &v.ETag, &document); err != nil {
 			return nil, err
 		}
 		if expiration != 0 {
 			v.Expiration = time.Unix(expiration, 0).UTC()
 		}
+		_ = json.Unmarshal([]byte(document), &v.Document)
 		values = append(values, v)
 	}
 	return values, rows.Err()

@@ -2454,10 +2454,14 @@ func (h *Handler) certificate(w http.ResponseWriter, r *http.Request, rt route) 
 			return
 		}
 		var body certificatePayload
-		if err := decode(r, &body); err != nil {
+		var document map[string]any
+		if err := decodeDocument(r, &body, &document); err != nil {
 			writeError(w, http.StatusBadRequest, "InvalidRequestContent", err.Error(), "")
 			return
 		}
+		value.Document = document
+		cleanResourceDocument(value.Document)
+		sanitizeCertificateDocument(value.Document)
 		if body.Properties.Password != nil {
 			value.Password = *body.Properties.Password
 		}
@@ -2509,6 +2513,17 @@ func (h *Handler) certificate(w http.ResponseWriter, r *http.Request, rt route) 
 	default:
 		methodNotAllowed(w)
 	}
+}
+
+func sanitizeCertificateDocument(document map[string]any) {
+	delete(document, "data")
+	delete(document, "password")
+	properties, _ := document["properties"].(map[string]any)
+	delete(properties, "data")
+	delete(properties, "password")
+	delete(properties, "subject")
+	delete(properties, "thumbprint")
+	delete(properties, "expirationDate")
 }
 
 type apiReleasePayload struct {
@@ -3251,7 +3266,18 @@ func backendWire(v model.Backend) map[string]any {
 	return result
 }
 func certificateWire(v model.Certificate) map[string]any {
-	properties := map[string]any{}
+	result := cloneObject(v.Document)
+	result["id"], result["name"], result["type"] = v.ID(), v.Name, "Microsoft.ApiManagement/service/certificates"
+	delete(result, "data")
+	delete(result, "password")
+	properties, ok := result["properties"].(map[string]any)
+	if !ok {
+		properties = map[string]any{}
+		result["properties"] = properties
+	}
+	for _, field := range []string{"data", "password", "subject", "thumbprint", "expirationDate", "keyVault"} {
+		delete(properties, field)
+	}
 	if v.Subject != "" {
 		properties["subject"] = v.Subject
 	}
@@ -3264,7 +3290,7 @@ func certificateWire(v model.Certificate) map[string]any {
 	if v.KeyVaultSecretID != "" {
 		properties["keyVault"] = map[string]any{"secretIdentifier": v.KeyVaultSecretID, "identityClientId": v.KeyVaultIdentityID}
 	}
-	return map[string]any{"id": v.ID(), "name": v.Name, "type": "Microsoft.ApiManagement/service/certificates", "properties": properties}
+	return result
 }
 func apiRevisionWire(v model.API) map[string]any {
 	base, _ := splitAPIRevision(v.Name)

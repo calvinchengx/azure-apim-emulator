@@ -234,6 +234,9 @@ func TestGoManagementSDKConfiguresProtectedGateway(t *testing.T) {
 	if _, err := certificateClient.RefreshSecret(ctx, defaultResourceGroup, "emulator", "vault-client", nil); err != nil {
 		t.Fatal(err)
 	}
+	if gotVaultCertificate, err := certificateClient.Get(ctx, defaultResourceGroup, "emulator", "vault-client", nil); err != nil || gotVaultCertificate.Properties == nil || gotVaultCertificate.Properties.KeyVault == nil || gotVaultCertificate.Properties.KeyVault.SecretIdentifier == nil || *gotVaultCertificate.Properties.KeyVault.SecretIdentifier != vaultSecretID {
+		t.Fatalf("vault certificate GET = %+v, %v", gotVaultCertificate, err)
+	}
 
 	backendClient, err := armapimanagement.NewBackendClient(defaultSubscription, credential, options)
 	if err != nil {

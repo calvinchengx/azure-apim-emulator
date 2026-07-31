@@ -584,7 +584,8 @@ func TestScanFunctionsRejectMalformedRows(t *testing.T) {
 		},
 		{
 			"certificates",
-			`CREATE TABLE certificates (id, service_id, name, subject, thumbprint, expiration, data, password, key_vault_secret_id, key_vault_identity_id, etag)`,
+			`CREATE TABLE certificates (id, service_id, name, subject, thumbprint, expiration, data, password, key_vault_secret_id, key_vault_identity_id, etag);
+			 CREATE TABLE certificate_documents (certificate_id, document_json)`,
 			`INSERT INTO certificates VALUES ('id', 'service', NULL, '', '', 0, x'', '', '', '', '')`,
 			func(db *sql.DB) error { _, err := (&Store{db: db}).ListCertificates("service"); return err },
 		},
@@ -735,6 +736,57 @@ func TestScanFunctionsRejectMalformedRows(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestUpsertCertificateTransactionErrors(t *testing.T) {
+	t.Run("document encoding", func(t *testing.T) {
+		st, err := Open("", clock.New())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer st.Close()
+		if _, err := st.UpsertCertificate(model.Certificate{Document: map[string]any{"bad": make(chan int)}}); err == nil {
+			t.Fatal("certificate accepted an unsupported document")
+		}
+	})
+	t.Run("begin", func(t *testing.T) {
+		st, err := Open("", clock.New())
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = st.Close()
+		if _, err := st.UpsertCertificate(model.Certificate{}); err == nil {
+			t.Fatal("closed store accepted a certificate")
+		}
+	})
+	t.Run("certificate row", func(t *testing.T) {
+		st, err := Open("", clock.New())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer st.Close()
+		if _, err := st.UpsertCertificate(model.Certificate{ServiceID: "/missing", Name: "certificate"}); err == nil {
+			t.Fatal("certificate with a missing service was accepted")
+		}
+	})
+	t.Run("document row", func(t *testing.T) {
+		st, err := Open("", clock.New())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer st.Close()
+		service, _ := st.UpsertService(model.Service{Name: "svc"})
+		if _, err := st.db.Exec(`CREATE TRIGGER reject_certificate_document BEFORE INSERT ON certificate_documents BEGIN SELECT RAISE(FAIL, 'rejected'); END`); err != nil {
+			t.Fatal(err)
+		}
+		certificate := model.Certificate{ServiceID: service.ID(), Name: "certificate"}
+		if _, err := st.UpsertCertificate(certificate); err == nil {
+			t.Fatal("rejected certificate document was accepted")
+		}
+		if _, err := st.GetCertificate(certificate.ID()); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("certificate transaction was not rolled back: %v", err)
+		}
+	})
 }
 
 func TestUpsertNamedValueTransactionErrors(t *testing.T) {
@@ -1821,12 +1873,12 @@ func TestCertificateLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	expires := time.Unix(4102444800, 0).UTC()
-	certificate, err := st.UpsertCertificate(model.Certificate{ServiceID: service.ID(), Name: "client", Subject: "CN=client", Thumbprint: "ABC", Expiration: expires, Data: []byte("pfx"), Password: "secret"})
-	if err != nil || certificate.ID() != service.ID()+"/certificates/client" || certificate.ETag == "" {
+	certificate, err := st.UpsertCertificate(model.Certificate{ServiceID: service.ID(), Name: "client", Subject: "CN=client", Thumbprint: "ABC", Expiration: expires, Data: []byte("pfx"), Password: "secret", Document: map[string]any{"data": "root", "password": "root-pass", "custom": true, "properties": map[string]any{"data": "nested", "password": "nested-pass", "subject": "injected", "thumbprint": "injected", "expirationDate": "injected"}}})
+	if err != nil || certificate.ID() != service.ID()+"/certificates/client" || certificate.ETag == "" || certificate.Document["data"] != nil || certificate.Document["custom"] != true {
 		t.Fatalf("certificate = %+v, %v", certificate, err)
 	}
 	got, err := st.GetCertificate(strings.ToUpper(certificate.ID()))
-	if err != nil || got.Subject != "CN=client" || !got.Expiration.Equal(expires) || string(got.Data) != "pfx" {
+	if err != nil || got.Subject != "CN=client" || !got.Expiration.Equal(expires) || string(got.Data) != "pfx" || got.Document["password"] != nil || got.Document["properties"].(map[string]any)["subject"] != nil {
 		t.Fatalf("get certificate = %+v, %v", got, err)
 	}
 	values, err := st.ListCertificates(service.ID())

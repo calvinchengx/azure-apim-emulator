@@ -146,6 +146,14 @@ explicit nulls. Legacy rows receive a canonical fallback before PATCH, malformed
 documents fail rather than being silently discarded, and the official Go SDK
 witness verifies credential IDs survive an update and subsequent GET.
 
+Certificates retain canonical documents transactionally while inline PFX bytes
+and passwords remain isolated in secret columns. Handler, store, and wire
+boundaries strip `data`/`password`; client-supplied subject, thumbprint, and
+expiration fields are discarded and projected only from parsed PFX state. PUT
+replacement preserves extension and non-secret Key Vault reference metadata,
+and refresh responses use the same redacted projection. Official Go SDK evidence
+covers PFX create/get/list and Key Vault create/refresh/get workflows.
+
 ## Common ARM semantics
 
 Implement centrally and test across resources:

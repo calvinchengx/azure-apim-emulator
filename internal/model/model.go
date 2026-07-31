@@ -132,6 +132,7 @@ type Certificate struct {
 	KeyVaultSecretID   string
 	KeyVaultIdentityID string
 	ETag               string
+	Document           map[string]any
 }
 
 // ID returns the certificate ARM resource ID.
