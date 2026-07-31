@@ -916,6 +916,9 @@ func TestGoManagementSDKConfiguresProtectedGateway(t *testing.T) {
 	if err != nil || updatedRelease.Properties == nil || updatedRelease.Properties.Notes == nil || *updatedRelease.Properties.Notes != updatedNotes {
 		t.Fatalf("updated API release = %+v, %v", updatedRelease, err)
 	}
+	if gotRelease, err := releaseClient.Get(ctx, defaultResourceGroup, "emulator", "go-sdk-full", "release-2", nil); err != nil || gotRelease.Properties == nil || gotRelease.Properties.Notes == nil || *gotRelease.Properties.Notes != updatedNotes {
+		t.Fatalf("updated API release GET = %+v, %v", gotRelease, err)
+	}
 	if _, err := releaseClient.Delete(ctx, defaultResourceGroup, "emulator", "go-sdk-full", "release-2", "*", nil); err != nil {
 		t.Fatal(err)
 	}

@@ -128,6 +128,10 @@ CREATE TABLE IF NOT EXISTS api_releases (
   name TEXT NOT NULL, target_api_id TEXT NOT NULL REFERENCES apis(id) ON DELETE CASCADE,
   notes TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, etag TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS api_release_documents (
+  release_id TEXT PRIMARY KEY REFERENCES api_releases(id) ON DELETE CASCADE,
+  document_json TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS operations (
   id TEXT PRIMARY KEY, api_id TEXT NOT NULL REFERENCES apis(id) ON DELETE CASCADE,
   name TEXT NOT NULL, display_name TEXT NOT NULL, method TEXT NOT NULL,
@@ -651,6 +655,10 @@ func (s *Store) ListAPIRevisions(serviceID, apiName string) ([]model.API, error)
 
 // UpsertAPIRelease records a release and atomically promotes its target revision.
 func (s *Store) UpsertAPIRelease(v model.APIRelease) (model.APIRelease, error) {
+	document, err := json.Marshal(v.Document)
+	if err != nil {
+		return v, err
+	}
 	target, err := s.GetAPI(v.TargetAPIID)
 	if err != nil {
 		return v, err
@@ -683,6 +691,10 @@ func (s *Store) UpsertAPIRelease(v model.APIRelease) (model.APIRelease, error) {
 	if err != nil {
 		return v, err
 	}
+	if _, err := tx.Exec(`INSERT INTO api_release_documents (release_id, document_json) VALUES (?, ?)
+	    ON CONFLICT(release_id) DO UPDATE SET document_json=excluded.document_json`, v.ID(), document); err != nil {
+		return v, err
+	}
 	result, err := tx.Exec(`UPDATE api_revision_metadata SET is_current=CASE WHEN lower(api_id)=lower(?) THEN 1 ELSE 0 END
 	    WHERE api_id IN (SELECT id FROM apis WHERE lower(service_id)=lower(?) AND
 	      (lower(name)=lower(?) OR lower(name) LIKE lower(?)))`, v.TargetAPIID, target.ServiceID,
@@ -700,18 +712,24 @@ func (s *Store) UpsertAPIRelease(v model.APIRelease) (model.APIRelease, error) {
 // GetAPIRelease finds one API release.
 func (s *Store) GetAPIRelease(id string) (model.APIRelease, error) {
 	var v model.APIRelease
-	err := s.db.QueryRow(`SELECT api_id, name, target_api_id, notes, created_at, updated_at, etag
+	var document string
+	err := s.db.QueryRow(`SELECT api_id, name, target_api_id, notes, created_at, updated_at, etag,
+	    COALESCE((SELECT document_json FROM api_release_documents WHERE lower(release_id)=lower(api_releases.id)), '{}')
 	    FROM api_releases WHERE lower(id)=lower(?)`, id).
-		Scan(&v.APIID, &v.Name, &v.TargetAPIID, &v.Notes, &v.CreatedAt, &v.UpdatedAt, &v.ETag)
+		Scan(&v.APIID, &v.Name, &v.TargetAPIID, &v.Notes, &v.CreatedAt, &v.UpdatedAt, &v.ETag, &document)
 	if errors.Is(err, sql.ErrNoRows) {
 		return model.APIRelease{}, ErrNotFound
+	}
+	if err == nil {
+		_ = json.Unmarshal([]byte(document), &v.Document)
 	}
 	return v, err
 }
 
 // ListAPIReleases returns releases for an API in stable ID order.
 func (s *Store) ListAPIReleases(apiID string) ([]model.APIRelease, error) {
-	rows, err := s.db.Query(`SELECT api_id, name, target_api_id, notes, created_at, updated_at, etag
+	rows, err := s.db.Query(`SELECT api_id, name, target_api_id, notes, created_at, updated_at, etag,
+	    COALESCE((SELECT document_json FROM api_release_documents WHERE lower(release_id)=lower(api_releases.id)), '{}')
 	    FROM api_releases WHERE lower(api_id)=lower(?) ORDER BY id`, apiID)
 	if err != nil {
 		return nil, err
@@ -720,9 +738,11 @@ func (s *Store) ListAPIReleases(apiID string) ([]model.APIRelease, error) {
 	values := make([]model.APIRelease, 0)
 	for rows.Next() {
 		var v model.APIRelease
-		if err := rows.Scan(&v.APIID, &v.Name, &v.TargetAPIID, &v.Notes, &v.CreatedAt, &v.UpdatedAt, &v.ETag); err != nil {
+		var document string
+		if err := rows.Scan(&v.APIID, &v.Name, &v.TargetAPIID, &v.Notes, &v.CreatedAt, &v.UpdatedAt, &v.ETag, &document); err != nil {
 			return nil, err
 		}
+		_ = json.Unmarshal([]byte(document), &v.Document)
 		values = append(values, v)
 	}
 	return values, rows.Err()

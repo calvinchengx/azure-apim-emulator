@@ -65,6 +65,7 @@ type APIRelease struct {
 	CreatedAt   int64
 	UpdatedAt   int64
 	ETag        string
+	Document    map[string]any
 }
 
 // ID returns the release ARM resource ID.

@@ -2465,10 +2465,20 @@ func (h *Handler) apiReleaseResource(w http.ResponseWriter, r *http.Request, val
 			value = existing
 		}
 		var body apiReleasePayload
-		if err := decode(r, &body); err != nil {
+		var document map[string]any
+		if err := decodeDocument(r, &body, &document); err != nil {
 			writeError(w, http.StatusBadRequest, "InvalidRequestContent", err.Error(), "")
 			return
 		}
+		if r.Method == http.MethodPatch {
+			if value.Document == nil {
+				value.Document = apiReleaseWire(value)
+			}
+			mergeObject(value.Document, document)
+		} else {
+			value.Document = document
+		}
+		cleanResourceDocument(value.Document)
 		if body.Properties.APIID != nil {
 			_, targetID, err := h.revisionSource(*body.Properties.APIID)
 			if err != nil {
@@ -2479,6 +2489,13 @@ func (h *Handler) apiReleaseResource(w http.ResponseWriter, r *http.Request, val
 		}
 		if body.Properties.Notes != nil {
 			value.Notes = *body.Properties.Notes
+		}
+		properties, _ := document["properties"].(map[string]any)
+		if field, present := properties["apiId"]; present && field == nil {
+			value.TargetAPIID = ""
+		}
+		if field, present := properties["notes"]; present && field == nil {
+			value.Notes = ""
 		}
 		if value.TargetAPIID == "" {
 			writeError(w, http.StatusBadRequest, "ValidationError", "apiId is required.", "properties.apiId")
@@ -3132,10 +3149,17 @@ func apiRevisionWire(v model.API) map[string]any {
 		"updatedDateTime": time.Unix(v.UpdatedAt, 0).UTC().Format(time.RFC3339), "isOnline": true, "isCurrent": v.IsCurrent}
 }
 func apiReleaseWire(v model.APIRelease) map[string]any {
-	return map[string]any{"id": v.ID(), "name": v.Name, "type": "Microsoft.ApiManagement/service/apis/releases",
-		"properties": map[string]any{"apiId": v.TargetAPIID, "notes": v.Notes,
-			"createdDateTime": time.Unix(v.CreatedAt, 0).UTC().Format(time.RFC3339),
-			"updatedDateTime": time.Unix(v.UpdatedAt, 0).UTC().Format(time.RFC3339)}}
+	result := cloneObject(v.Document)
+	result["id"], result["name"], result["type"] = v.ID(), v.Name, "Microsoft.ApiManagement/service/apis/releases"
+	properties, ok := result["properties"].(map[string]any)
+	if !ok {
+		properties = map[string]any{}
+		result["properties"] = properties
+	}
+	properties["apiId"], properties["notes"] = v.TargetAPIID, v.Notes
+	properties["createdDateTime"] = time.Unix(v.CreatedAt, 0).UTC().Format(time.RFC3339)
+	properties["updatedDateTime"] = time.Unix(v.UpdatedAt, 0).UTC().Format(time.RFC3339)
+	return result
 }
 func operationWire(v model.Operation) map[string]any {
 	result := cloneObject(v.Document)

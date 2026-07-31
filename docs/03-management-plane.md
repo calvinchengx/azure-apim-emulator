@@ -106,6 +106,12 @@ wire format, and provisioning state remain authoritative. The JavaScript SDK
 witness covers create/get/list/reference/ETag/delete behavior, and document
 writes are transactional with compiler-visible fragment state.
 
+API releases retain canonical documents in the same transaction that records
+the release and promotes its target revision. PUT replaces extension data,
+PATCH recursively merges it with explicit note clearing, and resolved target
+IDs plus server-managed creation/update timestamps remain authoritative. The
+official Go SDK witness verifies update persistence with a subsequent GET.
+
 ## Common ARM semantics
 
 Implement centrally and test across resources:

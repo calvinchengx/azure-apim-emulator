@@ -596,7 +596,7 @@ func TestAPIBranches(t *testing.T) {
 	assertStatus(t, handler, http.MethodPut, basePath+"/apis/a/releases/r"+apiQuery, `{"properties":{}}`, http.StatusBadRequest)
 	assertStatus(t, handler, http.MethodPut, basePath+"/apis/a/releases/r"+apiQuery, `{"properties":{"apiId":"/missing"}}`, http.StatusNotFound)
 	targetRevision3 := serviceModel().ID() + "/apis/a;rev=3"
-	assertStatus(t, handler, http.MethodPut, basePath+"/apis/a/releases/r"+apiQuery, `{"properties":{"apiId":"`+targetRevision3+`","notes":"Release 3"}}`, http.StatusCreated)
+	assertStatus(t, handler, http.MethodPut, basePath+"/apis/a/releases/r"+apiQuery, `{"customRoot":{"retained":true},"properties":{"apiId":"`+targetRevision3+`","notes":"Release 3","customMetadata":{"keep":"one","remove":"old"}}}`, http.StatusCreated)
 	assertStatus(t, handler, http.MethodGet, basePath+"/apis/a/releases/r"+apiQuery, "", http.StatusOK)
 	assertStatus(t, handler, http.MethodHead, basePath+"/apis/a/releases/r"+apiQuery, "", http.StatusOK)
 	releases := request(t, handler, http.MethodGet, basePath+"/apis/a/releases"+apiQuery, "")
@@ -606,7 +606,12 @@ func TestAPIBranches(t *testing.T) {
 	assertStatus(t, handler, http.MethodPatch, basePath+"/apis/a/releases/missing"+apiQuery, `{}`, http.StatusNotFound)
 	assertStatus(t, handler, http.MethodPatch, basePath+"/apis/a/releases/r"+apiQuery, `{`, http.StatusBadRequest)
 	targetRevision2 := serviceModel().ID() + "/apis/a;rev=2"
-	assertStatus(t, handler, http.MethodPatch, basePath+"/apis/a/releases/r"+apiQuery, `{"properties":{"apiId":"`+targetRevision2+`","notes":"Release 2"}}`, http.StatusOK)
+	assertStatus(t, handler, http.MethodPatch, basePath+"/apis/a/releases/r"+apiQuery, `{"properties":{"apiId":"`+targetRevision2+`","notes":null,"customMetadata":{"add":"two","remove":null}}}`, http.StatusOK)
+	release := request(t, handler, http.MethodGet, basePath+"/apis/a/releases/r"+apiQuery, "")
+	if !strings.Contains(release.Body.String(), `"retained":true`) || !strings.Contains(release.Body.String(), `"keep":"one"`) || !strings.Contains(release.Body.String(), `"add":"two"`) || !strings.Contains(release.Body.String(), `"notes":""`) || strings.Contains(release.Body.String(), `"remove"`) {
+		t.Fatalf("patched API release = %s", release.Body.String())
+	}
+	assertStatus(t, handler, http.MethodPatch, basePath+"/apis/a/releases/r"+apiQuery, `{"properties":{"apiId":null}}`, http.StatusBadRequest)
 	assertStatus(t, handler, http.MethodPut, basePath+"/apis/other"+apiQuery, `{"properties":{"displayName":"Other","path":"other","serviceUrl":"https://other"}}`, http.StatusCreated)
 	assertStatus(t, handler, http.MethodPut, basePath+"/apis/other/releases/r"+apiQuery, `{"properties":{"apiId":"`+targetRevision2+`"}}`, http.StatusConflict)
 	revisions = request(t, handler, http.MethodGet, basePath+"/apis/a/revisions"+apiQuery, "")
@@ -630,6 +635,33 @@ func TestAPIBranches(t *testing.T) {
 	assertStatus(t, handler, http.MethodDelete, basePath+"/apis/a/operations/get"+apiQuery, "", http.StatusNoContent)
 	assertStatus(t, handler, http.MethodDelete, basePath+"/apis/a"+apiQuery, "", http.StatusNoContent)
 	assertStatus(t, handler, http.MethodDelete, basePath+"/apis/a"+apiQuery, "", http.StatusNoContent)
+}
+
+func TestAPIReleaseDocumentFallbacks(t *testing.T) {
+	wire := apiReleaseWire(model.APIRelease{Name: "invalid", Document: map[string]any{"properties": "invalid"}})
+	if _, ok := wire["properties"].(map[string]any); !ok {
+		t.Fatalf("release wire properties = %#v", wire["properties"])
+	}
+
+	handler, st := testHandler(t)
+	seedService(t, st)
+	base, err := st.UpsertAPI(model.API{ServiceID: serviceModel().ID(), Name: "legacy"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := base
+	target.Name, target.Revision = "legacy;rev=2", "2"
+	target, err = st.CloneAPIRevision(base.ID(), target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.UpsertAPIRelease(model.APIRelease{APIID: base.ID(), Name: "release", TargetAPIID: target.ID()}); err != nil {
+		t.Fatal(err)
+	}
+	response := request(t, handler, http.MethodPatch, basePath+"/apis/legacy/releases/release"+apiQuery, `{"properties":{"notes":"hydrated"}}`)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"notes":"hydrated"`) {
+		t.Fatalf("legacy release PATCH = %d %s", response.Code, response.Body.String())
+	}
 }
 
 func TestAPIDocumentHelpersAndLegacyPatch(t *testing.T) {

@@ -589,7 +589,8 @@ func TestScanFunctionsRejectMalformedRows(t *testing.T) {
 		},
 		{
 			"releases",
-			`CREATE TABLE api_releases (id, api_id, name, target_api_id, notes, created_at, updated_at, etag)`,
+			`CREATE TABLE api_releases (id, api_id, name, target_api_id, notes, created_at, updated_at, etag);
+			 CREATE TABLE api_release_documents (release_id, document_json)`,
 			`INSERT INTO api_releases VALUES ('id', 'id', NULL, '', '', 0, 0, '')`,
 			func(db *sql.DB) error { _, err := (&Store{db: db}).ListAPIReleases("id"); return err },
 		},
@@ -1497,6 +1498,12 @@ func TestAPIReleaseTransactions(t *testing.T) {
 		name string
 		run  func(*testing.T, *Store, model.APIRelease)
 	}{
+		{"document encoding", func(t *testing.T, st *Store, release model.APIRelease) {
+			release.Document = map[string]any{"bad": make(chan int)}
+			if _, err := st.UpsertAPIRelease(release); err == nil {
+				t.Fatal("unsupported release document was accepted")
+			}
+		}},
 		{"missing target", func(t *testing.T, st *Store, release model.APIRelease) {
 			release.TargetAPIID = "/missing"
 			if _, err := st.UpsertAPIRelease(release); !errors.Is(err, ErrNotFound) {
@@ -1519,6 +1526,15 @@ func TestAPIReleaseTransactions(t *testing.T) {
 			_, _ = st.db.Exec(`CREATE TRIGGER reject_release BEFORE INSERT ON api_releases BEGIN SELECT RAISE(FAIL, 'rejected'); END`)
 			if _, err := st.UpsertAPIRelease(release); err == nil {
 				t.Fatal("write error ignored")
+			}
+		}},
+		{"document write", func(t *testing.T, st *Store, release model.APIRelease) {
+			_, _ = st.db.Exec(`CREATE TRIGGER reject_release_document BEFORE INSERT ON api_release_documents BEGIN SELECT RAISE(FAIL, 'rejected'); END`)
+			if _, err := st.UpsertAPIRelease(release); err == nil {
+				t.Fatal("document write error ignored")
+			}
+			if _, err := st.GetAPIRelease(release.ID()); !errors.Is(err, ErrNotFound) {
+				t.Fatalf("release transaction was not rolled back: %v", err)
 			}
 		}},
 		{"promotion", func(t *testing.T, st *Store, release model.APIRelease) {
