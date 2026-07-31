@@ -542,7 +542,8 @@ func backendHTTPClient(base *http.Client, service *Service, backendID string) (*
 		return nil, fmt.Errorf("backend %q was not found", backendID)
 	}
 	ids := backendCertificateIDs(backend)
-	if len(ids) == 0 {
+	validateChain, hasValidateChain := backendTLSSetting(backend, "validateCertificateChain")
+	if len(ids) == 0 && (!hasValidateChain || validateChain) {
 		return base, nil
 	}
 	transport, ok := base.Transport.(*http.Transport)
@@ -559,6 +560,9 @@ func backendHTTPClient(base *http.Client, service *Service, backendID string) (*
 	} else {
 		tlsConfig = tlsConfig.Clone()
 	}
+	if hasValidateChain && !validateChain {
+		tlsConfig.InsecureSkipVerify = true // APIM backend TLS explicitly permits untrusted chains.
+	}
 	for _, id := range ids {
 		certificate, ok := service.Certificates[strings.ToLower(id)]
 		if !ok {
@@ -574,6 +578,14 @@ func backendHTTPClient(base *http.Client, service *Service, backendID string) (*
 	result := *base
 	result.Transport = transport
 	return &result, nil
+}
+
+func backendTLSSetting(backend model.Backend, name string) (bool, bool) {
+	properties, _ := backend.Document["properties"].(map[string]any)
+	tls, _ := properties["tls"].(map[string]any)
+	value, present := tls[name]
+	boolean, ok := value.(bool)
+	return boolean, present && ok
 }
 
 func backendCertificateIDs(backend model.Backend) []string {

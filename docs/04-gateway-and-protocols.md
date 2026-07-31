@@ -22,7 +22,7 @@ validation and configured custom domains follow tier-specific rules.
 3. Match API and operation using protocol-specific routing and revision/version rules.
 4. Resolve subscription key and caller context.
 5. Execute effective inbound policies from broadest to narrowest scope.
-6. Select and call the backend through the backend policy section.
+6. Select and call the backend through the backend policy section, honoring backend TLS chain-validation settings and client certificates.
 7. Execute outbound policies in the documented order.
 8. On failure, create `LastError` and run applicable `on-error` policies.
 9. Emit response, trace, metrics, logs, analytics, and quota effects.

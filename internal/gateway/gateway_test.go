@@ -802,6 +802,32 @@ func TestBackendClientCertificateTransport(t *testing.T) {
 	if _, err := backendHTTPClient(base, badCertificate, "secure"); err == nil {
 		t.Fatal("invalid certificate should fail")
 	}
+	tlsBackend := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }))
+	defer tlsBackend.Close()
+	verificationService := &Service{Backends: map[string]model.Backend{"tls": {Name: "tls", Document: map[string]any{"properties": map[string]any{"tls": map[string]any{"validateCertificateChain": true}}}}}}
+	verifiedClient, err := backendHTTPClient(&http.Client{}, verificationService, "tls")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := verifiedClient.Get(tlsBackend.URL); err == nil {
+		t.Fatal("verified TLS backend unexpectedly accepted a self-signed certificate")
+	}
+	verificationService.Backends["tls"] = model.Backend{Name: "tls", Document: map[string]any{"properties": map[string]any{"tls": map[string]any{"validateCertificateChain": false}}}}
+	unverifiedClient, err := backendHTTPClient(&http.Client{}, verificationService, "tls")
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err = unverifiedClient.Get(tlsBackend.URL)
+	if err != nil {
+		t.Fatalf("unverified TLS backend request failed: %v", err)
+	}
+	if response.StatusCode != http.StatusNoContent {
+		t.Fatalf("unverified TLS backend = %d", response.StatusCode)
+	}
+	response.Body.Close()
+	if value, present := backendTLSSetting(model.Backend{Document: map[string]any{"properties": map[string]any{"tls": map[string]any{"validateCertificateChain": "false"}}}}, "validateCertificateChain"); present || value {
+		t.Fatalf("invalid TLS setting = %v, %v", value, present)
+	}
 	if err := validateBackendCertificates(service.Backends, service.Certificates); err != nil {
 		t.Fatal(err)
 	}

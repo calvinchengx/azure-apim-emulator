@@ -45,7 +45,7 @@ Snapshot date: 2026-08-01
 | GraphQL | planned | P5 | real GraphQL clients and resolver fixtures |
 | WebSocket/SSE | planned | P1/P5 | streaming clients and backend recorder |
 | gRPC | planned | P5 | generated clients and trailer/stream fixtures |
-| networking/private/custom domains | partial | P1/P6 | persisted custom-hostname routing with exact host precedence and local gateway reachability; private networking, custom-domain certificate/TLS state, and Azure differential fixtures pending |
+| networking/private/custom domains | partial | P1/P6 | persisted custom-hostname routing with exact host precedence, backend TLS chain-validation/client-certificate behavior, and local gateway reachability; private networking, custom-domain certificate/TLS state, and Azure differential fixtures pending |
 | tiers/SKUs/regions/deployment | planned | P6 | capability audit and tier fixtures |
 | diagnostics/analytics/monitoring | partial | P1/P7 | lossless logger and service/API diagnostic ARM state, logger reference protection, fixed sampling and all-error override, correlation/status/duration/client-IP SQLite events, Go SDK and real gateway integration; body/header capture and masking, external adapters, analytics, metrics, and Azure differential fixtures pending |
 | authorization providers/integrations | planned | P7 | adapter and Azure differential suites |
