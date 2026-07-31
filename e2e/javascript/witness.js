@@ -40,6 +40,21 @@ await client.apiOperation.createOrUpdate(resourceGroup, serviceName, "javascript
   method: "GET",
   urlTemplate: "/items",
 });
+await client.namedValue.beginCreateOrUpdateAndWait(resourceGroup, serviceName, "javascript-sdk-named-value", {
+  displayName: "JavaScriptSdkNamedValue",
+  value: "sdk-named-value",
+  tags: ["javascript", "gateway"],
+});
+const taggedNamedValues = [];
+for await (const item of client.namedValue.listByService(resourceGroup, serviceName, {
+  filter: "tags/any(tag: tag eq 'javascript')",
+})) {
+  taggedNamedValues.push(item);
+}
+if (taggedNamedValues.length !== 1 || taggedNamedValues[0].name !== "javascript-sdk-named-value") {
+  throw new Error("JavaScript SDK named-value tag filter failed");
+}
+await client.namedValue.delete(resourceGroup, serviceName, "javascript-sdk-named-value", "*");
 const fragment = await client.policyFragment.beginCreateOrUpdateAndWait(
   resourceGroup,
   serviceName,

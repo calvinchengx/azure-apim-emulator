@@ -1643,6 +1643,20 @@ func TestNamedValueLifecycle(t *testing.T) {
 	assertStatus(t, handler, http.MethodPut, path, `{"properties":{"displayName":"Token"}}`, http.StatusBadRequest)
 	assertStatus(t, handler, http.MethodPut, path, `{"properties":{"displayName":"Invalid name","value":"value"}}`, http.StatusBadRequest)
 	assertStatus(t, handler, http.MethodPut, path, `{"value":"root-secret","customRoot":{"retained":true},"properties":{"displayName":"Token","value":"value","secret":true,"tags":["auth"],"customMetadata":{"keep":"one","remove":"old"}}}`, http.StatusCreated)
+	for _, test := range []struct {
+		filter string
+		count  string
+	}{
+		{"tags/any(t: t eq 'auth')", `"count":1`},
+		{"tags/all(t: t eq 'auth')", `"count":1`},
+		{"tags/all(t: t ne 'auth')", `"count":0`},
+	} {
+		query := url.Values{"api-version": {"2024-05-01"}, "$filter": {test.filter}}
+		response := request(t, handler, http.MethodGet, collection+"&"+query.Encode(), "")
+		if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), test.count) {
+			t.Fatalf("named-value tag filter %q = %d %s", test.filter, response.Code, response.Body.String())
+		}
+	}
 	stored, err := st.GetNamedValue(model.NamedValue{ServiceID: serviceModel().ID(), Name: "token"}.ID())
 	if err != nil {
 		t.Fatal(err)
@@ -1688,6 +1702,73 @@ func TestNamedValueLifecycle(t *testing.T) {
 	handler.Activate = nil
 	assertStatus(t, handler, http.MethodDelete, path, "", http.StatusPreconditionFailed)
 	assertStatus(t, handler, http.MethodDelete, path, "", http.StatusPreconditionFailed)
+}
+
+func TestNamedValueTagFilterGrammar(t *testing.T) {
+	contractRoute := route{Tail: []string{"namedValues"}}
+	resource := map[string]any{"properties": map[string]any{"tags": []any{"auth", "gateway"}}}
+	for _, test := range []struct {
+		filter string
+		want   bool
+	}{
+		{"tags/any(tag: contains(tag, 'way'))", true},
+		{"tags/all(tag: startswith(tag, 'a'))", false},
+		{"tags/all(tag: endswith(tag, 'way') or tag eq 'auth')", true},
+		{"tags/any(tag: tag eq 'missing')", false},
+	} {
+		predicate, err := parseFilterForRoute(test.filter, contractRoute)
+		if err != nil {
+			t.Fatalf("parse tag filter %q: %v", test.filter, err)
+		}
+		got, err := predicate(resource)
+		if err != nil || got != test.want {
+			t.Fatalf("tag filter %q = %v, %v; want %v", test.filter, got, err, test.want)
+		}
+	}
+	empty := map[string]any{"properties": map[string]any{"tags": []any{}}}
+	for _, test := range []struct {
+		filter string
+		want   bool
+	}{
+		{"tags/any(tag: tag eq 'auth')", false},
+		{"tags/all(tag: tag eq 'auth')", true},
+	} {
+		predicate, err := parseFilterForRoute(test.filter, contractRoute)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := predicate(empty)
+		if err != nil || got != test.want {
+			t.Fatalf("empty tag filter %q = %v, %v; want %v", test.filter, got, err, test.want)
+		}
+	}
+	for _, resource := range []map[string]any{
+		{"properties": map[string]any{"tags": []string{"auth"}}},
+		{"properties": map[string]any{"tags": []any{float64(1)}}},
+		{"properties": map[string]any{}},
+	} {
+		predicate, err := parseFilterForRoute("tags/any(tag: contains(tag, 'auth'))", contractRoute)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := predicate(resource); err == nil && resource["properties"].(map[string]any)["tags"] == nil {
+			t.Fatal("missing tags unexpectedly matched")
+		}
+	}
+	if _, err := parseFilterWithContract("tags/any(tag: tag eq 'auth')", filterContract{"tags": comparisonRule("eq")}); err == nil {
+		t.Fatal("unsupported any function accepted")
+	}
+	for _, filter := range []string{
+		"tags/any(tag tag eq 'auth')",
+		"tags/any(tag: tag eq 'auth'",
+		"tags/any(: tag eq 'auth')",
+		"tags/any(tag: 'auth' eq 'auth')",
+		"tags/any(tag: tag eq 'auth' and)",
+	} {
+		if _, err := parseFilterForRoute(filter, contractRoute); err == nil {
+			t.Fatalf("invalid tag filter %q accepted", filter)
+		}
+	}
 }
 
 func TestNamedValueDocumentFallbacks(t *testing.T) {

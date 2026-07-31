@@ -213,8 +213,10 @@ The stable `2024-05-01` exception is implemented for policy fragments:
 `$orderby=name` accepts `asc` or `desc`, applies stable ordering before paging,
 and is exercised through the official JavaScript SDK. The generated operation
 inventory now constrains scalar filter fields, comparison operators, and string
-functions for every implemented collection shape. Named-value tag predicates
-remain pending with the OData `any`/`all` grammar. Named selectors such as
+functions for every implemented collection shape. Named-value `tags/any(...)`
+and `tags/all(...)` predicates support scalar lambda comparisons and string
+functions, including correct empty-array behavior, and are exercised through
+the official JavaScript SDK. Named selectors such as
 `expandGroups`, `tags`, and `scope` also remain to be implemented.
 
 All current ARM failures include the canonical JSON error envelope and mirror

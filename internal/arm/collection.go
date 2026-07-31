@@ -209,7 +209,7 @@ var collectionFilterContracts = map[string]filterContract{
 	"groups":               makeFilterContract([]string{"name", "displayName", "description"}, map[string]filterFieldRule{"externalId": comparisonRule("eq")}),
 	"groups/users":         makeFilterContract([]string{"name", "firstName", "lastName", "email", "note"}, map[string]filterFieldRule{"registrationDate": comparisonRule("eq", "ne", "gt", "ge", "lt", "le")}),
 	"loggers":              makeFilterContract([]string{"name", "description", "resourceId"}, map[string]filterFieldRule{"loggerType": comparisonRule("eq")}),
-	"namedValues":          makeFilterContract([]string{"displayName"}, nil),
+	"namedValues":          makeFilterContract([]string{"displayName"}, map[string]filterFieldRule{"tags": {operators: []string{"eq", "ne", "gt", "ge", "lt", "le"}, functions: []string{"contains", "startswith", "endswith", "substringof", "any", "all"}}}),
 	"policyFragments":      makeFilterContract([]string{"name", "description", "value"}, nil),
 	"products":             makeFilterContract([]string{"name", "displayName", "description", "terms"}, map[string]filterFieldRule{"state": comparisonRule("eq")}),
 	"products/apis":        makeFilterContract([]string{"name", "displayName", "description", "serviceUrl", "path"}, nil),
@@ -291,6 +291,7 @@ const (
 	filterLeftParen
 	filterRightParen
 	filterComma
+	filterColon
 )
 
 type filterToken struct {
@@ -331,6 +332,9 @@ func lexFilter(source string) ([]filterToken, error) {
 		case ',':
 			tokens = append(tokens, filterToken{kind: filterComma, text: ","})
 			index++
+		case ':':
+			tokens = append(tokens, filterToken{kind: filterColon, text: ":"})
+			index++
 		case '\'':
 			start := index
 			index++
@@ -357,7 +361,7 @@ func lexFilter(source string) ([]filterToken, error) {
 			tokens = append(tokens, filterToken{kind: filterString, text: value.String()})
 		default:
 			start := index
-			for index < len(source) && !unicode.IsSpace(rune(source[index])) && !strings.ContainsRune("(),", rune(source[index])) {
+			for index < len(source) && !unicode.IsSpace(rune(source[index])) && !strings.ContainsRune("(),:", rune(source[index])) {
 				index++
 			}
 			text := source[start:index]
@@ -470,6 +474,9 @@ func (p *filterParser) parsePrimary() (filterPredicate, error) {
 
 func (p *filterParser) parseFunction(name string) (filterPredicate, error) {
 	name = strings.ToLower(name)
+	if name == "tags/any" || name == "tags/all" {
+		return p.parseCollectionLambda(name)
+	}
 	if !oneOf(name, "contains", "startswith", "endswith", "substringof") {
 		return nil, fmt.Errorf("unsupported filter function %q", name)
 	}
@@ -522,6 +529,58 @@ func (p *filterParser) parseFunction(name string) (filterPredicate, error) {
 		default:
 			return strings.Contains(rightString, leftString), nil
 		}
+	}, nil
+}
+
+func (p *filterParser) parseCollectionLambda(name string) (filterPredicate, error) {
+	p.advance()
+	if p.current.kind != filterIdentifier {
+		return nil, fmt.Errorf("%s requires a lambda variable", name)
+	}
+	variable := p.current.text
+	p.advance()
+	if p.current.kind != filterColon {
+		return nil, fmt.Errorf("%s requires a lambda expression", name)
+	}
+	p.advance()
+	contract := p.contract
+	p.contract = nil
+	predicate, err := p.parseOr()
+	p.contract = contract
+	if err != nil {
+		return nil, err
+	}
+	if p.current.kind != filterRightParen {
+		return nil, fmt.Errorf("%s requires a closing parenthesis", name)
+	}
+	p.advance()
+	if err := p.validateField("tags", "", strings.TrimPrefix(name, "tags/")); err != nil {
+		return nil, err
+	}
+	tags := fieldOperand("tags")
+	return func(resource map[string]any) (bool, error) {
+		value, err := tags.evaluate(resource)
+		if err != nil {
+			return false, err
+		}
+		items, ok := value.([]any)
+		if !ok {
+			return strings.EqualFold(name, "tags/all"), nil
+		}
+		all := strings.EqualFold(name, "tags/all")
+		for _, item := range items {
+			result, err := predicate(map[string]any{variable: item})
+			if err != nil {
+				return false, err
+			}
+			if !all && result {
+				return true, nil
+			}
+			if all && !result {
+				return false, nil
+			}
+		}
+		return all, nil
 	}, nil
 }
 
