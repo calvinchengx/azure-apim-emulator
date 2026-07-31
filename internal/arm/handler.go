@@ -2184,6 +2184,8 @@ func (h *Handler) logger(w http.ResponseWriter, r *http.Request, rt route) {
 		} else {
 			value.Document = document
 		}
+		cleanResourceDocument(value.Document)
+		sanitizeLoggerDocument(value.Document)
 		applyLoggerPayload(&value, body)
 		if value.LoggerType != "applicationInsights" && value.LoggerType != "azureEventHub" && value.LoggerType != "azureMonitor" {
 			writeError(w, http.StatusBadRequest, "ValidationError", "loggerType must be applicationInsights, azureEventHub, or azureMonitor.", "properties.loggerType")
@@ -2230,6 +2232,12 @@ func applyLoggerPayload(value *model.Logger, body loggerPayload) {
 	if body.Properties.Credentials != nil {
 		value.Credentials = body.Properties.Credentials
 	}
+}
+
+func sanitizeLoggerDocument(document map[string]any) {
+	delete(document, "credentials")
+	properties, _ := document["properties"].(map[string]any)
+	delete(properties, "credentials")
 }
 
 type diagnosticPayload struct {
@@ -3436,7 +3444,19 @@ func loggerWire(v model.Logger) map[string]any {
 		result["properties"] = properties
 	}
 	properties["loggerType"], properties["description"] = v.LoggerType, v.Description
-	properties["isBuffered"], properties["resourceId"], properties["credentials"] = v.IsBuffered, v.ResourceID, v.Credentials
+	properties["isBuffered"], properties["resourceId"], properties["credentials"] = v.IsBuffered, v.ResourceID, loggerCredentialReferences(v.Credentials)
+	return result
+}
+func loggerCredentialReferences(credentials map[string]string) map[string]string {
+	result := make(map[string]string, len(credentials))
+	for name, value := range credentials {
+		if strings.HasPrefix(value, "{{") && strings.HasSuffix(value, "}}") {
+			result[name] = value
+			continue
+		}
+		digest := sha256.Sum256([]byte(value))
+		result[name] = fmt.Sprintf("{{Logger-Credentials-%x}}", digest[:8])
+	}
 	return result
 }
 func diagnosticWire(v model.Diagnostic) map[string]any {

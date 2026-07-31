@@ -368,7 +368,7 @@ func TestLoggerAndDiagnosticBranches(t *testing.T) {
 		t.Fatal(err)
 	}
 	loggerPath := basePath + "/loggers/app" + apiQuery
-	loggerBody := `{"properties":{"loggerType":"applicationInsights","description":"App Insights","isBuffered":false,"resourceId":"/components/app","credentials":{"instrumentationKey":"secret"},"custom":"kept"}}`
+	loggerBody := `{"credentials":{"root":"secret"},"id":"malicious","properties":{"loggerType":"applicationInsights","description":"App Insights","isBuffered":false,"resourceId":"/components/app","credentials":{"instrumentationKey":"secret"},"custom":"kept"}}`
 	assertStatus(t, handler, http.MethodPost, basePath+"/loggers"+apiQuery, "", http.StatusMethodNotAllowed)
 	assertStatus(t, handler, http.MethodGet, basePath+"/loggers/too/deep"+apiQuery, "", http.StatusNotFound)
 	assertStatus(t, handler, http.MethodGet, loggerPath, "", http.StatusNotFound)
@@ -378,8 +378,12 @@ func TestLoggerAndDiagnosticBranches(t *testing.T) {
 	assertStatus(t, handler, http.MethodPut, loggerPath, loggerBody, http.StatusOK)
 	assertStatus(t, handler, http.MethodHead, loggerPath, "", http.StatusOK)
 	loggerGet := request(t, handler, http.MethodGet, loggerPath, "")
-	if !strings.Contains(loggerGet.Body.String(), `"instrumentationKey":"secret"`) || !strings.Contains(loggerGet.Body.String(), `"custom":"kept"`) {
+	if strings.Contains(loggerGet.Body.String(), `"secret"`) || !strings.Contains(loggerGet.Body.String(), `"instrumentationKey":"{{Logger-Credentials-`) || !strings.Contains(loggerGet.Body.String(), `"custom":"kept"`) || strings.Contains(loggerGet.Body.String(), `"id":"malicious"`) {
 		t.Fatalf("logger GET = %s", loggerGet.Body.String())
+	}
+	storedLogger, err := st.GetLogger(serviceModel().ID() + "/loggers/app")
+	if err != nil || storedLogger.Document["credentials"] != nil || storedLogger.Document["properties"].(map[string]any)["credentials"] != nil || storedLogger.Credentials["instrumentationKey"] != "secret" {
+		t.Fatalf("stored logger = %+v, %v", storedLogger, err)
 	}
 	assertStatus(t, handler, http.MethodPatch, basePath+"/loggers/missing"+apiQuery, `{}`, http.StatusNotFound)
 	assertStatus(t, handler, http.MethodPatch, loggerPath, `{`, http.StatusBadRequest)
@@ -483,9 +487,9 @@ func TestLoggerDiagnosticStoreErrorsAndWireFallbacks(t *testing.T) {
 	assertStatus(t, handler, http.MethodPut, diagnosticPath, `{"properties":{"loggerId":"`+logger.ID()+`"}}`, http.StatusConflict)
 	assertStatus(t, handler, http.MethodDelete, diagnosticPath, "", http.StatusConflict)
 
-	loggerResult := loggerWire(model.Logger{ServiceID: "service", Name: "l", Document: map[string]any{"properties": "scalar"}})
+	loggerResult := loggerWire(model.Logger{ServiceID: "service", Name: "l", Credentials: map[string]string{"reference": "{{existing}}"}, Document: map[string]any{"properties": "scalar"}})
 	diagnosticResult := diagnosticWire(model.Diagnostic{ServiceID: "service", ScopeID: "service/apis/a", Name: "d", Document: map[string]any{"properties": "scalar"}})
-	if loggerResult["properties"].(map[string]any) == nil || diagnosticResult["type"] != "Microsoft.ApiManagement/service/apis/diagnostics" {
+	if loggerResult["properties"].(map[string]any)["credentials"].(map[string]string)["reference"] != "{{existing}}" || diagnosticResult["type"] != "Microsoft.ApiManagement/service/apis/diagnostics" {
 		t.Fatalf("wire fallbacks = %#v %#v", loggerResult, diagnosticResult)
 	}
 }

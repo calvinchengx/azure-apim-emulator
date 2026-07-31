@@ -738,7 +738,7 @@ func TestGoManagementSDKConfiguresProtectedGateway(t *testing.T) {
 		t.Fatalf("logger create = %+v, %v", createdLogger, err)
 	}
 	loggerID := *createdLogger.ID
-	if got, err := loggerClient.Get(ctx, defaultResourceGroup, "emulator", "go-sdk-logger", nil); err != nil || got.Properties == nil || got.Properties.Description == nil || *got.Properties.Description != loggerDescription {
+	if got, err := loggerClient.Get(ctx, defaultResourceGroup, "emulator", "go-sdk-logger", nil); err != nil || got.Properties == nil || got.Properties.Description == nil || *got.Properties.Description != loggerDescription || got.Properties.Credentials["instrumentationKey"] == nil || *got.Properties.Credentials["instrumentationKey"] == instrumentationKey || !strings.HasPrefix(*got.Properties.Credentials["instrumentationKey"], "{{Logger-Credentials-") {
 		t.Fatalf("logger GET = %+v, %v", got, err)
 	}
 	if entityTag, err := loggerClient.GetEntityTag(ctx, defaultResourceGroup, "emulator", "go-sdk-logger", nil); err != nil || entityTag.ETag == nil {

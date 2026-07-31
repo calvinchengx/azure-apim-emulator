@@ -1945,6 +1945,7 @@ func (s *Store) GetPolicy(scopeID string) (model.Policy, error) {
 
 // UpsertLogger creates or replaces a service logger while preserving its ARM document.
 func (s *Store) UpsertLogger(v model.Logger) (model.Logger, error) {
+	sanitizeLoggerDocument(v.Document)
 	v.ETag = newETag()
 	credentials, _ := json.Marshal(v.Credentials)
 	document, err := json.Marshal(v.Document)
@@ -1960,6 +1961,12 @@ func (s *Store) UpsertLogger(v model.Logger) (model.Logger, error) {
 		v.ID(), v.ServiceID, v.Name, v.LoggerType, v.Description, v.IsBuffered, v.ResourceID,
 		credentials, document, v.ETag)
 	return v, err
+}
+
+func sanitizeLoggerDocument(document map[string]any) {
+	delete(document, "credentials")
+	properties, _ := document["properties"].(map[string]any)
+	delete(properties, "credentials")
 }
 
 // GetLogger finds one logger by ARM ID.

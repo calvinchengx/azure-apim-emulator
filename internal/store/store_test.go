@@ -1919,7 +1919,7 @@ func TestLoggerDiagnosticAndEventLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	logger, err := st.UpsertLogger(model.Logger{ServiceID: service.ID(), Name: "app", LoggerType: "applicationInsights", IsBuffered: true, Credentials: map[string]string{"instrumentationKey": "secret"}, Document: map[string]any{"properties": map[string]any{"custom": true}}})
+	logger, err := st.UpsertLogger(model.Logger{ServiceID: service.ID(), Name: "app", LoggerType: "applicationInsights", IsBuffered: true, Credentials: map[string]string{"instrumentationKey": "secret"}, Document: map[string]any{"credentials": map[string]any{"root": "secret"}, "properties": map[string]any{"credentials": map[string]any{"instrumentationKey": "secret"}, "custom": true}}})
 	if err != nil || logger.ETag == "" {
 		t.Fatalf("UpsertLogger = %+v, %v", logger, err)
 	}
@@ -1928,7 +1928,7 @@ func TestLoggerDiagnosticAndEventLifecycle(t *testing.T) {
 		t.Fatalf("update logger = %+v, %v", logger, err)
 	}
 	gotLogger, err := st.GetLogger(strings.ToUpper(logger.ID()))
-	if err != nil || gotLogger.Credentials["instrumentationKey"] != "secret" || gotLogger.Document["properties"].(map[string]any)["custom"] != true {
+	if err != nil || gotLogger.Credentials["instrumentationKey"] != "secret" || gotLogger.Document["properties"].(map[string]any)["custom"] != true || gotLogger.Document["credentials"] != nil || gotLogger.Document["properties"].(map[string]any)["credentials"] != nil {
 		t.Fatalf("GetLogger = %+v, %v", gotLogger, err)
 	}
 	if values, err := st.ListLoggers(strings.ToUpper(service.ID())); err != nil || len(values) != 1 {

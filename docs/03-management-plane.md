@@ -161,6 +161,14 @@ replacement preserves extension and non-secret Key Vault reference metadata,
 and refresh responses use the same redacted projection. Official Go SDK evidence
 covers PFX create/get/list and Key Vault create/refresh/get workflows.
 
+Loggers retain canonical documents while operational credentials remain in a
+separate indexed field. Handler and store boundaries strip duplicate credential
+fields from the canonical document, and ordinary create, GET, and list responses
+replace raw values with deterministic `{{Logger-Credentials-...}}` references;
+existing named-value references remain unchanged. The official Go SDK witness
+verifies that the submitted instrumentation key is not returned. Exact Azure
+reference naming remains assigned to the live differential fixture.
+
 ## Common ARM semantics
 
 Implement centrally and test across resources:
