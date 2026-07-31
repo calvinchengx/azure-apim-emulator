@@ -50,6 +50,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch parsed.Tail[0] {
 	case "apis":
 		h.api(w, r, parsed)
+	case "apiVersionSets":
+		h.apiVersionSet(w, r, parsed)
 	case "products":
 		h.product(w, r, parsed)
 	case "subscriptions":
@@ -371,6 +373,8 @@ type apiPayload struct {
 		APIRevisionDescription *string   `json:"apiRevisionDescription"`
 		IsCurrent              *bool     `json:"isCurrent"`
 		SourceAPIID            *string   `json:"sourceApiId"`
+		APIVersion             *string   `json:"apiVersion"`
+		APIVersionSetID        *string   `json:"apiVersionSetId"`
 	} `json:"properties"`
 }
 
@@ -420,6 +424,10 @@ func (h *Handler) apiResource(w http.ResponseWriter, r *http.Request, api model.
 		applyAPIPayload(&api, body)
 		if api.DisplayName == "" || api.ServiceURL == "" {
 			writeError(w, http.StatusBadRequest, "ValidationError", "displayName and serviceUrl are required.", "properties")
+			return
+		}
+		if (api.Version == "") != (api.VersionSetID == "") {
+			writeError(w, http.StatusBadRequest, "ValidationError", "apiVersion and apiVersionSetId must be supplied together.", "properties")
 			return
 		}
 		var got model.API
@@ -491,6 +499,136 @@ func applyAPIPayload(api *model.API, body apiPayload) {
 	if body.Properties.IsCurrent != nil {
 		api.IsCurrent = *body.Properties.IsCurrent
 	}
+	if body.Properties.APIVersion != nil {
+		api.Version = *body.Properties.APIVersion
+	}
+	if body.Properties.APIVersionSetID != nil {
+		api.VersionSetID = *body.Properties.APIVersionSetID
+	}
+}
+
+func (h *Handler) apiVersionSet(w http.ResponseWriter, r *http.Request, rt route) {
+	service := model.Service{SubscriptionID: rt.SubscriptionID, ResourceGroup: rt.ResourceGroup, Name: rt.ServiceName}
+	if len(rt.Tail) == 1 {
+		if r.Method != http.MethodGet {
+			methodNotAllowed(w)
+			return
+		}
+		values, err := h.Store.ListAPIVersionSets(service.ID())
+		if err != nil {
+			h.storeError(w, err, service.ID())
+			return
+		}
+		resources := make([]map[string]any, 0, len(values))
+		for _, value := range values {
+			resources = append(resources, apiVersionSetWire(value))
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"value": resources, "count": len(resources)})
+		return
+	}
+	if len(rt.Tail) != 2 {
+		writeError(w, http.StatusNotFound, "ResourceNotFound", "The requested API version set resource was not found.", r.URL.Path)
+		return
+	}
+	value := model.APIVersionSet{ServiceID: service.ID(), Name: rt.Tail[1]}
+	switch r.Method {
+	case http.MethodGet, http.MethodHead:
+		got, err := h.Store.GetAPIVersionSet(value.ID())
+		if err != nil {
+			h.storeError(w, err, value.ID())
+			return
+		}
+		if r.Method == http.MethodHead {
+			w.Header().Set("ETag", got.ETag)
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		writeResource(w, http.StatusOK, apiVersionSetWire(got), got.ETag)
+	case http.MethodPut, http.MethodPatch:
+		existing, existingErr := h.Store.GetAPIVersionSet(value.ID())
+		if existingErr != nil && !errors.Is(existingErr, store.ErrNotFound) {
+			h.storeError(w, existingErr, value.ID())
+			return
+		}
+		if r.Method == http.MethodPatch {
+			if existingErr != nil {
+				h.storeError(w, existingErr, value.ID())
+				return
+			}
+			value = existing
+		}
+		var body struct {
+			Properties struct {
+				DisplayName       *string `json:"displayName"`
+				VersioningScheme  *string `json:"versioningScheme"`
+				VersionHeaderName *string `json:"versionHeaderName"`
+				VersionQueryName  *string `json:"versionQueryName"`
+				Description       *string `json:"description"`
+			} `json:"properties"`
+		}
+		if err := decode(r, &body); err != nil {
+			writeError(w, http.StatusBadRequest, "InvalidRequestContent", err.Error(), "")
+			return
+		}
+		if body.Properties.DisplayName != nil {
+			value.DisplayName = *body.Properties.DisplayName
+		}
+		if body.Properties.VersioningScheme != nil {
+			value.VersioningScheme = *body.Properties.VersioningScheme
+		}
+		if body.Properties.VersionHeaderName != nil {
+			value.VersionHeaderName = *body.Properties.VersionHeaderName
+		}
+		if body.Properties.VersionQueryName != nil {
+			value.VersionQueryName = *body.Properties.VersionQueryName
+		}
+		if body.Properties.Description != nil {
+			value.Description = *body.Properties.Description
+		}
+		if err := validateAPIVersionSet(value); err != nil {
+			writeError(w, http.StatusBadRequest, "ValidationError", err.Error(), "properties")
+			return
+		}
+		got, err := h.Store.UpsertAPIVersionSet(value)
+		if err != nil {
+			h.storeError(w, err, value.ID())
+			return
+		}
+		if err := h.activate(); err != nil {
+			writeError(w, http.StatusBadRequest, "ConfigurationInvalid", err.Error(), value.ID())
+			return
+		}
+		status := http.StatusOK
+		if r.Method == http.MethodPut && errors.Is(existingErr, store.ErrNotFound) {
+			status = http.StatusCreated
+		}
+		writeResource(w, status, apiVersionSetWire(got), got.ETag)
+	case http.MethodDelete:
+		if err := h.Store.DeleteAPIVersionSet(value.ID()); err != nil && !errors.Is(err, store.ErrNotFound) {
+			h.storeError(w, err, value.ID())
+			return
+		}
+		if err := h.activate(); err != nil {
+			writeError(w, http.StatusInternalServerError, "ConfigurationInvalid", err.Error(), value.ID())
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	default:
+		methodNotAllowed(w)
+	}
+}
+
+func validateAPIVersionSet(value model.APIVersionSet) error {
+	if value.DisplayName == "" || (value.VersioningScheme != "Segment" && value.VersioningScheme != "Header" && value.VersioningScheme != "Query") {
+		return errors.New("displayName and a valid versioningScheme are required")
+	}
+	if value.VersioningScheme == "Header" && value.VersionHeaderName == "" {
+		return errors.New("versionHeaderName is required for Header versioning")
+	}
+	if value.VersioningScheme == "Query" && value.VersionQueryName == "" {
+		return errors.New("versionQueryName is required for Query versioning")
+	}
+	return nil
 }
 
 type apiReleasePayload struct {
@@ -1000,7 +1138,19 @@ func serviceWire(v model.Service) map[string]any {
 	return result
 }
 func apiWire(v model.API) map[string]any {
-	return map[string]any{"id": v.ID(), "name": v.Name, "type": "Microsoft.ApiManagement/service/apis", "properties": map[string]any{"displayName": v.DisplayName, "path": v.Path, "serviceUrl": v.ServiceURL, "protocols": v.Protocols, "subscriptionRequired": v.SubscriptionRequired, "apiRevision": v.Revision, "apiRevisionDescription": v.RevisionDescription, "isCurrent": v.IsCurrent}}
+	properties := map[string]any{"displayName": v.DisplayName, "path": v.Path, "serviceUrl": v.ServiceURL, "protocols": v.Protocols, "subscriptionRequired": v.SubscriptionRequired, "apiRevision": v.Revision, "apiRevisionDescription": v.RevisionDescription, "isCurrent": v.IsCurrent}
+	if v.Version != "" {
+		properties["apiVersion"] = v.Version
+	}
+	if v.VersionSetID != "" {
+		properties["apiVersionSetId"] = v.VersionSetID
+	}
+	return map[string]any{"id": v.ID(), "name": v.Name, "type": "Microsoft.ApiManagement/service/apis", "properties": properties}
+}
+func apiVersionSetWire(v model.APIVersionSet) map[string]any {
+	return map[string]any{"id": v.ID(), "name": v.Name, "type": "Microsoft.ApiManagement/service/apiVersionSets",
+		"properties": map[string]any{"displayName": v.DisplayName, "versioningScheme": v.VersioningScheme,
+			"versionHeaderName": v.VersionHeaderName, "versionQueryName": v.VersionQueryName, "description": v.Description}}
 }
 func apiRevisionWire(v model.API) map[string]any {
 	base, _ := splitAPIRevision(v.Name)

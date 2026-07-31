@@ -314,9 +314,16 @@ func TestScanFunctionsRejectMalformedRows(t *testing.T) {
 		{
 			"apis",
 			`CREATE TABLE apis (id, service_id, name, display_name, path, service_url, protocols_json, subscription_required, etag);
-			 CREATE TABLE api_revision_metadata (api_id, revision, description, is_current, created_at, updated_at)`,
+			 CREATE TABLE api_revision_metadata (api_id, revision, description, is_current, created_at, updated_at);
+			 CREATE TABLE api_version_metadata (api_id, version, version_set_id)`,
 			`INSERT INTO apis VALUES ('id', NULL, '', '', '', '', '[]', 0, '')`,
 			func(db *sql.DB) error { _, err := scanAPIs(db); return err },
+		},
+		{
+			"version sets",
+			`CREATE TABLE api_version_sets (id, service_id, name, display_name, versioning_scheme, version_header_name, version_query_name, description, etag)`,
+			`INSERT INTO api_version_sets VALUES ('id', 'service', NULL, '', '', '', '', '', '')`,
+			func(db *sql.DB) error { _, err := (&Store{db: db}).ListAPIVersionSets("service"); return err },
 		},
 		{
 			"releases",
@@ -454,6 +461,28 @@ func TestUpsertAPITransactionErrors(t *testing.T) {
 			t.Fatalf("API transaction was not rolled back: %v", err)
 		}
 	})
+
+	t.Run("version metadata", func(t *testing.T) {
+		st, err := Open("", clock.New())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer st.Close()
+		service, err := st.UpsertService(model.Service{Name: "svc"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := st.db.Exec(`CREATE TRIGGER reject_api_version BEFORE INSERT ON api_version_metadata BEGIN SELECT RAISE(FAIL, 'rejected'); END`); err != nil {
+			t.Fatal(err)
+		}
+		api := model.API{ServiceID: service.ID(), Name: "api"}
+		if _, err := st.UpsertAPI(api); err == nil {
+			t.Fatal("rejected API version metadata was accepted")
+		}
+		if _, err := st.GetAPI(api.ID()); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("API transaction was not rolled back: %v", err)
+		}
+	})
 }
 
 func TestCloneAPIRevisionTransactions(t *testing.T) {
@@ -491,6 +520,15 @@ func TestCloneAPIRevisionTransactions(t *testing.T) {
 		}
 	})
 
+	t.Run("invalid version set", func(t *testing.T) {
+		st, source := newSource(t)
+		target := source
+		target.Name, target.VersionSetID = "api;rev=2", "/missing"
+		if _, err := st.CloneAPIRevision(source.ID(), target); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("invalid version set = %v", err)
+		}
+	})
+
 	t.Run("begin", func(t *testing.T) {
 		st, source := newSource(t)
 		_ = st.Close()
@@ -510,6 +548,7 @@ func TestCloneAPIRevisionTransactions(t *testing.T) {
 
 	for _, test := range []struct{ name, trigger string }{
 		{"metadata", `CREATE TRIGGER reject_clone_metadata BEFORE INSERT ON api_revision_metadata WHEN NEW.revision='2' BEGIN SELECT RAISE(FAIL, 'rejected'); END`},
+		{"version metadata", `CREATE TRIGGER reject_clone_version BEFORE INSERT ON api_version_metadata WHEN NEW.api_id LIKE '%;rev=2' BEGIN SELECT RAISE(FAIL, 'rejected'); END`},
 		{"operations", `CREATE TRIGGER reject_clone_operation BEFORE INSERT ON operations WHEN NEW.api_id LIKE '%;rev=2' BEGIN SELECT RAISE(FAIL, 'rejected'); END`},
 		{"policy", `CREATE TRIGGER reject_clone_policy BEFORE INSERT ON policies WHEN NEW.scope_id LIKE '%;rev=2' BEGIN SELECT RAISE(FAIL, 'rejected'); END`},
 	} {
@@ -599,6 +638,23 @@ func TestAPIReleaseTransactions(t *testing.T) {
 			t.Fatal("begin error ignored")
 		}
 	})
+}
+
+func TestAPIVersionSetOwnership(t *testing.T) {
+	st, err := Open("", clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	owner, _ := st.UpsertService(model.Service{Name: "owner"})
+	other, _ := st.UpsertService(model.Service{Name: "other"})
+	versionSet, err := st.UpsertAPIVersionSet(model.APIVersionSet{ServiceID: owner.ID(), Name: "versions", DisplayName: "Versions", VersioningScheme: "Segment"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.UpsertAPI(model.API{ServiceID: other.ID(), Name: "api", Version: "v1", VersionSetID: versionSet.ID()}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("cross-service version set = %v", err)
+	}
 }
 
 func TestScanFunctionsQueryErrors(t *testing.T) {

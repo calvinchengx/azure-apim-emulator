@@ -37,17 +37,36 @@ func TestRoutingHelpers(t *testing.T) {
 
 	root := &Route{API: model.API{Path: ""}}
 	api := &Route{API: model.API{Path: "api"}}
-	if got, relative := matchRoute([]*Route{api}, "/api"); got != api || relative != "/" {
+	if got, relative := matchRoute([]*Route{api}, httptest.NewRequest(http.MethodGet, "/api", nil)); got != api || relative != "/" {
 		t.Fatalf("exact route = %v %q", got, relative)
 	}
-	if got, relative := matchRoute([]*Route{api}, "/api/items"); got != api || relative != "/items" {
+	if got, relative := matchRoute([]*Route{api}, httptest.NewRequest(http.MethodGet, "/api/items", nil)); got != api || relative != "/items" {
 		t.Fatalf("nested route = %v %q", got, relative)
 	}
-	if got, relative := matchRoute([]*Route{root}, "/anything"); got != root || relative != "/anything" {
+	if got, relative := matchRoute([]*Route{root}, httptest.NewRequest(http.MethodGet, "/anything", nil)); got != root || relative != "/anything" {
 		t.Fatalf("root route = %v %q", got, relative)
 	}
-	if got, _ := matchRoute([]*Route{api}, "/other"); got != nil {
+	if got, _ := matchRoute([]*Route{api}, httptest.NewRequest(http.MethodGet, "/other", nil)); got != nil {
 		t.Fatal("unexpected route match")
+	}
+	segment := &Route{API: model.API{Path: "api", Version: "v1"}, VersionSet: &model.APIVersionSet{VersioningScheme: "Segment"}}
+	if got, relative := matchRoute([]*Route{segment}, httptest.NewRequest(http.MethodGet, "/api/v1/items", nil)); got != segment || relative != "/items" {
+		t.Fatalf("segment version = %v %q", got, relative)
+	}
+	headerV1 := &Route{API: model.API{Path: "api", Version: "v1"}, VersionSet: &model.APIVersionSet{VersioningScheme: "Header", VersionHeaderName: "X-Version"}}
+	headerV2 := &Route{API: model.API{Path: "api", Version: "v2"}, VersionSet: headerV1.VersionSet}
+	headerRequest := httptest.NewRequest(http.MethodGet, "/api/items", nil)
+	headerRequest.Header.Set("X-Version", "v2")
+	if got, _ := matchRoute([]*Route{headerV1, headerV2}, headerRequest); got != headerV2 {
+		t.Fatalf("header version = %v", got)
+	}
+	queryV1 := &Route{API: model.API{Path: "api", Version: "v1"}, VersionSet: &model.APIVersionSet{VersioningScheme: "Query", VersionQueryName: "version"}}
+	queryV2 := &Route{API: model.API{Path: "api", Version: "v2"}, VersionSet: queryV1.VersionSet}
+	if got, _ := matchRoute([]*Route{queryV1, queryV2}, httptest.NewRequest(http.MethodGet, "/api/items?version=v2", nil)); got != queryV2 {
+		t.Fatalf("query version = %v", got)
+	}
+	if got, _ := matchRoute([]*Route{headerV1, queryV1}, httptest.NewRequest(http.MethodGet, "/api/items", nil)); got != nil {
+		t.Fatalf("missing version matched %v", got)
 	}
 	if !templateMatches("/{id}", "/42") || !templateMatches("/fixed", "/fixed") ||
 		templateMatches("/a/b", "/a") || templateMatches("/fixed", "/other") {
@@ -300,6 +319,68 @@ func TestActivateRejectsOrphanAPI(t *testing.T) {
 	if err := New("emulator", nil).Activate(st, false); err == nil {
 		t.Fatal("orphan API activation succeeded")
 	}
+}
+
+func TestActivateVersionSets(t *testing.T) {
+	newStore := func(t *testing.T) (*store.Store, string, model.Service) {
+		t.Helper()
+		dir := t.TempDir()
+		st, err := store.Open(dir, clock.New())
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = st.Close() })
+		service, err := st.UpsertService(model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "emulator"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return st, filepath.Join(dir, "azure-apim-emulator.db"), service
+	}
+
+	t.Run("resolved and missing reference", func(t *testing.T) {
+		st, path, service := newStore(t)
+		versionSet, err := st.UpsertAPIVersionSet(model.APIVersionSet{ServiceID: service.ID(), Name: "versions", DisplayName: "Versions", VersioningScheme: "Segment"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		api, err := st.UpsertAPI(model.API{ServiceID: service.ID(), Name: "v1", Path: "api", Version: "v1", VersionSetID: versionSet.ID()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		runtime := New("emulator", nil)
+		if err := runtime.Activate(st, false); err != nil {
+			t.Fatal(err)
+		}
+		if runtime.current.Load().Services["emulator"].Routes[0].VersionSet == nil {
+			t.Fatal("version set was not resolved")
+		}
+		db, err := sql.Open("sqlite", path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer db.Close()
+		if _, err := db.Exec(`PRAGMA foreign_keys=OFF; UPDATE api_version_metadata SET version_set_id='/missing' WHERE api_id=?`, api.ID()); err != nil {
+			t.Fatal(err)
+		}
+		if err := runtime.Activate(st, false); err == nil {
+			t.Fatal("missing version set activated")
+		}
+	})
+
+	t.Run("query failure", func(t *testing.T) {
+		st, path, _ := newStore(t)
+		db, err := sql.Open("sqlite", path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer db.Close()
+		if _, err := db.Exec(`DROP TABLE api_version_sets`); err != nil {
+			t.Fatal(err)
+		}
+		if err := New("emulator", nil).Activate(st, false); err == nil {
+			t.Fatal("missing version-set table activated")
+		}
+	})
 }
 
 func TestWritePolicyResponseDefaultStatus(t *testing.T) {

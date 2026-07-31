@@ -32,6 +32,7 @@ type Service struct {
 // Route is a compiled API route.
 type Route struct {
 	API          model.API
+	VersionSet   *model.APIVersionSet
 	Operations   []model.Operation
 	Plan         policy.Plan
 	AcceptedKeys map[string]bool
@@ -79,6 +80,17 @@ func (r *Runtime) Activate(st *store.Store, strict bool) error {
 	services, apis, operations, _, links, subscriptions, policies, err := st.RuntimeData()
 	if err != nil {
 		return err
+	}
+	versionSets := map[string]*model.APIVersionSet{}
+	for _, service := range services {
+		values, err := st.ListAPIVersionSets(service.ID())
+		if err != nil {
+			return err
+		}
+		for index := range values {
+			value := values[index]
+			versionSets[strings.ToLower(value.ID())] = &value
+		}
 	}
 	policyByScope := map[string]policy.Plan{}
 	for _, item := range policies {
@@ -129,7 +141,14 @@ func (r *Runtime) Activate(st *store.Store, strict bool) error {
 		if service == nil {
 			return fmt.Errorf("API %s references missing service", api.ID())
 		}
-		service.Routes = append(service.Routes, &Route{API: api, Operations: operationsByAPI[strings.ToLower(api.ID())], Plan: policyByScope[strings.ToLower(api.ID())], AcceptedKeys: keysByAPI[strings.ToLower(api.ID())]})
+		var versionSet *model.APIVersionSet
+		if api.VersionSetID != "" {
+			versionSet = versionSets[strings.ToLower(api.VersionSetID)]
+			if versionSet == nil {
+				return fmt.Errorf("API %s references missing version set", api.ID())
+			}
+		}
+		service.Routes = append(service.Routes, &Route{API: api, VersionSet: versionSet, Operations: operationsByAPI[strings.ToLower(api.ID())], Plan: policyByScope[strings.ToLower(api.ID())], AcceptedKeys: keysByAPI[strings.ToLower(api.ID())]})
 	}
 	for _, service := range snapshot.Services {
 		sort.SliceStable(service.Routes, func(i, j int) bool { return len(service.Routes[i].API.Path) > len(service.Routes[j].API.Path) })
@@ -171,7 +190,7 @@ func (r *Runtime) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		gatewayError(w, http.StatusNotFound, "ServiceNotFound", "API Management service was not found.")
 		return
 	}
-	route, relative := matchRoute(service.Routes, req.URL.Path)
+	route, relative := matchRoute(service.Routes, req)
 	if route == nil {
 		gatewayError(w, http.StatusNotFound, "OperationNotFound", "Unable to match incoming request to an operation.")
 		return
@@ -328,10 +347,24 @@ func serviceFromHost(host, fallback string) string {
 	return fallback
 }
 
-func matchRoute(routes []*Route, path string) (*Route, string) {
-	clean := strings.TrimPrefix(path, "/")
+func matchRoute(routes []*Route, request *http.Request) (*Route, string) {
+	clean := strings.TrimPrefix(request.URL.Path, "/")
 	for _, route := range routes {
 		prefix := strings.Trim(route.API.Path, "/")
+		if route.VersionSet != nil {
+			switch route.VersionSet.VersioningScheme {
+			case "Segment":
+				prefix = strings.Trim(prefix+"/"+route.API.Version, "/")
+			case "Header":
+				if request.Header.Get(route.VersionSet.VersionHeaderName) != route.API.Version {
+					continue
+				}
+			case "Query":
+				if request.URL.Query().Get(route.VersionSet.VersionQueryName) != route.API.Version {
+					continue
+				}
+			}
+		}
 		if prefix == "" {
 			return route, "/" + clean
 		}

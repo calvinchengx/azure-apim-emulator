@@ -106,12 +106,52 @@ func TestGoManagementSDKConfiguresProtectedGateway(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	versionSetClient, err := armapimanagement.NewAPIVersionSetClient(defaultSubscription, credential, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	versionSetDisplayName := "Go SDK versions"
+	versioningScheme := armapimanagement.VersioningSchemeSegment
+	versionSet, err := versionSetClient.CreateOrUpdate(ctx, defaultResourceGroup, "emulator", "go-sdk-versions", armapimanagement.APIVersionSetContract{
+		Properties: &armapimanagement.APIVersionSetContractProperties{DisplayName: &versionSetDisplayName, VersioningScheme: &versioningScheme},
+	}, nil)
+	if err != nil || versionSet.ID == nil {
+		t.Fatalf("API version set = %+v, %v", versionSet, err)
+	}
+	versionSetID := *versionSet.ID
+	versionSetPager := versionSetClient.NewListByServicePager(defaultResourceGroup, "emulator", nil)
+	versionSetPage, err := versionSetPager.NextPage(ctx)
+	if err != nil || len(versionSetPage.Value) != 1 {
+		t.Fatalf("API version-set page = %+v, %v", versionSetPage, err)
+	}
+	if gotVersionSet, err := versionSetClient.Get(ctx, defaultResourceGroup, "emulator", "go-sdk-versions", nil); err != nil || gotVersionSet.Properties == nil || gotVersionSet.Properties.VersioningScheme == nil || *gotVersionSet.Properties.VersioningScheme != versioningScheme {
+		t.Fatalf("API version-set GET = %+v, %v", gotVersionSet, err)
+	}
+	if entityTag, err := versionSetClient.GetEntityTag(ctx, defaultResourceGroup, "emulator", "go-sdk-versions", nil); err != nil || entityTag.ETag == nil {
+		t.Fatalf("API version-set ETag = %+v, %v", entityTag, err)
+	}
+	versionSetDescription := "Versioned by path segment"
+	if _, err := versionSetClient.Update(ctx, defaultResourceGroup, "emulator", "go-sdk-versions", "*", armapimanagement.APIVersionSetUpdateParameters{
+		Properties: &armapimanagement.APIVersionSetUpdateParametersProperties{Description: &versionSetDescription},
+	}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := versionSetClient.CreateOrUpdate(ctx, defaultResourceGroup, "emulator", "temporary-versions", armapimanagement.APIVersionSetContract{
+		Properties: &armapimanagement.APIVersionSetContractProperties{DisplayName: &versionSetDisplayName, VersioningScheme: &versioningScheme},
+	}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := versionSetClient.Delete(ctx, defaultResourceGroup, "emulator", "temporary-versions", "*", nil); err != nil {
+		t.Fatal(err)
+	}
 	displayName, path, required := "Go protected API", "go-sdk-full", true
+	apiVersion := "v1"
 	protocol := armapimanagement.ProtocolHTTPS
 	apiPoller, err := apiClient.BeginCreateOrUpdate(ctx, defaultResourceGroup, "emulator", "go-sdk-full", armapimanagement.APICreateOrUpdateParameter{
 		Properties: &armapimanagement.APICreateOrUpdateProperties{
 			DisplayName: &displayName, Path: &path, ServiceURL: &backend.URL,
 			Protocols: []*armapimanagement.Protocol{&protocol}, SubscriptionRequired: &required,
+			APIVersion: &apiVersion, APIVersionSetID: &versionSetID,
 		},
 	}, nil)
 	if err != nil {
@@ -211,7 +251,7 @@ func TestGoManagementSDKConfiguresProtectedGateway(t *testing.T) {
 	if err != nil || rotated.PrimaryKey == nil || *rotated.PrimaryKey == primary || rotated.SecondaryKey == nil || *rotated.SecondaryKey != secondary {
 		t.Fatalf("rotated subscription secrets = %+v, %v", rotated, err)
 	}
-	request, _ := http.NewRequest(http.MethodGet, front.URL+"/go-sdk-full/items", nil)
+	request, _ := http.NewRequest(http.MethodGet, front.URL+"/go-sdk-full/v1/items", nil)
 	request.Header.Set("Ocp-Apim-Subscription-Key", primary)
 	response, err := front.Client().Do(request)
 	if err != nil {
@@ -223,7 +263,7 @@ func TestGoManagementSDKConfiguresProtectedGateway(t *testing.T) {
 	}
 	primary = *rotated.PrimaryKey
 
-	request, _ = http.NewRequest(http.MethodGet, front.URL+"/go-sdk-full/items", nil)
+	request, _ = http.NewRequest(http.MethodGet, front.URL+"/go-sdk-full/v1/items", nil)
 	request.Header.Set("Ocp-Apim-Subscription-Key", primary)
 	response, err = front.Client().Do(request)
 	if err != nil {

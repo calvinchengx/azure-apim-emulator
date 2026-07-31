@@ -36,6 +36,8 @@ type API struct {
 	IsCurrent            bool
 	CreatedAt            int64
 	UpdatedAt            int64
+	Version              string
+	VersionSetID         string
 	ETag                 string
 }
 
@@ -55,6 +57,21 @@ type APIRelease struct {
 
 // ID returns the release ARM resource ID.
 func (r APIRelease) ID() string { return r.APIID + "/releases/" + r.Name }
+
+// APIVersionSet defines how clients select an API version.
+type APIVersionSet struct {
+	ServiceID         string
+	Name              string
+	DisplayName       string
+	VersioningScheme  string
+	VersionHeaderName string
+	VersionQueryName  string
+	Description       string
+	ETag              string
+}
+
+// ID returns the API version-set ARM resource ID.
+func (v APIVersionSet) ID() string { return v.ServiceID + "/apiVersionSets/" + v.Name }
 
 // Operation is an HTTP operation belonging to an API.
 type Operation struct {

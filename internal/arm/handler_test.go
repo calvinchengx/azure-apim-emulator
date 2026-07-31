@@ -334,6 +334,47 @@ func TestProductAndSubscriptionBranches(t *testing.T) {
 	}
 }
 
+func TestAPIVersionSetLifecycle(t *testing.T) {
+	handler, st := testHandler(t)
+	seedService(t, st)
+	path := basePath + "/apiVersionSets/versions" + apiQuery
+	assertStatus(t, handler, http.MethodGet, basePath+"/apiVersionSets"+apiQuery, "", http.StatusOK)
+	assertStatus(t, handler, http.MethodPost, basePath+"/apiVersionSets"+apiQuery, "", http.StatusMethodNotAllowed)
+	assertStatus(t, handler, http.MethodGet, path, "", http.StatusNotFound)
+	assertStatus(t, handler, http.MethodPut, path, `{`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPut, path, `{"properties":{"displayName":"Versions","versioningScheme":"invalid"}}`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPut, path, `{"properties":{"displayName":"Versions","versioningScheme":"Header"}}`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPut, path, `{"properties":{"displayName":"Versions","versioningScheme":"Query"}}`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPut, path, `{"properties":{"displayName":"Versions","versioningScheme":"Segment","description":"Segment versions"}}`, http.StatusCreated)
+	assertStatus(t, handler, http.MethodPut, path, `{"properties":{"displayName":"Versions","versioningScheme":"Header","versionHeaderName":"X-API-Version","versionQueryName":"version","description":"Header versions"}}`, http.StatusOK)
+	assertStatus(t, handler, http.MethodPatch, basePath+"/apiVersionSets/missing"+apiQuery, `{}`, http.StatusNotFound)
+	assertStatus(t, handler, http.MethodPatch, path, `{`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPatch, path, `{"properties":{"displayName":"Updated","versioningScheme":"Query","versionQueryName":"api-version","versionHeaderName":"X-Version","description":"Query versions"}}`, http.StatusOK)
+	assertStatus(t, handler, http.MethodGet, path, "", http.StatusOK)
+	assertStatus(t, handler, http.MethodHead, path, "", http.StatusOK)
+	list := request(t, handler, http.MethodGet, basePath+"/apiVersionSets"+apiQuery, "")
+	if !strings.Contains(list.Body.String(), `"count":1`) || !strings.Contains(list.Body.String(), `"versioningScheme":"Query"`) {
+		t.Fatalf("version-set list = %s", list.Body.String())
+	}
+	assertStatus(t, handler, http.MethodGet, basePath+"/apiVersionSets/versions/unknown"+apiQuery, "", http.StatusNotFound)
+	versionSetID := serviceModel().ID() + "/apiVersionSets/versions"
+	assertStatus(t, handler, http.MethodPut, basePath+"/apis/versioned"+apiQuery, `{"properties":{"displayName":"Versioned","path":"versioned","serviceUrl":"https://backend","apiVersion":"v1","apiVersionSetId":"`+versionSetID+`"}}`, http.StatusCreated)
+	assertStatus(t, handler, http.MethodPut, basePath+"/apis/version-only"+apiQuery, `{"properties":{"displayName":"Version","serviceUrl":"https://backend","apiVersion":"v1"}}`, http.StatusBadRequest)
+	api := request(t, handler, http.MethodGet, basePath+"/apis/versioned"+apiQuery, "")
+	if !strings.Contains(api.Body.String(), `"apiVersion":"v1"`) || !strings.Contains(api.Body.String(), `"apiVersionSetId":"`+versionSetID+`"`) {
+		t.Fatalf("versioned API = %s", api.Body.String())
+	}
+	assertStatus(t, handler, http.MethodDelete, path, "", http.StatusConflict)
+	assertStatus(t, handler, http.MethodPut, basePath+"/apis/bad-version"+apiQuery, `{"properties":{"displayName":"Bad","serviceUrl":"https://backend","apiVersion":"v1","apiVersionSetId":"/missing"}}`, http.StatusNotFound)
+	assertStatus(t, handler, http.MethodDelete, basePath+"/apis/versioned"+apiQuery, "", http.StatusNoContent)
+	handler.Activate = func() error { return errors.New("activation") }
+	assertStatus(t, handler, http.MethodPatch, path, `{"properties":{"description":"failed activation"}}`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodDelete, path, "", http.StatusInternalServerError)
+	handler.Activate = nil
+	assertStatus(t, handler, http.MethodDelete, path, "", http.StatusNoContent)
+	assertStatus(t, handler, http.MethodPost, path, "", http.StatusMethodNotAllowed)
+}
+
 func TestProductAPIListRejectsDanglingLink(t *testing.T) {
 	dir := t.TempDir()
 	st, err := store.Open(dir, clock.New())
@@ -363,6 +404,7 @@ func TestForeignKeyStoreErrors(t *testing.T) {
 	assertStatus(t, handler, http.MethodPut, basePath+"/apis/a"+apiQuery, `{"properties":{"displayName":"A","serviceUrl":"https://backend"}}`, http.StatusConflict)
 	assertStatus(t, handler, http.MethodPut, basePath+"/products/p"+apiQuery, `{"properties":{"displayName":"P"}}`, http.StatusConflict)
 	assertStatus(t, handler, http.MethodPut, basePath+"/subscriptions/s"+apiQuery, `{"properties":{"displayName":"S","scope":"/scope"}}`, http.StatusConflict)
+	assertStatus(t, handler, http.MethodPut, basePath+"/apiVersionSets/v"+apiQuery, `{"properties":{"displayName":"V","versioningScheme":"Segment"}}`, http.StatusConflict)
 	assertStatus(t, handler, http.MethodPut, basePath+"/apis/a/operations/get"+apiQuery, `{"properties":{"method":"GET","urlTemplate":"/"}}`, http.StatusConflict)
 	assertStatus(t, handler, http.MethodPut, basePath+"/products/p/apis/a"+apiQuery, `{}`, http.StatusConflict)
 }
@@ -406,6 +448,10 @@ func TestClosedStoreWriteErrors(t *testing.T) {
 	assertStatus(t, handler, http.MethodPost, basePath+"/subscriptions/s/listSecrets"+apiQuery, "", http.StatusConflict)
 	assertStatus(t, handler, http.MethodPost, basePath+"/subscriptions/s/regeneratePrimaryKey"+apiQuery, "", http.StatusConflict)
 	assertStatus(t, handler, http.MethodDelete, basePath+"/subscriptions/s"+apiQuery, "", http.StatusConflict)
+	assertStatus(t, handler, http.MethodGet, basePath+"/apiVersionSets"+apiQuery, "", http.StatusConflict)
+	assertStatus(t, handler, http.MethodGet, basePath+"/apiVersionSets/v"+apiQuery, "", http.StatusConflict)
+	assertStatus(t, handler, http.MethodPut, basePath+"/apiVersionSets/v"+apiQuery, `{"properties":{"displayName":"V","versioningScheme":"Segment"}}`, http.StatusConflict)
+	assertStatus(t, handler, http.MethodDelete, basePath+"/apiVersionSets/v"+apiQuery, "", http.StatusConflict)
 }
 
 func TestServiceStoreWriteErrors(t *testing.T) {

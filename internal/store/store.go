@@ -81,6 +81,16 @@ CREATE TABLE IF NOT EXISTS api_revision_metadata (
   revision TEXT NOT NULL, description TEXT NOT NULL, is_current INTEGER NOT NULL,
   created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS api_version_sets (
+  id TEXT PRIMARY KEY, service_id TEXT NOT NULL REFERENCES services(id) ON DELETE CASCADE,
+  name TEXT NOT NULL, display_name TEXT NOT NULL, versioning_scheme TEXT NOT NULL,
+  version_header_name TEXT NOT NULL, version_query_name TEXT NOT NULL,
+  description TEXT NOT NULL, etag TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS api_version_metadata (
+  api_id TEXT PRIMARY KEY REFERENCES apis(id) ON DELETE CASCADE,
+  version TEXT NOT NULL, version_set_id TEXT REFERENCES api_version_sets(id) ON DELETE RESTRICT
+);
 CREATE TABLE IF NOT EXISTS api_releases (
   id TEXT PRIMARY KEY, api_id TEXT NOT NULL REFERENCES apis(id) ON DELETE CASCADE,
   name TEXT NOT NULL, target_api_id TEXT NOT NULL REFERENCES apis(id) ON DELETE CASCADE,
@@ -216,6 +226,9 @@ func (s *Store) ListServices() ([]model.Service, error) {
 
 // UpsertAPI creates or replaces an API.
 func (s *Store) UpsertAPI(v model.API) (model.API, error) {
+	if err := s.validateAPIVersionSet(v); err != nil {
+		return v, err
+	}
 	v.ETag = newETag()
 	if v.Revision == "" {
 		_, v.Revision = splitRevision(v.Name)
@@ -251,11 +264,19 @@ func (s *Store) UpsertAPI(v model.API) (model.API, error) {
 	if err != nil {
 		return v, err
 	}
+	if _, err := tx.Exec(`INSERT INTO api_version_metadata (api_id, version, version_set_id)
+	    VALUES (?, ?, NULLIF(?, '')) ON CONFLICT(api_id) DO UPDATE SET
+	      version=excluded.version, version_set_id=excluded.version_set_id`, v.ID(), v.Version, v.VersionSetID); err != nil {
+		return v, err
+	}
 	return v, tx.Commit()
 }
 
 // CloneAPIRevision atomically creates a revision and copies runtime-owned children.
 func (s *Store) CloneAPIRevision(sourceID string, v model.API) (model.API, error) {
+	if err := s.validateAPIVersionSet(v); err != nil {
+		return v, err
+	}
 	if v.Revision == "" {
 		_, v.Revision = splitRevision(v.Name)
 	}
@@ -281,6 +302,10 @@ func (s *Store) CloneAPIRevision(sourceID string, v model.API) (model.API, error
 		v.ID(), v.Revision, v.RevisionDescription, false, now, now); err != nil {
 		return v, err
 	}
+	if _, err := tx.Exec(`INSERT INTO api_version_metadata (api_id, version, version_set_id)
+	    VALUES (?, ?, NULLIF(?, ''))`, v.ID(), v.Version, v.VersionSetID); err != nil {
+		return v, err
+	}
 	childETag := newETag()
 	if _, err := tx.Exec(`INSERT INTO operations (id, api_id, name, display_name, method, url_template, etag)
 	    SELECT ? || '/operations/' || name, ?, name, display_name, method, url_template, ?
@@ -304,11 +329,13 @@ func (s *Store) GetAPI(id string) (model.API, error) {
 	      COALESCE((SELECT description FROM api_revision_metadata WHERE lower(api_id)=lower(apis.id)), ''),
 	      COALESCE((SELECT is_current FROM api_revision_metadata WHERE lower(api_id)=lower(apis.id)), 1),
 	      COALESCE((SELECT created_at FROM api_revision_metadata WHERE lower(api_id)=lower(apis.id)), 0),
-	      COALESCE((SELECT updated_at FROM api_revision_metadata WHERE lower(api_id)=lower(apis.id)), 0)
+	      COALESCE((SELECT updated_at FROM api_revision_metadata WHERE lower(api_id)=lower(apis.id)), 0),
+	      COALESCE((SELECT version FROM api_version_metadata WHERE lower(api_id)=lower(apis.id)), ''),
+	      COALESCE((SELECT version_set_id FROM api_version_metadata WHERE lower(api_id)=lower(apis.id)), '')
 	      FROM apis WHERE lower(id)=lower(?)`, id).
 		Scan(&v.ServiceID, &v.Name, &v.DisplayName, &v.Path, &v.ServiceURL,
 			&protocols, &v.SubscriptionRequired, &v.ETag, &v.Revision, &v.RevisionDescription,
-			&v.IsCurrent, &v.CreatedAt, &v.UpdatedAt)
+			&v.IsCurrent, &v.CreatedAt, &v.UpdatedAt, &v.Version, &v.VersionSetID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return model.API{}, ErrNotFound
 	}
@@ -433,6 +460,72 @@ func (s *Store) ListAPIReleases(apiID string) ([]model.APIRelease, error) {
 // DeleteAPIRelease removes release history without changing the current revision.
 func (s *Store) DeleteAPIRelease(id string) error {
 	return deleteScopedResource(s.db, "api_releases", id)
+}
+
+// UpsertAPIVersionSet creates or replaces a version set.
+func (s *Store) UpsertAPIVersionSet(v model.APIVersionSet) (model.APIVersionSet, error) {
+	v.ETag = newETag()
+	_, err := s.db.Exec(`INSERT INTO api_version_sets
+	    (id, service_id, name, display_name, versioning_scheme, version_header_name, version_query_name, description, etag)
+	    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET display_name=excluded.display_name,
+	      versioning_scheme=excluded.versioning_scheme, version_header_name=excluded.version_header_name,
+	      version_query_name=excluded.version_query_name, description=excluded.description, etag=excluded.etag`,
+		v.ID(), v.ServiceID, v.Name, v.DisplayName, v.VersioningScheme, v.VersionHeaderName,
+		v.VersionQueryName, v.Description, v.ETag)
+	return v, err
+}
+
+// GetAPIVersionSet finds one version set.
+func (s *Store) GetAPIVersionSet(id string) (model.APIVersionSet, error) {
+	var v model.APIVersionSet
+	err := s.db.QueryRow(`SELECT service_id, name, display_name, versioning_scheme,
+	    version_header_name, version_query_name, description, etag FROM api_version_sets WHERE lower(id)=lower(?)`, id).
+		Scan(&v.ServiceID, &v.Name, &v.DisplayName, &v.VersioningScheme, &v.VersionHeaderName,
+			&v.VersionQueryName, &v.Description, &v.ETag)
+	if errors.Is(err, sql.ErrNoRows) {
+		return model.APIVersionSet{}, ErrNotFound
+	}
+	return v, err
+}
+
+// ListAPIVersionSets returns version sets for a service in stable ID order.
+func (s *Store) ListAPIVersionSets(serviceID string) ([]model.APIVersionSet, error) {
+	rows, err := s.db.Query(`SELECT service_id, name, display_name, versioning_scheme,
+	    version_header_name, version_query_name, description, etag FROM api_version_sets
+	    WHERE lower(service_id)=lower(?) ORDER BY id`, serviceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	values := make([]model.APIVersionSet, 0)
+	for rows.Next() {
+		var v model.APIVersionSet
+		if err := rows.Scan(&v.ServiceID, &v.Name, &v.DisplayName, &v.VersioningScheme,
+			&v.VersionHeaderName, &v.VersionQueryName, &v.Description, &v.ETag); err != nil {
+			return nil, err
+		}
+		values = append(values, v)
+	}
+	return values, rows.Err()
+}
+
+// DeleteAPIVersionSet removes an unused version set.
+func (s *Store) DeleteAPIVersionSet(id string) error {
+	return deleteScopedResource(s.db, "api_version_sets", id)
+}
+
+func (s *Store) validateAPIVersionSet(v model.API) error {
+	if v.VersionSetID == "" {
+		return nil
+	}
+	versionSet, err := s.GetAPIVersionSet(v.VersionSetID)
+	if err != nil {
+		return err
+	}
+	if !equalID(versionSet.ServiceID, v.ServiceID) {
+		return ErrConflict
+	}
+	return nil
 }
 
 // DeleteAPI removes an API and its children.
@@ -690,7 +783,9 @@ func scanAPIs(db *sql.DB) ([]model.API, error) {
 	    COALESCE((SELECT description FROM api_revision_metadata WHERE api_id=apis.id), ''),
 	    COALESCE((SELECT is_current FROM api_revision_metadata WHERE api_id=apis.id), 1),
 	    COALESCE((SELECT created_at FROM api_revision_metadata WHERE api_id=apis.id), 0),
-	    COALESCE((SELECT updated_at FROM api_revision_metadata WHERE api_id=apis.id), 0)
+	    COALESCE((SELECT updated_at FROM api_revision_metadata WHERE api_id=apis.id), 0),
+	    COALESCE((SELECT version FROM api_version_metadata WHERE api_id=apis.id), ''),
+	    COALESCE((SELECT version_set_id FROM api_version_metadata WHERE api_id=apis.id), '')
 	    FROM apis ORDER BY id`)
 	if err != nil {
 		return nil, err
@@ -702,7 +797,7 @@ func scanAPIs(db *sql.DB) ([]model.API, error) {
 		var protocols string
 		if err := rows.Scan(&v.ServiceID, &v.Name, &v.DisplayName, &v.Path, &v.ServiceURL, &protocols,
 			&v.SubscriptionRequired, &v.ETag, &v.Revision, &v.RevisionDescription, &v.IsCurrent,
-			&v.CreatedAt, &v.UpdatedAt); err != nil {
+			&v.CreatedAt, &v.UpdatedAt, &v.Version, &v.VersionSetID); err != nil {
 			return nil, err
 		}
 		_ = json.Unmarshal([]byte(protocols), &v.Protocols)
