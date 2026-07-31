@@ -40,7 +40,7 @@ part of the identity expansion.
   Custom hostname routing from persisted `hostnameConfigurations`, backend TLS chain-validation/client-certificate behavior, backend retry execution for transient failures/status predicates, circuit-breaker state, SSE flushing, and WebSocket upgrade tunneling are implemented.
 - Entra JWT, managed identity, OAuth/OIDC, client certificates, and Key Vault-backed named values.
 - Core policy families: routing, mutation, control flow, auth, limits, cache, validation, send-request, transforms, and tracing.
-  Literal query/body/variable/method mutations, CORS response/preflight handling, `check-header`, `validate-jwt` backed by the configured Entra validator, and `ip-filter` validation are implemented; the remaining families are still open.
+  Literal query/body/variable/method mutations, CORS response/preflight handling, `check-header`, `validate-jwt` backed by the configured Entra validator, `ip-filter` validation, and injected `send-request` calls are implemented; the remaining families are still open.
 - Operator portal for resources, snapshots, traces, clock, faults, and parity.
   The embedded operator portal now exposes runtime status, active snapshot, parity status, trace navigation, and controllable clock state under `/_emulator/portal/`; fault controls and resource editors remain open.
 

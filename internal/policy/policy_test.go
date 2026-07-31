@@ -275,6 +275,61 @@ func TestSetMethodAndCORSPolicies(t *testing.T) {
 	}
 }
 
+func TestSendRequestPolicy(t *testing.T) {
+	plan, err := Compile(`<policies><inbound><send-request response-variable-name="probe"><set-url>https://probe.example/check</set-url><set-method>POST</set-method><set-header name="X-Probe"><value>yes</value></set-header><set-body>payload</set-body></send-request></inbound></policies>`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := &State{Request: httptest.NewRequest(http.MethodGet, "/", nil), SendRequest: func(request *http.Request) (*http.Response, error) {
+		if request.Method != http.MethodPost || request.URL.String() != "https://probe.example/check" || request.Header.Get("X-Probe") != "yes" {
+			t.Fatalf("probe request = %s %s %v", request.Method, request.URL, request.Header)
+		}
+		body, _ := io.ReadAll(request.Body)
+		if string(body) != "payload" {
+			t.Fatalf("probe body = %q", body)
+		}
+		return &http.Response{StatusCode: http.StatusNoContent, Body: io.NopCloser(strings.NewReader(""))}, nil
+	}}
+	if err := Execute(plan.Inbound, state); err != nil || state.Variables["probe"] != "204" {
+		t.Fatalf("send-request state = %+v, %v", state, err)
+	}
+	valueBody, err := Compile(`<policies><inbound><send-request><set-url>https://probe.example</set-url><set-body><value>value-body</value></set-body></send-request></inbound></policies>`, true)
+	if err != nil || len(valueBody.Inbound) != 1 || valueBody.Inbound[0].Body != "value-body" {
+		t.Fatalf("value body action = %+v, %v", valueBody, err)
+	}
+	if err := Execute(valueBody.Inbound, &State{}); err == nil {
+		t.Fatal("send-request without transport accepted")
+	}
+	invalid, err := Compile(`<policies><inbound><send-request><set-url>://bad</set-url></send-request></inbound></policies>`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := Execute(invalid.Inbound, &State{SendRequest: func(*http.Request) (*http.Response, error) { return nil, nil }}); err == nil {
+		t.Fatal("invalid send-request URL accepted")
+	}
+	failed, err := Compile(`<policies><inbound><send-request><set-url>https://probe.example</set-url></send-request></inbound></policies>`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := Execute(failed.Inbound, &State{SendRequest: func(*http.Request) (*http.Response, error) { return nil, errors.New("probe failed") }}); err == nil {
+		t.Fatal("send-request transport error lost")
+	}
+	for _, value := range []string{
+		`<policies><inbound><send-request/></inbound></policies>`,
+		`<policies><inbound><send-request><set-header name="X"><value>@(1)</value></set-header></send-request></inbound></policies>`,
+		`<policies><inbound><send-request><set-url>https://probe.example</set-url><set-body>@(1)</set-body></send-request></inbound></policies>`,
+		`<policies><inbound><send-request><set-url>https://probe.example</set-url><unknown/></send-request></inbound></policies>`,
+	} {
+		compiled, err := Compile(value, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := Execute(compiled.Inbound, &State{}); err == nil {
+			t.Fatalf("expected send-request failure for %s", value)
+		}
+	}
+}
+
 func TestUnsupportedExpressionModes(t *testing.T) {
 	xml := `<policies><inbound><set-header name="X"><value>@(context.Request.Method)</value></set-header></inbound><backend/><outbound/><on-error/></policies>`
 	plan, err := Compile(xml, false)

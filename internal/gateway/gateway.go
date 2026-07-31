@@ -80,6 +80,7 @@ type Runtime struct {
 	breakerMu            sync.Mutex
 	breakers             map[string]circuitState
 	policyTokenValidator func(string) error
+	policySendRequest    func(*http.Request) (*http.Response, error)
 }
 
 type circuitState struct {
@@ -117,7 +118,7 @@ func New(defaultService string, client *http.Client) *Runtime {
 	if client == nil {
 		client = http.DefaultClient
 	}
-	r := &Runtime{defaultService: defaultService, client: client, traces: map[string]Trace{}, breakers: map[string]circuitState{}}
+	r := &Runtime{defaultService: defaultService, client: client, policySendRequest: client.Do, traces: map[string]Trace{}, breakers: map[string]circuitState{}}
 	r.current.Store(&Snapshot{Services: map[string]*Service{}})
 	return r
 }
@@ -367,7 +368,7 @@ func (r *Runtime) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		gatewayError(w, http.StatusUnauthorized, "SubscriptionKeyInvalid", message)
 		return
 	}
-	state := &policy.State{Request: req, BackendURL: route.API.ServiceURL, Path: relative, Headers: make(http.Header), ValidateToken: r.policyTokenValidator}
+	state := &policy.State{Request: req, BackendURL: route.API.ServiceURL, Path: relative, Headers: make(http.Header), ValidateToken: r.policyTokenValidator, SendRequest: r.policySendRequest}
 	traceEvent(trace, "inbound", "")
 	if err := policy.Execute(route.Plan.Inbound, state); err != nil {
 		r.policyFailure(w, req, route.Plan, state, err)

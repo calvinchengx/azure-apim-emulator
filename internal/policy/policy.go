@@ -28,6 +28,7 @@ const (
 	ActionIPFilter
 	ActionSetMethod
 	ActionCORS
+	ActionSendRequest
 	ActionSetBackend
 	ActionRewriteURI
 	ActionForward
@@ -58,6 +59,9 @@ type Action struct {
 	ExposeHeaders string
 	MaxAge        string
 	AllowCreds    bool
+	SendURL       string
+	SendMethod    string
+	ResponseVar   string
 	Children      []Action
 	RetryCount    int
 	RetryInterval time.Duration
@@ -95,6 +99,7 @@ type State struct {
 	Headers       http.Header
 	Variables     map[string]string
 	ValidateToken func(string) error
+	SendRequest   func(*http.Request) (*http.Response, error)
 }
 
 type node struct {
@@ -339,6 +344,36 @@ func compileNode(item node, strict bool) (Action, bool, error) {
 			return unsupported(item.Name), true, nil
 		}
 		return Action{Kind: ActionCORS, AllowOrigin: item.Attrs["allowed-origins"], Methods: item.Attrs["allowed-methods"], AllowHeaders: item.Attrs["allowed-headers"], ExposeHeaders: item.Attrs["expose-headers"], MaxAge: item.Attrs["max-age"], AllowCreds: strings.EqualFold(item.Attrs["allow-credentials"], "true")}, true, nil
+	case "send-request":
+		action := Action{Kind: ActionSendRequest, SendMethod: http.MethodGet, ResponseVar: item.Attrs["response-variable-name"]}
+		for _, child := range item.Children {
+			switch child.Name {
+			case "set-url":
+				action.SendURL = strings.TrimSpace(child.Text)
+			case "set-method":
+				action.SendMethod = strings.ToUpper(strings.TrimSpace(child.Text))
+			case "set-header":
+				value := childText(child, "value")
+				if expression(value) {
+					return unsupported(item.Name), true, nil
+				}
+				action.Headers = append(action.Headers, Header{Name: child.Attrs["name"], Value: value, Action: child.Attrs["exists-action"]})
+			case "set-body":
+				action.Body = strings.TrimSpace(child.Text)
+				if action.Body == "" {
+					action.Body = childText(child, "value")
+				}
+				if expression(action.Body) {
+					return unsupported(item.Name), true, nil
+				}
+			default:
+				return unsupported(item.Name + "/" + child.Name), true, nil
+			}
+		}
+		if action.SendURL == "" || expression(action.SendURL) || action.SendMethod == "" {
+			return unsupported(item.Name), true, nil
+		}
+		return action, true, nil
 	case "set-backend-service":
 		value, backendID := item.Attrs["base-url"], item.Attrs["backend-id"]
 		if (value == "") == (backendID == "") || expression(value) || expression(backendID) {
@@ -550,6 +585,32 @@ func Execute(actions []Action, state *State) error {
 			}
 			if state.Request.Method == http.MethodOptions {
 				state.Returned, state.StatusCode = true, http.StatusNoContent
+			}
+		case ActionSendRequest:
+			if state.SendRequest == nil {
+				return fmt.Errorf("send-request requires a configured transport")
+			}
+			request, err := http.NewRequest(action.SendMethod, action.SendURL, strings.NewReader(action.Body))
+			if err != nil {
+				return err
+			}
+			for _, header := range action.Headers {
+				setHeader(request.Header, header)
+			}
+			response, err := state.SendRequest(request)
+			if err != nil {
+				return err
+			}
+			if response != nil {
+				if response.Body != nil {
+					_ = response.Body.Close()
+				}
+				if action.ResponseVar != "" {
+					if state.Variables == nil {
+						state.Variables = map[string]string{}
+					}
+					state.Variables[action.ResponseVar] = fmt.Sprintf("%d", response.StatusCode)
+				}
 			}
 		case ActionSetBackend:
 			state.BackendURL = action.Value
