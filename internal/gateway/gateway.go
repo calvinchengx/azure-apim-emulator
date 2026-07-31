@@ -32,6 +32,7 @@ type Snapshot struct {
 // Service is compiled runtime state for one APIM service.
 type Service struct {
 	Name         string
+	Hostnames    map[string]bool
 	Routes       []*Route
 	Backends     map[string]model.Backend
 	Certificates map[string]model.Certificate
@@ -196,7 +197,7 @@ func (r *Runtime) Activate(st *store.Store, strict bool) error {
 	}
 	snapshot := &Snapshot{Services: map[string]*Service{}}
 	for _, item := range services {
-		snapshot.Services[strings.ToLower(item.Name)] = &Service{Name: item.Name, Backends: backends[strings.ToLower(item.ID())], Certificates: certificates[strings.ToLower(item.ID())], Diagnostics: diagnostics[strings.ToLower(item.ID())]}
+		snapshot.Services[strings.ToLower(item.Name)] = &Service{Name: item.Name, Hostnames: customHostnames(item.Document), Backends: backends[strings.ToLower(item.ID())], Certificates: certificates[strings.ToLower(item.ID())], Diagnostics: diagnostics[strings.ToLower(item.ID())]}
 	}
 	for _, api := range apis {
 		if !api.IsCurrent {
@@ -294,7 +295,7 @@ func (r *Runtime) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		defer r.finishTrace(trace, tracedWriter)
 	}
 	snapshot := r.current.Load()
-	serviceName := serviceFromHost(req.Host, r.defaultService)
+	serviceName := serviceForHost(snapshot, req.Host, r.defaultService)
 	traceEvent(trace, "ingress", serviceName)
 	service := snapshot.Services[strings.ToLower(serviceName)]
 	if service == nil {
@@ -610,6 +611,49 @@ func serviceFromHost(host, fallback string) string {
 		}
 	}
 	return fallback
+}
+
+func serviceForHost(snapshot *Snapshot, host, fallback string) string {
+	normalized := strings.ToLower(host)
+	if parsed, _, err := net.SplitHostPort(host); err == nil {
+		normalized = strings.ToLower(parsed)
+	}
+	names := make([]string, 0, len(snapshot.Services))
+	for name := range snapshot.Services {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		service := snapshot.Services[name]
+		if service.Hostnames[normalized] {
+			return service.Name
+		}
+	}
+	return serviceFromHost(host, fallback)
+}
+
+func customHostnames(document map[string]any) map[string]bool {
+	result := map[string]bool{}
+	collect := func(value any) {
+		entries, ok := value.([]any)
+		if !ok {
+			return
+		}
+		for _, entry := range entries {
+			configuration, ok := entry.(map[string]any)
+			if !ok {
+				continue
+			}
+			if host, ok := configuration["hostName"].(string); ok && strings.TrimSpace(host) != "" {
+				result[strings.ToLower(strings.TrimSpace(host))] = true
+			}
+		}
+	}
+	collect(document["hostnameConfigurations"])
+	if properties, ok := document["properties"].(map[string]any); ok {
+		collect(properties["hostnameConfigurations"])
+	}
+	return result
 }
 
 func matchRoute(routes []*Route, request *http.Request) (*Route, string) {

@@ -77,6 +77,26 @@ func TestRoutingHelpers(t *testing.T) {
 	if got, _ := matchRoute([]*Route{headerV1, queryV1}, httptest.NewRequest(http.MethodGet, "/api/items", nil)); got != nil {
 		t.Fatalf("missing version matched %v", got)
 	}
+	snapshot := &Snapshot{Services: map[string]*Service{
+		"alpha": {Name: "alpha", Hostnames: map[string]bool{"api.example.test": true}},
+		"beta":  {Name: "beta", Hostnames: map[string]bool{"api.example.test:8443": true}},
+	}}
+	if got := serviceForHost(snapshot, "api.example.test", "fallback"); got != "alpha" || serviceForHost(snapshot, "unknown.example.test", "fallback") != "fallback" {
+		t.Fatalf("custom host routing = %q", got)
+	}
+	if hosts := customHostnames(map[string]any{"hostnameConfigurations": []any{map[string]any{"hostName": "API.Example.Test"}}, "properties": map[string]any{"hostnameConfigurations": []any{map[string]any{"hostName": "portal.example.test"}}}}); !hosts["api.example.test"] || !hosts["portal.example.test"] {
+		t.Fatalf("custom hostnames = %#v", hosts)
+	}
+	runtime := New("fallback", nil)
+	runtime.current.Store(&Snapshot{Services: map[string]*Service{
+		"custom": {Name: "custom", Hostnames: map[string]bool{"custom.example.test": true}, Routes: []*Route{{API: model.API{Path: "api"}, Operations: []model.Operation{{Method: "GET", URLTemplate: "/"}}, Plan: policy.Plan{Inbound: []policy.Action{{Kind: policy.ActionReturnResponse, StatusCode: http.StatusAccepted, Body: "custom"}}}}}},
+	}})
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "http://custom.example.test/api", nil)
+	runtime.ServeHTTP(response, request)
+	if response.Code != http.StatusAccepted || response.Body.String() != "custom" {
+		t.Fatalf("custom-domain gateway response = %d %q", response.Code, response.Body.String())
+	}
 	if !templateMatches("/{id}", "/42") || !templateMatches("/fixed", "/fixed") ||
 		templateMatches("/a/b", "/a") || templateMatches("/fixed", "/other") {
 		t.Fatal("template matching mismatch")

@@ -17,7 +17,7 @@ validation and configured custom domains follow tier-specific rules.
 
 ## Request lifecycle
 
-1. Resolve service, gateway, workspace, and hostname.
+1. Resolve service from a configured custom hostname or the standard host suffix, then resolve gateway and workspace.
 2. Capture the active immutable snapshot.
 3. Match API and operation using protocol-specific routing and revision/version rules.
 4. Resolve subscription key and caller context.
@@ -108,4 +108,3 @@ The emulator supports two modes:
 The public deployment/configuration protocol is characterized independently.
 Configuration backup, token rotation, fail-static behavior, gateway version
 capabilities, and unsupported-policy handling are first-class parity entries.
-
