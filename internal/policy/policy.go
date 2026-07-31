@@ -22,6 +22,7 @@ const (
 	ActionSetQueryParameter
 	ActionSetVariable
 	ActionSetBody
+	ActionCheckHeader
 	ActionSetBackend
 	ActionRewriteURI
 	ActionForward
@@ -42,6 +43,8 @@ type Action struct {
 	Body          string
 	Headers       []Header
 	Variable      string
+	Values        []string
+	IgnoreCase    bool
 	Children      []Action
 	RetryCount    int
 	RetryInterval time.Duration
@@ -268,6 +271,25 @@ func compileNode(item node, strict bool) (Action, bool, error) {
 			return unsupported(item.Name), true, nil
 		}
 		return Action{Kind: ActionSetBody, Body: value}, true, nil
+	case "check-header":
+		values := make([]string, 0, len(item.Children))
+		for _, child := range item.Children {
+			if child.Name != "value" {
+				return unsupported(item.Name + "/" + child.Name), true, nil
+			}
+			value := strings.TrimSpace(child.Text)
+			if expression(value) {
+				return unsupported(item.Name), true, nil
+			}
+			values = append(values, value)
+		}
+		code := http.StatusUnauthorized
+		if value := item.Attrs["failed-check-httpcode"]; value != "" {
+			if _, err := fmt.Sscanf(value, "%d", &code); err != nil {
+				return Action{}, false, fmt.Errorf("invalid check-header status")
+			}
+		}
+		return Action{Kind: ActionCheckHeader, Name: item.Attrs["name"], Values: values, Value: item.Attrs["failed-check-error-message"], StatusCode: code, IgnoreCase: strings.EqualFold(item.Attrs["ignore-case"], "true")}, true, nil
 	case "set-backend-service":
 		value, backendID := item.Attrs["base-url"], item.Attrs["backend-id"]
 		if (value == "") == (backendID == "") || expression(value) || expression(backendID) {
@@ -389,6 +411,23 @@ func Execute(actions []Action, state *State) error {
 				}
 			} else {
 				state.Body, state.BodySet = action.Body, true
+			}
+		case ActionCheckHeader:
+			if state.Request == nil {
+				return fmt.Errorf("check-header requires a request")
+			}
+			actual := state.Request.Header.Values(action.Name)
+			matched := false
+			for _, candidate := range actual {
+				for _, allowed := range action.Values {
+					if (action.IgnoreCase && strings.EqualFold(candidate, allowed)) || (!action.IgnoreCase && candidate == allowed) {
+						matched = true
+					}
+				}
+			}
+			if !matched {
+				state.Returned, state.StatusCode, state.Body = true, action.StatusCode, action.Value
+				return nil
 			}
 		case ActionSetBackend:
 			state.BackendURL = action.Value

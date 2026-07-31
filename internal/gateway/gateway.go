@@ -31,6 +31,21 @@ type Snapshot struct {
 	Services map[string]*Service
 }
 
+// SnapshotSummary returns a JSON-friendly view of the active gateway bundle.
+func (r *Runtime) SnapshotSummary() map[string]any {
+	snapshot := r.current.Load()
+	services := make([]map[string]any, 0, len(snapshot.Services))
+	for _, service := range snapshot.Services {
+		routes := make([]map[string]any, 0, len(service.Routes))
+		for _, route := range service.Routes {
+			routes = append(routes, map[string]any{"api": route.API.ID(), "path": route.API.Path, "operations": len(route.Operations)})
+		}
+		services = append(services, map[string]any{"name": service.Name, "hostnames": service.Hostnames, "routes": routes})
+	}
+	sort.Slice(services, func(left, right int) bool { return services[left]["name"].(string) < services[right]["name"].(string) })
+	return map[string]any{"services": services}
+}
+
 // Service is compiled runtime state for one APIM service.
 type Service struct {
 	Name         string
@@ -60,6 +75,21 @@ type Runtime struct {
 	traces         map[string]Trace
 	traceOrder     []string
 	eventStore     atomic.Pointer[store.Store]
+	breakerMu      sync.Mutex
+	breakers       map[string]circuitState
+}
+
+type circuitState struct {
+	failures    []time.Time
+	openedUntil time.Time
+}
+
+type circuitRule struct {
+	count        int
+	interval     time.Duration
+	tripDuration time.Duration
+	statusMin    int
+	statusMax    int
 }
 
 // Trace is a bounded structured record of one opted-in gateway request.
@@ -84,7 +114,7 @@ func New(defaultService string, client *http.Client) *Runtime {
 	if client == nil {
 		client = http.DefaultClient
 	}
-	r := &Runtime{defaultService: defaultService, client: client, traces: map[string]Trace{}}
+	r := &Runtime{defaultService: defaultService, client: client, traces: map[string]Trace{}, breakers: map[string]circuitState{}}
 	r.current.Store(&Snapshot{Services: map[string]*Service{}})
 	return r
 }
@@ -353,7 +383,12 @@ func (r *Runtime) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		r.policyFailure(w, req, route.Plan, state, err)
 		return
 	}
+	if r.circuitOpen(service, state.BackendID, time.Now()) {
+		r.policyFailure(w, req, route.Plan, state, fmt.Errorf("backend circuit breaker is open"))
+		return
+	}
 	response, err := forwardWithRetry(client, req, state.BackendURL, state.Path, route.Plan.Backend)
+	r.recordCircuit(service, state.BackendID, response, err, time.Now())
 	if err != nil {
 		r.policyFailure(w, req, route.Plan, state, fmt.Errorf("backend request failed: %w", err))
 		return
@@ -375,8 +410,138 @@ func (r *Runtime) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	if state.BodySet {
 		_, _ = io.WriteString(w, state.Body)
 	} else {
-		_, _ = io.Copy(w, response.Body)
+		writeGatewayBody(w, response)
 	}
+}
+
+func writeGatewayBody(w http.ResponseWriter, response *http.Response) {
+	if strings.HasPrefix(strings.ToLower(response.Header.Get("Content-Type")), "text/event-stream") {
+		if flusher, ok := w.(http.Flusher); ok {
+			buffer := make([]byte, 4096)
+			for {
+				read, err := response.Body.Read(buffer)
+				if read > 0 {
+					_, _ = w.Write(buffer[:read])
+					flusher.Flush()
+				}
+				if err != nil {
+					return
+				}
+			}
+		}
+	}
+	_, _ = io.Copy(w, response.Body)
+}
+
+func (r *Runtime) circuitOpen(service *Service, backendID string, now time.Time) bool {
+	rule, ok := backendCircuitRule(service, backendID)
+	if !ok {
+		return false
+	}
+	key := strings.ToLower(service.Name + "/" + backendID)
+	r.breakerMu.Lock()
+	defer r.breakerMu.Unlock()
+	state := r.breakers[key]
+	if state.openedUntil.After(now) {
+		return true
+	}
+	if !state.openedUntil.IsZero() && !state.openedUntil.After(now) {
+		state.openedUntil = time.Time{}
+		state.failures = nil
+		r.breakers[key] = state
+	}
+	_ = rule
+	return false
+}
+
+func (r *Runtime) recordCircuit(service *Service, backendID string, response *http.Response, requestErr error, now time.Time) {
+	rule, ok := backendCircuitRule(service, backendID)
+	if !ok {
+		return
+	}
+	failure := requestErr != nil
+	if response != nil {
+		failure = response.StatusCode >= rule.statusMin && response.StatusCode <= rule.statusMax
+	}
+	key := strings.ToLower(service.Name + "/" + backendID)
+	r.breakerMu.Lock()
+	defer r.breakerMu.Unlock()
+	state := r.breakers[key]
+	if !failure {
+		state.failures = nil
+		state.openedUntil = time.Time{}
+		r.breakers[key] = state
+		return
+	}
+	cutoff := now.Add(-rule.interval)
+	kept := state.failures[:0]
+	for _, failureAt := range state.failures {
+		if failureAt.After(cutoff) {
+			kept = append(kept, failureAt)
+		}
+	}
+	state.failures = append(kept, now)
+	if len(state.failures) >= rule.count {
+		state.openedUntil = now.Add(rule.tripDuration)
+	}
+	r.breakers[key] = state
+}
+
+func backendCircuitRule(service *Service, backendID string) (circuitRule, bool) {
+	if service == nil || backendID == "" {
+		return circuitRule{}, false
+	}
+	backend, ok := service.Backends[strings.ToLower(backendID)]
+	if !ok {
+		return circuitRule{}, false
+	}
+	properties, _ := backend.Document["properties"].(map[string]any)
+	circuit, _ := properties["circuitBreaker"].(map[string]any)
+	rules, _ := circuit["rules"].([]any)
+	if len(rules) == 0 {
+		return circuitRule{}, false
+	}
+	ruleDocument, _ := rules[0].(map[string]any)
+	failureCondition, _ := ruleDocument["failureCondition"].(map[string]any)
+	rule := circuitRule{count: intNumber(failureCondition["count"]), interval: parseAPIMDuration(failureCondition["interval"], time.Minute), tripDuration: parseAPIMDuration(ruleDocument["tripDuration"], time.Minute), statusMin: 500, statusMax: 599}
+	if rule.count <= 0 {
+		return circuitRule{}, false
+	}
+	if ranges, ok := failureCondition["statusCodeRanges"].([]any); ok && len(ranges) > 0 {
+		if first, ok := ranges[0].(map[string]any); ok {
+			rule.statusMin = intNumber(first["min"])
+			rule.statusMax = intNumber(first["max"])
+		}
+	}
+	return rule, rule.statusMin <= rule.statusMax && rule.tripDuration >= 0
+}
+
+func intNumber(value any) int {
+	switch number := value.(type) {
+	case int:
+		return number
+	case int64:
+		return int(number)
+	case float64:
+		return int(number)
+	default:
+		return 0
+	}
+}
+
+func parseAPIMDuration(value any, fallback time.Duration) time.Duration {
+	text, ok := value.(string)
+	if !ok || text == "" {
+		return fallback
+	}
+	if parsed, err := time.ParseDuration(text); err == nil {
+		return parsed
+	}
+	var seconds float64
+	if _, err := fmt.Sscanf(strings.ToUpper(text), "PT%fS", &seconds); err == nil {
+		return time.Duration(seconds * float64(time.Second))
+	}
+	return fallback
 }
 
 type diagnosticWriter struct {

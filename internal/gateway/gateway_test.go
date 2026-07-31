@@ -211,6 +211,150 @@ func TestForwardWithRetryHandlesErrorsAndCancellation(t *testing.T) {
 	}
 }
 
+func TestWriteGatewayBodyFlushesSSE(t *testing.T) {
+	writer := &flushWriter{ResponseRecorder: httptest.NewRecorder()}
+	response := &http.Response{Header: http.Header{"Content-Type": {"text/event-stream"}}, Body: io.NopCloser(strings.NewReader("data: one\n\ndata: two\n\n"))}
+	writeGatewayBody(writer, response)
+	if writer.Body.String() != "data: one\n\ndata: two\n\n" || writer.flushes != 1 {
+		t.Fatalf("SSE body = %q flushes %d", writer.Body.String(), writer.flushes)
+	}
+	response.Body.Close()
+
+	plain := &flushWriter{ResponseRecorder: httptest.NewRecorder()}
+	writeGatewayBody(plain, &http.Response{Header: make(http.Header), Body: io.NopCloser(strings.NewReader("plain"))})
+	if plain.Body.String() != "plain" {
+		t.Fatalf("plain body = %q", plain.Body.String())
+	}
+}
+
+func TestBackendCircuitBreaker(t *testing.T) {
+	rule := map[string]any{
+		"failureCondition": map[string]any{
+			"count": float64(2), "interval": "PT60S",
+			"statusCodeRanges": []any{map[string]any{"min": float64(500), "max": float64(599)}},
+		},
+		"tripDuration": "PT30S",
+	}
+	service := &Service{Name: "emulator", Backends: map[string]model.Backend{"backend": {
+		Document: map[string]any{"properties": map[string]any{"circuitBreaker": map[string]any{"rules": []any{rule}}}},
+	}}}
+	runtime := New("emulator", nil)
+	now := time.Now()
+	if runtime.circuitOpen(service, "backend", now) {
+		t.Fatal("new circuit should be closed")
+	}
+	runtime.recordCircuit(service, "backend", &http.Response{StatusCode: http.StatusBadGateway}, nil, now)
+	runtime.recordCircuit(service, "backend", &http.Response{StatusCode: http.StatusServiceUnavailable}, nil, now.Add(time.Second))
+	if !runtime.circuitOpen(service, "backend", now.Add(2*time.Second)) {
+		t.Fatal("circuit should be open after threshold")
+	}
+	if runtime.circuitOpen(service, "missing", now) {
+		t.Fatal("missing backend should not open a circuit")
+	}
+	runtime.recordCircuit(service, "backend", &http.Response{StatusCode: http.StatusOK}, nil, now.Add(31*time.Second))
+	if runtime.circuitOpen(service, "backend", now.Add(31*time.Second)) {
+		t.Fatal("successful response should reset circuit")
+	}
+	second := New("emulator", nil)
+	second.recordCircuit(service, "backend", &http.Response{StatusCode: http.StatusInternalServerError}, nil, now)
+	second.recordCircuit(service, "backend", &http.Response{StatusCode: http.StatusBadGateway}, nil, now.Add(time.Second))
+	if second.circuitOpen(service, "backend", now.Add(31*time.Second)) {
+		t.Fatal("expired circuit should close")
+	}
+	if second.circuitOpen(service, "backend", now.Add(32*time.Second)) {
+		t.Fatal("closed circuit should remain closed")
+	}
+	for _, value := range []any{int(1), int64(2), float64(3), "bad"} {
+		_ = intNumber(value)
+	}
+	for _, value := range []struct {
+		service *Service
+		id      string
+	}{
+		{nil, "backend"}, {service, ""}, {&Service{Backends: map[string]model.Backend{}}, "backend"},
+	} {
+		if _, ok := backendCircuitRule(value.service, value.id); ok {
+			t.Fatalf("invalid circuit configuration accepted: %+v", value)
+		}
+	}
+	if _, ok := backendCircuitRule(&Service{Backends: map[string]model.Backend{"bad": {Document: map[string]any{"properties": map[string]any{"circuitBreaker": map[string]any{"rules": []any{map[string]any{"failureCondition": map[string]any{"count": float64(0)}}}}}}}}}, "bad"); ok {
+		t.Fatal("zero-count circuit configuration accepted")
+	}
+	if summary := runtime.SnapshotSummary(); len(summary["services"].([]map[string]any)) != 0 {
+		t.Fatal("empty snapshot summary was not empty")
+	}
+	runtime.current.Store(&Snapshot{Services: map[string]*Service{
+		"emulator": {Name: "emulator", Routes: []*Route{{API: model.API{Name: "api", Path: "api"}, Operations: []model.Operation{{Name: "get"}}}}},
+		"alpha":    {Name: "alpha"},
+	}})
+	services := runtime.SnapshotSummary()["services"].([]map[string]any)
+	if len(services) != 2 || services[1]["routes"].([]map[string]any)[0]["operations"] != 1 {
+		t.Fatalf("snapshot services = %#v", services)
+	}
+	if routes := services[1]["routes"].([]map[string]any); len(routes) != 1 {
+		t.Fatalf("snapshot routes = %#v", routes)
+	}
+	if got := parseAPIMDuration("2s", time.Minute); got != 2*time.Second {
+		t.Fatalf("Go duration = %s", got)
+	}
+	if got := parseAPIMDuration("invalid", 3*time.Second); got != 3*time.Second {
+		t.Fatalf("fallback duration = %s", got)
+	}
+}
+
+func TestGatewayCircuitBreakerOpenPath(t *testing.T) {
+	calls := 0
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer backend.Close()
+	runtime := New("emulator", backend.Client())
+	service := &Service{Name: "emulator", Backends: map[string]model.Backend{"breaker": {
+		Document: map[string]any{"properties": map[string]any{"circuitBreaker": map[string]any{"rules": []any{map[string]any{
+			"failureCondition": map[string]any{"count": float64(1)}, "tripDuration": "PT1H",
+		}}}}},
+	}}}
+	route := &Route{API: model.API{Name: "api", Path: "api", ServiceURL: backend.URL}, Operations: []model.Operation{{Method: http.MethodGet, URLTemplate: "/"}}, Plan: policy.Plan{Inbound: []policy.Action{{Kind: policy.ActionSetBackend, BackendID: "breaker", Value: backend.URL}}}}
+	service.Routes = []*Route{route}
+	runtime.current.Store(&Snapshot{Services: map[string]*Service{"emulator": service}})
+	first := httptest.NewRecorder()
+	runtime.ServeHTTP(first, httptest.NewRequest(http.MethodGet, "/api", nil))
+	second := httptest.NewRecorder()
+	runtime.ServeHTTP(second, httptest.NewRequest(http.MethodGet, "/api", nil))
+	if first.Code != http.StatusInternalServerError || second.Code != http.StatusInternalServerError || calls != 1 || !strings.Contains(second.Body.String(), "circuit breaker") {
+		t.Fatalf("circuit requests = first %d second %d calls %d body %q", first.Code, second.Code, calls, second.Body.String())
+	}
+}
+
+func TestGatewayOperationAndSubscriptionRejections(t *testing.T) {
+	runtime := New("emulator", nil)
+	route := &Route{API: model.API{Name: "api", Path: "api", SubscriptionRequired: true}, Operations: []model.Operation{{Method: http.MethodGet, URLTemplate: "/"}}, AcceptedKeys: map[string]bool{"valid": true}}
+	runtime.current.Store(&Snapshot{Services: map[string]*Service{"emulator": {Name: "emulator", Routes: []*Route{route}}}})
+	missingRoute := httptest.NewRecorder()
+	runtime.ServeHTTP(missingRoute, httptest.NewRequest(http.MethodGet, "/missing", nil))
+	if missingRoute.Code != http.StatusNotFound {
+		t.Fatalf("missing route = %d", missingRoute.Code)
+	}
+	missingOperation := httptest.NewRecorder()
+	runtime.ServeHTTP(missingOperation, httptest.NewRequest(http.MethodGet, "/api/missing", nil))
+	if missingOperation.Code != http.StatusNotFound {
+		t.Fatalf("missing operation = %d", missingOperation.Code)
+	}
+	missingSubscription := httptest.NewRecorder()
+	runtime.ServeHTTP(missingSubscription, httptest.NewRequest(http.MethodGet, "/api", nil))
+	if missingSubscription.Code != http.StatusUnauthorized {
+		t.Fatalf("missing subscription = %d", missingSubscription.Code)
+	}
+}
+
+type flushWriter struct {
+	*httptest.ResponseRecorder
+	flushes int
+}
+
+func (w *flushWriter) Flush() { w.flushes++ }
+
 type failingReadCloser struct{}
 
 func (failingReadCloser) Read([]byte) (int, error) { return 0, errors.New("body read failed") }

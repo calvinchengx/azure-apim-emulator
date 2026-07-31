@@ -134,6 +134,35 @@ func TestSetBodyPolicy(t *testing.T) {
 	}
 }
 
+func TestCheckHeaderPolicy(t *testing.T) {
+	plan, err := Compile(`<policies><inbound><check-header name="X-Role" ignore-case="true" failed-check-httpcode="403" failed-check-error-message="forbidden"><value>Admin</value><value>Operator</value></check-header></inbound></policies>`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	state := &State{Request: request}
+	if err := Execute(plan.Inbound, state); err != nil || !state.Returned || state.StatusCode != http.StatusForbidden || state.Body != "forbidden" {
+		t.Fatalf("failed check = %+v, %v", state, err)
+	}
+	request.Header.Set("X-Role", "operator")
+	state = &State{Request: request}
+	if err := Execute(plan.Inbound, state); err != nil || state.Returned {
+		t.Fatalf("successful check = %+v, %v", state, err)
+	}
+	if _, err := Compile(`<policies><inbound><check-header name="X" failed-check-httpcode="bad"/></inbound></policies>`, false); err == nil {
+		t.Fatal("invalid check-header status accepted")
+	}
+	if _, err := Compile(`<policies><inbound><check-header name="X"><unknown/></check-header></inbound></policies>`, true); err == nil {
+		t.Fatal("unsupported check-header child accepted")
+	}
+	if _, err := Compile(`<policies><inbound><check-header name="X"><value>@(1)</value></check-header></inbound></policies>`, true); err == nil {
+		t.Fatal("check-header expression accepted")
+	}
+	if err := Execute([]Action{{Kind: ActionCheckHeader, Name: "X"}}, &State{}); err == nil {
+		t.Fatal("check-header without request should fail")
+	}
+}
+
 func TestUnsupportedExpressionModes(t *testing.T) {
 	xml := `<policies><inbound><set-header name="X"><value>@(context.Request.Method)</value></set-header></inbound><backend/><outbound/><on-error/></policies>`
 	plan, err := Compile(xml, false)

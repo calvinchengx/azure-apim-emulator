@@ -37,10 +37,12 @@ part of the identity expansion.
 - Complete ARM common semantics: ETags, paging, filters, patch, LROs, errors, and secret operations.
   Conditional ETag evaluation, stable-contract required `If-Match` enforcement for implemented entity mutations, common collection paging/filter grammar, undocumented OData-option rejection, policy-fragment `$orderby=name`, the stable scalar field/operator/function matrix for every implemented collection shape, named-value `tags/any(...)`/`tags/all(...)` predicates, selector availability/boolean validation, association-backed product tag filtering, tag `scope` filtering, Key Vault refresh-failure projection, and API/version-set/tag/product/user expansion projections are implemented centrally; the remaining semantics are still open.
 - HTTP routing edge cases, custom domains, backend TLS, pools, retries, circuit breakers, streaming, SSE, and WebSocket.
-  Custom hostname routing from persisted `hostnameConfigurations`, backend TLS chain-validation/client-certificate behavior, and backend retry execution for transient failures/status predicates are implemented; circuit breakers, streaming, SSE, and WebSocket remain open.
+  Custom hostname routing from persisted `hostnameConfigurations`, backend TLS chain-validation/client-certificate behavior, backend retry execution for transient failures/status predicates, circuit-breaker state, and SSE flushing are implemented; WebSocket remains open.
 - Entra JWT, managed identity, OAuth/OIDC, client certificates, and Key Vault-backed named values.
 - Core policy families: routing, mutation, control flow, auth, limits, cache, validation, send-request, transforms, and tracing.
+  Literal query/body/variable mutations and `check-header` validation are implemented; the remaining families are still open.
 - Operator portal for resources, snapshots, traces, clock, faults, and parity.
+  The embedded operator portal now exposes runtime status, active snapshot, parity status, trace navigation, and controllable clock state under `/_emulator/portal/`; fault controls and resource editors remain open.
 
 Exit: common APIM application-development and CI workflows run offline with
 official SDKs and documented policies.

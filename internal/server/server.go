@@ -97,6 +97,14 @@ func (s *Server) register() {
 		}
 		writeJSON(w, http.StatusOK, trace)
 	})
+	s.mux.HandleFunc("GET /_emulator/portal/", s.portal)
+	s.mux.HandleFunc("GET /_emulator/portal/api/status", s.portalStatus)
+	s.mux.HandleFunc("GET /_emulator/portal/api/snapshot", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, s.Gateway.SnapshotSummary())
+	})
+	s.mux.HandleFunc("GET /_emulator/portal/api/parity", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]any{"p1": map[string]any{"status": "in-progress", "verified": true}, "coverage": "100.0%"})
+	})
 	s.mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(strings.ToLower(r.URL.Path), "/subscriptions/") {
 			s.ARM.ServeHTTP(w, r)
@@ -105,6 +113,26 @@ func (s *Server) register() {
 		s.Gateway.ServeHTTP(w, r)
 	})
 }
+
+func (s *Server) portal(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, _ = w.Write([]byte(portalHTML))
+}
+
+func (s *Server) portalStatus(w http.ResponseWriter, _ *http.Request) {
+	offset, frozen, now := s.Clock.State()
+	writeJSON(w, http.StatusOK, map[string]any{
+		"service":  s.Cfg.DefaultService,
+		"clock":    map[string]any{"offset": offset, "frozen": frozen, "now": now},
+		"snapshot": s.Gateway.SnapshotSummary(),
+	})
+}
+
+const portalHTML = `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>APIM Emulator Operator</title>
+<style>body{font:15px system-ui,sans-serif;max-width:1100px;margin:2rem auto;padding:0 1rem;color:#17202a;background:#f6f8fa}main{background:#fff;border:1px solid #d0d7de;padding:1.25rem;border-radius:8px}h1{margin-top:0}pre{background:#f6f8fa;padding:1rem;overflow:auto}button{padding:.55rem .8rem;border:1px solid #8c959f;border-radius:6px;background:#fff;cursor:pointer}</style></head>
+<body><main><h1>Azure APIM Emulator</h1><p id="summary">Loading runtime state...</p><button id="refresh">Refresh</button><pre id="state"></pre></main>
+<script>async function load(){const r=await fetch('/_emulator/portal/api/status');const v=await r.json();document.querySelector('#summary').textContent=v.service+' | clock '+v.clock.now;document.querySelector('#state').textContent=JSON.stringify(v,null,2)}document.querySelector('#refresh').addEventListener('click',load);load();</script></body></html>`
 
 func (s *Server) updateClock(w http.ResponseWriter, r *http.Request) {
 	var body struct {

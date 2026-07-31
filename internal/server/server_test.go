@@ -132,12 +132,17 @@ func TestControlAndDispatchEndpoints(t *testing.T) {
 	}
 	defer srv.Close()
 
-	for _, path := range []string{"/health", "/_emulator/clock"} {
+	for _, path := range []string{"/health", "/_emulator/clock", "/_emulator/portal/api/status", "/_emulator/portal/api/snapshot", "/_emulator/portal/api/parity"} {
 		recorder := httptest.NewRecorder()
 		srv.Handler().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, path, nil))
 		if recorder.Code != http.StatusOK || recorder.Header().Get("Content-Type") != "application/json; charset=utf-8" {
 			t.Fatalf("%s = %d %s", path, recorder.Code, recorder.Body.String())
 		}
+	}
+	portal := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(portal, httptest.NewRequest(http.MethodGet, "/_emulator/portal/", nil))
+	if portal.Code != http.StatusOK || !strings.Contains(portal.Body.String(), "Azure APIM Emulator") || !strings.Contains(portal.Header().Get("Content-Type"), "text/html") {
+		t.Fatalf("portal = %d %s", portal.Code, portal.Body.String())
 	}
 
 	for _, test := range []struct {
