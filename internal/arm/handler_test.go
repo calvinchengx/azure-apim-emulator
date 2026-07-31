@@ -155,6 +155,152 @@ func TestConditionalEntityTagParsing(t *testing.T) {
 	}
 }
 
+func TestCollectionPagingAndFiltering(t *testing.T) {
+	handler, st := testHandler(t)
+	seedService(t, st)
+	for _, tag := range []struct{ name, displayName string }{{"alpha", "Alpha"}, {"beta", "Beta"}, {"gamma", "Gamma"}} {
+		if _, err := st.UpsertTag(model.Tag{ServiceID: serviceModel().ID(), Name: tag.name, DisplayName: tag.displayName}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	path := basePath + "/tags" + apiQuery + "&$top=1"
+	first := request(t, handler, http.MethodGet, path, "")
+	var page struct {
+		Value    []map[string]any `json:"value"`
+		Count    int              `json:"count"`
+		NextLink string           `json:"nextLink"`
+	}
+	if err := json.Unmarshal(first.Body.Bytes(), &page); err != nil {
+		t.Fatal(err)
+	}
+	if first.Code != http.StatusOK || page.Count != 3 || len(page.Value) != 1 || page.Value[0]["name"] != "alpha" || page.NextLink == "" {
+		t.Fatalf("first page = %d %+v", first.Code, page)
+	}
+	nextURL, err := url.Parse(page.NextLink)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second := request(t, handler, http.MethodGet, nextURL.RequestURI(), "")
+	if err := json.Unmarshal(second.Body.Bytes(), &page); err != nil {
+		t.Fatal(err)
+	}
+	if page.Count != 3 || len(page.Value) != 1 || page.Value[0]["name"] != "beta" || page.NextLink == "" {
+		t.Fatalf("second page = %+v", page)
+	}
+
+	query := url.Values{"api-version": {"2024-05-01"}, "$filter": {"startswith(displayName, 'B') or endswith(displayName, 'ma')"}, "$skip": {"1"}, "$top": {"1"}}
+	filtered := request(t, handler, http.MethodGet, basePath+"/tags?"+query.Encode(), "")
+	if err := json.Unmarshal(filtered.Body.Bytes(), &page); err != nil {
+		t.Fatal(err)
+	}
+	if page.Count != 2 || len(page.Value) != 1 || page.Value[0]["name"] != "gamma" || page.NextLink != "" {
+		t.Fatalf("filtered page = %+v", page)
+	}
+
+	for _, rawQuery := range []string{
+		"$top=0", "$top=not-a-number", "$top=2147483648", "$top=1&$top=2", "$skip=-1", "$skip=1&$skip=2",
+		"$filter=name", "$filter=unknown+eq+%27value%27", "$filter=contains%28displayName%2C+1%29",
+	} {
+		response := request(t, handler, http.MethodGet, basePath+"/tags?api-version=2024-05-01&"+rawQuery, "")
+		if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "InvalidQueryParameterValue") {
+			t.Fatalf("invalid query %q = %d: %s", rawQuery, response.Code, response.Body.String())
+		}
+	}
+	missing := request(t, handler, http.MethodGet, basePath+"/missing?api-version=2024-05-01&$top=1", "")
+	if missing.Code != http.StatusNotFound {
+		t.Fatalf("missing collection = %d: %s", missing.Code, missing.Body.String())
+	}
+	resource := request(t, handler, http.MethodGet, basePath+"/tags/alpha?api-version=2024-05-01&$top=1", "")
+	if resource.Code != http.StatusOK || !strings.Contains(resource.Body.String(), `"name":"alpha"`) {
+		t.Fatalf("resource query = %d: %s", resource.Code, resource.Body.String())
+	}
+	beyond := request(t, handler, http.MethodGet, basePath+"/tags?api-version=2024-05-01&$skip=10", "")
+	if beyond.Code != http.StatusOK || !strings.Contains(beyond.Body.String(), `"value":[]`) {
+		t.Fatalf("skip beyond collection = %d: %s", beyond.Code, beyond.Body.String())
+	}
+	post := httptest.NewRequest(http.MethodPost, basePath+"/tags"+apiQuery, nil)
+	if handler.handleCollectionRequest(httptest.NewRecorder(), post, route{}) {
+		t.Fatal("POST was treated as a collection query")
+	}
+	for _, body := range []string{"not-json", `{"value":"scalar"}`, `{"value":["scalar"]}`} {
+		source := httptest.NewRecorder()
+		source.Header().Set("Content-Type", "application/json")
+		source.WriteHeader(http.StatusOK)
+		_, _ = source.WriteString(body)
+		target := httptest.NewRecorder()
+		writeCollectionResponse(target, httptest.NewRequest(http.MethodGet, basePath+apiQuery, nil), source)
+		if target.Code != http.StatusOK && body != `{"value":["scalar"]}` {
+			t.Fatalf("collection response %q = %d", body, target.Code)
+		}
+		if body == `{"value":["scalar"]}` && target.Code != http.StatusBadRequest {
+			t.Fatalf("scalar collection = %d: %s", target.Code, target.Body.String())
+		}
+	}
+}
+
+func TestFilterGrammar(t *testing.T) {
+	resource := map[string]any{
+		"name":       "o'brien",
+		"properties": map[string]any{"displayName": "Gateway API", "enabled": true, "rank": float64(3), "empty": nil},
+	}
+	tests := []struct {
+		filter string
+		want   bool
+	}{
+		{`name eq 'o''brien'`, true},
+		{`name ne 'other' and (rank gt 2 and rank ge 3)`, true},
+		{`rank lt 4 and rank le 3`, true},
+		{`enabled eq true`, true},
+		{`enabled ne false`, true},
+		{`empty eq null`, true},
+		{`empty ne 'value'`, true},
+		{`contains(displayName, 'way')`, true},
+		{`startswith(displayName, 'Gate')`, true},
+		{`endswith(displayName, 'API')`, true},
+		{`substringof('way', displayName)`, true},
+		{`name eq 'other' or rank eq 3`, true},
+		{`properties/displayName eq 'Gateway API'`, true},
+		{`rank ne 3`, false},
+	}
+	for _, test := range tests {
+		predicate, err := parseFilter(test.filter)
+		if err != nil {
+			t.Fatalf("parseFilter(%q): %v", test.filter, err)
+		}
+		got, err := predicate(resource)
+		if err != nil || got != test.want {
+			t.Fatalf("filter %q = %v, %v; want %v", test.filter, got, err, test.want)
+		}
+	}
+
+	invalid := []string{
+		"(", "name", "name xx 'x'", "name eq", "name eq 'unterminated", "unknown(name, 'x')",
+		"contains(name)", "contains(name, 'x'", "contains(name, 'x', 'y')", "name eq 'x' trailing",
+	}
+	for _, filter := range invalid {
+		if _, err := parseFilter(filter); err == nil {
+			t.Fatalf("parseFilter(%q) succeeded", filter)
+		}
+	}
+	for _, filter := range []string{
+		"missing eq 'x'", "properties/missing eq 'x'", "displayName/value eq 'x'", "rank eq '3'", "name eq 3",
+		"empty gt null", "enabled gt false", "properties eq 'x'", "name eq missing", "contains(missing, 'x')", "contains(name, missing)",
+		"missing eq 'x' and name eq 'x'",
+	} {
+		predicate, err := parseFilter(filter)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := predicate(resource); err == nil {
+			t.Fatalf("filter %q evaluated without error", filter)
+		}
+	}
+	predicate, err := parseFilter("")
+	if matched, evaluateErr := predicate(resource); err != nil || evaluateErr != nil || !matched {
+		t.Fatalf("empty filter = %v, %v, %v", matched, err, evaluateErr)
+	}
+}
+
 func TestServiceBranches(t *testing.T) {
 	handler, st := testHandler(t)
 	validService := `{"location":"local","sku":{},"tags":{"environment":"test"},"zones":["1"],"identity":{"type":"SystemAssigned"},"properties":{"publisherName":"Local","publisherEmail":"local@example.test","customProperties":{"one":"1","remove":"x"},"publicNetworkAccess":"Enabled","hostnameConfigurations":[{"type":"Proxy","hostName":"api.example.test"}]}}`

@@ -20,7 +20,7 @@ func (h *Handler) handleConditionalRequest(w http.ResponseWriter, r *http.Reques
 	switch r.Method {
 	case http.MethodGet, http.MethodHead:
 		response := httptest.NewRecorder()
-		h.dispatch(response, r, rt)
+		h.routeRequest(response, r, rt)
 		etag := response.Header().Get("ETag")
 		if response.Code == http.StatusNotFound && hasIfMatch {
 			writePreconditionFailed(w, r.URL.Path)
@@ -47,7 +47,7 @@ func (h *Handler) handleConditionalRequest(w http.ResponseWriter, r *http.Reques
 		probeRequest.Header = r.Header.Clone()
 		probeRequest.Header.Del("If-Match")
 		probeRequest.Header.Del("If-None-Match")
-		h.dispatch(probe, probeRequest, rt)
+		h.routeRequest(probe, probeRequest, rt)
 		exists := probe.Code >= 200 && probe.Code < 300
 		etag := probe.Header().Get("ETag")
 		if hasIfMatch && !strongTagMatch(ifMatch, etag, exists) {

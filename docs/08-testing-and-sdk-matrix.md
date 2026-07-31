@@ -46,7 +46,9 @@ Each SDK provisions a logical service, imports APIs, creates products and
 subscriptions, uploads policies, calls the gateway, rotates keys, pages lists,
 handles LROs, and tears resources down without emulator-specific request code.
 The Go witness also reads APIM entity tags, performs wildcard updates, and
-asserts the structured `412 PreconditionFailed` response for a stale update.
+asserts the structured `412 PreconditionFailed` response for a stale update. It
+uses an official filtered pager across multiple `$top=1` pages and verifies the
+total count and terminal `nextLink` behavior.
 
 ### Protocol end-to-end
 

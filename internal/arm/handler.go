@@ -70,6 +70,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if h.handleConditionalRequest(w, r, parsed) {
 		return
 	}
+	h.routeRequest(w, r, parsed)
+}
+
+func (h *Handler) routeRequest(w http.ResponseWriter, r *http.Request, parsed route) {
+	if h.handleCollectionRequest(w, r, parsed) {
+		return
+	}
 	h.dispatch(w, r, parsed)
 }
 

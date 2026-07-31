@@ -574,6 +574,16 @@ func TestGoManagementSDKConfiguresProtectedGateway(t *testing.T) {
 	if _, err := tagClient.CreateOrUpdate(ctx, defaultResourceGroup, "emulator", "temporary", armapimanagement.TagCreateUpdateParameters{Properties: &armapimanagement.TagContractProperties{DisplayName: &temporaryTagName}}, nil); err != nil {
 		t.Fatal(err)
 	}
+	filter, top := "endswith(displayName, 'tag')", int32(1)
+	tagPager := tagClient.NewListByServicePager(defaultResourceGroup, "emulator", &armapimanagement.TagClientListByServiceOptions{Filter: &filter, Top: &top})
+	firstTagPage, err := tagPager.NextPage(ctx)
+	if err != nil || len(firstTagPage.Value) != 1 || firstTagPage.Count == nil || *firstTagPage.Count != 2 || !tagPager.More() {
+		t.Fatalf("filtered first tag page = %+v, more=%v, %v", firstTagPage, tagPager.More(), err)
+	}
+	secondTagPage, err := tagPager.NextPage(ctx)
+	if err != nil || len(secondTagPage.Value) != 1 || tagPager.More() {
+		t.Fatalf("filtered second tag page = %+v, more=%v, %v", secondTagPage, tagPager.More(), err)
+	}
 	if _, err := tagClient.Delete(ctx, defaultResourceGroup, "emulator", "temporary", "*", nil); err != nil {
 		t.Fatal(err)
 	}

@@ -34,7 +34,7 @@ part of the identity expansion.
   loggers, and diagnostics for stable API versions.
 - OpenAPI import/export and linked imports.
 - Complete ARM common semantics: ETags, paging, filters, patch, LROs, errors, and secret operations.
-  Conditional ETag evaluation is implemented centrally; required-header auditing, paging, filters, and the remaining semantics are still open.
+  Conditional ETag evaluation and common collection paging/filter grammar are implemented centrally; required-header and endpoint-specific filter auditing plus the remaining semantics are still open.
 - HTTP routing edge cases, custom domains, backend TLS, pools, retries, circuit breakers, streaming, SSE, and WebSocket.
 - Entra JWT, managed identity, OAuth/OIDC, client certificates, and Key Vault-backed named values.
 - Core policy families: routing, mutation, control flow, auth, limits, cache, validation, send-request, transforms, and tracing.

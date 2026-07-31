@@ -84,6 +84,15 @@ return `400 InvalidHeaderValue` for malformed entity tags. Endpoint-specific
 rules that require `If-Match` even when the header is omitted remain part of
 the generated operation-contract audit.
 
+Current collection routes are normalized centrally to the APIM paged shape.
+They validate int32 `$top` (`>= 1`) and `$skip` (`>= 0`), preserve stable store
+ordering, return the filtered total in `count`, and emit an absolute `nextLink`
+that retains the original query. `$filter` supports parentheses, `and`/`or`,
+`eq`, `ne`, `gt`, `ge`, `lt`, `le`, boolean/number/null/string literals,
+doubled-quote string escaping, and `contains`, `startswith`, `endswith`, and
+`substringof`. The generated operation inventory will further constrain fields,
+operators, and functions to each endpoint's documented matrix.
+
 ## API import and export
 
 Support OpenAPI 2/3/3.1 as documented, WSDL/SOAP, GraphQL schema, WADL where
