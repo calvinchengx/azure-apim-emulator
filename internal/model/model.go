@@ -210,6 +210,7 @@ type PolicyFragment struct {
 	Value             string
 	ProvisioningState string
 	ETag              string
+	Document          map[string]any
 }
 
 // ID returns the policy fragment ARM resource ID.

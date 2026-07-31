@@ -654,7 +654,8 @@ func TestScanFunctionsRejectMalformedRows(t *testing.T) {
 		},
 		{
 			"policy fragments",
-			`CREATE TABLE policy_fragments (id, service_id, name, description, format, value, provisioning_state, etag)`,
+			`CREATE TABLE policy_fragments (id, service_id, name, description, format, value, provisioning_state, etag);
+			 CREATE TABLE policy_fragment_documents (fragment_id, document_json)`,
 			`INSERT INTO policy_fragments VALUES ('fragment', 'service', NULL, '', '', '', '', '')`,
 			func(db *sql.DB) error { _, err := (&Store{db: db}).ListPolicyFragments("service"); return err },
 		},
@@ -729,6 +730,57 @@ func TestScanFunctionsRejectMalformedRows(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestUpsertPolicyFragmentTransactionErrors(t *testing.T) {
+	t.Run("document encoding", func(t *testing.T) {
+		st, err := Open("", clock.New())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer st.Close()
+		if _, err := st.UpsertPolicyFragment(model.PolicyFragment{Document: map[string]any{"bad": make(chan int)}}); err == nil {
+			t.Fatal("policy fragment accepted an unsupported document")
+		}
+	})
+	t.Run("begin", func(t *testing.T) {
+		st, err := Open("", clock.New())
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = st.Close()
+		if _, err := st.UpsertPolicyFragment(model.PolicyFragment{}); err == nil {
+			t.Fatal("closed store accepted a policy fragment")
+		}
+	})
+	t.Run("fragment row", func(t *testing.T) {
+		st, err := Open("", clock.New())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer st.Close()
+		if _, err := st.UpsertPolicyFragment(model.PolicyFragment{ServiceID: "/missing", Name: "fragment"}); err == nil {
+			t.Fatal("policy fragment with a missing service was accepted")
+		}
+	})
+	t.Run("document row", func(t *testing.T) {
+		st, err := Open("", clock.New())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer st.Close()
+		service, _ := st.UpsertService(model.Service{Name: "svc"})
+		if _, err := st.db.Exec(`CREATE TRIGGER reject_fragment_document BEFORE INSERT ON policy_fragment_documents BEGIN SELECT RAISE(FAIL, 'rejected'); END`); err != nil {
+			t.Fatal(err)
+		}
+		fragment := model.PolicyFragment{ServiceID: service.ID(), Name: "fragment"}
+		if _, err := st.UpsertPolicyFragment(fragment); err == nil {
+			t.Fatal("rejected policy-fragment document was accepted")
+		}
+		if _, err := st.GetPolicyFragment(fragment.ID()); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("policy-fragment transaction was not rolled back: %v", err)
+		}
+	})
 }
 
 func TestUpsertTagTransactionErrors(t *testing.T) {

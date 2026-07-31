@@ -1102,10 +1102,13 @@ func (h *Handler) policyFragment(w http.ResponseWriter, r *http.Request, rt rout
 				Value       string `json:"value"`
 			} `json:"properties"`
 		}
-		if err := decode(r, &body); err != nil {
+		var document map[string]any
+		if err := decodeDocument(r, &body, &document); err != nil {
 			writeError(w, http.StatusBadRequest, "InvalidRequestContent", err.Error(), "")
 			return
 		}
+		value.Document = document
+		cleanResourceDocument(value.Document)
 		if body.Properties.Format != "" {
 			value.Format = body.Properties.Format
 		}
@@ -3182,7 +3185,16 @@ func policyFragmentWire(v model.PolicyFragment, format string) map[string]any {
 	if format != "xml" && format != "rawxml" {
 		format = v.Format
 	}
-	return map[string]any{"id": v.ID(), "name": v.Name, "type": "Microsoft.ApiManagement/service/policyFragments", "properties": map[string]any{"description": v.Description, "format": format, "value": v.Value, "provisioningState": v.ProvisioningState}}
+	result := cloneObject(v.Document)
+	result["id"], result["name"], result["type"] = v.ID(), v.Name, "Microsoft.ApiManagement/service/policyFragments"
+	properties, ok := result["properties"].(map[string]any)
+	if !ok {
+		properties = map[string]any{}
+		result["properties"] = properties
+	}
+	properties["description"], properties["format"], properties["value"] = v.Description, format, v.Value
+	properties["provisioningState"] = v.ProvisioningState
+	return result
 }
 func loggerWire(v model.Logger) map[string]any {
 	result := cloneObject(v.Document)

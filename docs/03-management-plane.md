@@ -100,6 +100,12 @@ name. Unknown metadata survives PUT, recursive PATCH, direct GET/list, and the
 API, operation, and product association projections. The official Go SDK
 witness covers the complete modeled tag lifecycle and every association type.
 
+Policy fragments retain canonical documents with PUT replacement semantics.
+Unknown metadata survives GET/list while validated XML, description, requested
+wire format, and provisioning state remain authoritative. The JavaScript SDK
+witness covers create/get/list/reference/ETag/delete behavior, and document
+writes are transactional with compiler-visible fragment state.
+
 ## Common ARM semantics
 
 Implement centrally and test across resources:

@@ -1243,16 +1243,17 @@ func TestPolicyFragmentBranches(t *testing.T) {
 	assertStatus(t, handler, http.MethodPut, fragmentPath, `{`, http.StatusBadRequest)
 	assertStatus(t, handler, http.MethodPut, fragmentPath, `{"properties":{"format":"invalid","value":"<fragment/>"}}`, http.StatusBadRequest)
 	assertStatus(t, handler, http.MethodPut, fragmentPath, `{"properties":{"format":"rawxml","value":"<policies/>"}}`, http.StatusBadRequest)
-	body := `{"properties":{"description":"Shared headers","format":"rawxml","value":"<fragment><set-header name=\"X-Fragment\"><value>yes</value></set-header></fragment>"}}`
-	assertStatus(t, handler, http.MethodPut, fragmentPath, body, http.StatusCreated)
+	value := `<fragment><set-header name="X-Fragment"><value>yes</value></set-header></fragment>`
+	assertStatus(t, handler, http.MethodPut, fragmentPath, `{"replaceMe":true,"properties":{"description":"Shared headers","format":"rawxml","value":"`+strings.ReplaceAll(value, `"`, `\"`)+`"}}`, http.StatusCreated)
+	body := `{"customRoot":{"retained":true},"properties":{"description":"Shared headers","format":"rawxml","value":"` + strings.ReplaceAll(value, `"`, `\"`) + `","customMetadata":{"keep":"yes"}}}`
 	assertStatus(t, handler, http.MethodPut, fragmentPath, body, http.StatusOK)
 	got := request(t, handler, http.MethodGet, basePath+"/policyFragments/headers?api-version=2024-05-01&format=xml", "")
-	if !strings.Contains(got.Body.String(), `"format":"xml"`) || !strings.Contains(got.Body.String(), `"provisioningState":"Succeeded"`) || got.Header().Get("ETag") == "" {
+	if !strings.Contains(got.Body.String(), `"format":"xml"`) || !strings.Contains(got.Body.String(), `"provisioningState":"Succeeded"`) || !strings.Contains(got.Body.String(), `"retained":true`) || !strings.Contains(got.Body.String(), `"keep":"yes"`) || strings.Contains(got.Body.String(), `"replaceMe"`) || got.Header().Get("ETag") == "" {
 		t.Fatalf("fragment GET = %d %s", got.Code, got.Body.String())
 	}
 	assertStatus(t, handler, http.MethodHead, fragmentPath, "", http.StatusOK)
 	list := request(t, handler, http.MethodGet, basePath+"/policyFragments?api-version=2024-05-01&format=rawxml", "")
-	if !strings.Contains(list.Body.String(), `"count":1`) || !strings.Contains(list.Body.String(), `"name":"headers"`) {
+	if !strings.Contains(list.Body.String(), `"count":1`) || !strings.Contains(list.Body.String(), `"name":"headers"`) || !strings.Contains(list.Body.String(), `"retained":true`) {
 		t.Fatalf("fragment list = %s", list.Body.String())
 	}
 	assertStatus(t, handler, http.MethodPost, fragmentPath, "", http.StatusMethodNotAllowed)
@@ -1277,6 +1278,14 @@ func TestPolicyFragmentBranches(t *testing.T) {
 	assertStatus(t, handler, http.MethodDelete, fragmentPath, "", http.StatusInternalServerError)
 	handler.Activate = nil
 	assertStatus(t, handler, http.MethodDelete, fragmentPath, "", http.StatusNoContent)
+}
+
+func TestPolicyFragmentDocumentFallback(t *testing.T) {
+	wire := policyFragmentWire(model.PolicyFragment{Name: "invalid", Document: map[string]any{"properties": "invalid"}}, "invalid")
+	properties, ok := wire["properties"].(map[string]any)
+	if !ok || properties["format"] != "" {
+		t.Fatalf("fragment wire = %#v", wire)
+	}
 }
 
 func TestAPIVersionSetLifecycle(t *testing.T) {
