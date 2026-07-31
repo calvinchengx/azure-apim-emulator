@@ -219,6 +219,41 @@ func TestScopedDeleteRollsBackFailures(t *testing.T) {
 	}
 }
 
+func TestScopedDeleteRollsBackTagCleanupFailure(t *testing.T) {
+	st, err := Open("", clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	service, err := st.UpsertService(model.Service{Name: "svc"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	api, err := st.UpsertAPI(model.API{ServiceID: service.ID(), Name: "api"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tag, err := st.UpsertTag(model.Tag{ServiceID: service.ID(), Name: "tag", DisplayName: "Tag"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AssignTag(api.ID(), tag.ID()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.db.Exec(`CREATE TRIGGER reject_resource_tag_delete BEFORE DELETE ON resource_tags BEGIN SELECT RAISE(FAIL, 'rejected'); END`); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.DeleteAPI(api.ID()); err == nil {
+		t.Fatal("resource tag cleanup failure was ignored")
+	}
+	if _, err := st.GetAPI(api.ID()); err != nil {
+		t.Fatalf("API was not rolled back: %v", err)
+	}
+	if _, err := st.GetResourceTag(api.ID(), tag.ID()); err != nil {
+		t.Fatalf("tag association was not rolled back: %v", err)
+	}
+}
+
 func TestOpenAndOpaqueIDFailures(t *testing.T) {
 	oldOpen, oldRead := openDB, readRandom
 	t.Cleanup(func() {
@@ -290,6 +325,17 @@ func TestClosedStoreErrors(t *testing.T) {
 		"get API schema":     func() error { _, err := st.GetAPISchema("schema"); return err },
 		"list API schemas":   func() error { _, err := st.ListAPISchemas("api"); return err },
 		"delete API schema":  func() error { return st.DeleteAPISchema("schema") },
+		"upsert tag":         func() error { _, err := st.UpsertTag(model.Tag{}); return err },
+		"get tag":            func() error { _, err := st.GetTag("tag"); return err },
+		"list tags":          func() error { _, err := st.ListTags("service"); return err },
+		"delete tag":         func() error { return st.DeleteTag("tag") },
+		"assign tag":         func() error { return st.AssignTag("resource", "tag") },
+		"detach tag":         func() error { return st.DetachTag("resource", "tag") },
+		"get resource tag": func() error {
+			_, err := st.GetResourceTag("resource", "tag")
+			return err
+		},
+		"list resource tags": func() error { _, err := st.ListResourceTags("resource"); return err },
 		"runtime": func() error {
 			_, _, _, _, _, _, _, err := st.RuntimeData()
 			return err
@@ -388,6 +434,20 @@ func TestScanFunctionsRejectMalformedRows(t *testing.T) {
 			func(db *sql.DB) error { _, err := (&Store{db: db}).ListAPISchemas("api"); return err },
 		},
 		{
+			"tags",
+			`CREATE TABLE tags (service_id, name, display_name, etag)`,
+			`INSERT INTO tags VALUES ('service', NULL, '', '')`,
+			func(db *sql.DB) error { _, err := (&Store{db: db}).ListTags("service"); return err },
+		},
+		{
+			"resource tags",
+			`CREATE TABLE tags (id, service_id, name, display_name, etag);
+			 CREATE TABLE resource_tags (resource_id, tag_id)`,
+			`INSERT INTO tags VALUES ('tag', 'service', NULL, '', '');
+			 INSERT INTO resource_tags VALUES ('resource', 'tag')`,
+			func(db *sql.DB) error { _, err := (&Store{db: db}).ListResourceTags("resource"); return err },
+		},
+		{
 			"products",
 			`CREATE TABLE products (id, service_id, name, display_name, state, approval_required, etag)`,
 			`INSERT INTO products VALUES ('id', NULL, '', '', '', 0, '')`,
@@ -429,6 +489,75 @@ func TestScanFunctionsRejectMalformedRows(t *testing.T) {
 				t.Fatal("malformed row was accepted")
 			}
 		})
+	}
+}
+
+func TestTagAssociations(t *testing.T) {
+	st, err := Open("", clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	service, err := st.UpsertService(model.Service{Name: "svc"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tag := model.Tag{ServiceID: service.ID(), Name: "public", DisplayName: "Public"}
+	tag, err = st.UpsertTag(tag)
+	if err != nil || tag.ETag == "" {
+		t.Fatalf("UpsertTag = %+v, %v", tag, err)
+	}
+	updated, err := st.UpsertTag(model.Tag{ServiceID: service.ID(), Name: "public", DisplayName: "Updated"})
+	if err != nil || updated.DisplayName != "Updated" || updated.ETag == tag.ETag {
+		t.Fatalf("updated tag = %+v, %v", updated, err)
+	}
+	got, err := st.GetTag(strings.ToUpper(tag.ID()))
+	if err != nil || got.DisplayName != "Updated" {
+		t.Fatalf("GetTag = %+v, %v", got, err)
+	}
+	if _, err := st.GetTag("/missing"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing tag = %v", err)
+	}
+	values, err := st.ListTags(strings.ToUpper(service.ID()))
+	if err != nil || len(values) != 1 {
+		t.Fatalf("ListTags = %+v, %v", values, err)
+	}
+
+	resourceID := service.ID() + "/apis/api"
+	if err := st.AssignTag(resourceID, tag.ID()); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AssignTag(resourceID, tag.ID()); err != nil {
+		t.Fatalf("repeated AssignTag = %v", err)
+	}
+	got, err = st.GetResourceTag(strings.ToUpper(resourceID), strings.ToUpper(tag.ID()))
+	if err != nil || got.Name != tag.Name {
+		t.Fatalf("GetResourceTag = %+v, %v", got, err)
+	}
+	values, err = st.ListResourceTags(strings.ToUpper(resourceID))
+	if err != nil || len(values) != 1 {
+		t.Fatalf("ListResourceTags = %+v, %v", values, err)
+	}
+	if _, err := st.GetResourceTag(resourceID, "/missing"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing resource tag = %v", err)
+	}
+	if err := st.DetachTag(resourceID, tag.ID()); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.DetachTag(resourceID, tag.ID()); err != nil {
+		t.Fatalf("repeated DetachTag = %v", err)
+	}
+	if err := st.AssignTag(resourceID, tag.ID()); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.DeleteTag(tag.ID()); err != nil {
+		t.Fatal(err)
+	}
+	if values, err := st.ListResourceTags(resourceID); err != nil || len(values) != 0 {
+		t.Fatalf("associations survived tag deletion: %+v, %v", values, err)
+	}
+	if err := st.DeleteTag(tag.ID()); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("second tag delete = %v", err)
 	}
 }
 
@@ -551,7 +680,8 @@ func TestCloneAPIRevisionTransactions(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := st.UpsertOperation(model.Operation{APIID: api.ID(), Name: "get", Method: "GET", URLTemplate: "/"}); err != nil {
+		operation, err := st.UpsertOperation(model.Operation{APIID: api.ID(), Name: "get", Method: "GET", URLTemplate: "/"})
+		if err != nil {
 			t.Fatal(err)
 		}
 		if _, err := st.UpsertPolicy(model.Policy{ScopeID: api.ID(), Value: "<policies/>"}); err != nil {
@@ -559,6 +689,15 @@ func TestCloneAPIRevisionTransactions(t *testing.T) {
 		}
 		if _, err := st.UpsertAPISchema(model.APISchema{APIID: api.ID(), Name: "schema", ContentType: "application/json", Document: map[string]any{"components": map[string]any{"Example": map[string]any{"type": "string"}}}}); err != nil {
 			t.Fatal(err)
+		}
+		tag, err := st.UpsertTag(model.Tag{ServiceID: service.ID(), Name: "public", DisplayName: "Public"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, resourceID := range []string{api.ID(), operation.APIID + "/operations/" + operation.Name} {
+			if err := st.AssignTag(resourceID, tag.ID()); err != nil {
+				t.Fatal(err)
+			}
 		}
 		return st, api
 	}
@@ -573,6 +712,12 @@ func TestCloneAPIRevisionTransactions(t *testing.T) {
 		}
 		if schemas, err := st.ListAPISchemas(cloned.ID()); err != nil || len(schemas) != 1 {
 			t.Fatalf("cloned schemas = %+v, %v", schemas, err)
+		}
+		if tags, err := st.ListResourceTags(cloned.ID()); err != nil || len(tags) != 1 {
+			t.Fatalf("cloned API tags = %+v, %v", tags, err)
+		}
+		if tags, err := st.ListResourceTags(cloned.ID() + "/operations/get"); err != nil || len(tags) != 1 {
+			t.Fatalf("cloned operation tags = %+v, %v", tags, err)
 		}
 	})
 
@@ -608,6 +753,7 @@ func TestCloneAPIRevisionTransactions(t *testing.T) {
 		{"operations", `CREATE TRIGGER reject_clone_operation BEFORE INSERT ON operations WHEN NEW.api_id LIKE '%;rev=2' BEGIN SELECT RAISE(FAIL, 'rejected'); END`},
 		{"schemas", `CREATE TRIGGER reject_clone_schema BEFORE INSERT ON api_schemas WHEN NEW.api_id LIKE '%;rev=2' BEGIN SELECT RAISE(FAIL, 'rejected'); END`},
 		{"policy", `CREATE TRIGGER reject_clone_policy BEFORE INSERT ON policies WHEN NEW.scope_id LIKE '%;rev=2' BEGIN SELECT RAISE(FAIL, 'rejected'); END`},
+		{"tags", `CREATE TRIGGER reject_clone_tag BEFORE INSERT ON resource_tags WHEN NEW.resource_id LIKE '%;rev=2%' BEGIN SELECT RAISE(FAIL, 'rejected'); END`},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			st, source := newSource(t)

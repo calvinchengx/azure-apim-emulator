@@ -125,6 +125,14 @@ CREATE TABLE IF NOT EXISTS api_schemas (
   id TEXT PRIMARY KEY, api_id TEXT NOT NULL REFERENCES apis(id) ON DELETE CASCADE,
   name TEXT NOT NULL, content_type TEXT NOT NULL, document_json TEXT NOT NULL, etag TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS tags (
+  id TEXT PRIMARY KEY, service_id TEXT NOT NULL REFERENCES services(id) ON DELETE CASCADE,
+  name TEXT NOT NULL, display_name TEXT NOT NULL, etag TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS resource_tags (
+  resource_id TEXT NOT NULL, tag_id TEXT NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+  PRIMARY KEY (resource_id, tag_id)
+);
 CREATE TABLE IF NOT EXISTS products (
   id TEXT PRIMARY KEY, service_id TEXT NOT NULL REFERENCES services(id) ON DELETE CASCADE,
   name TEXT NOT NULL, display_name TEXT NOT NULL, state TEXT NOT NULL,
@@ -339,6 +347,12 @@ func (s *Store) CloneAPIRevision(sourceID string, v model.API) (model.API, error
 	if _, err := tx.Exec(`INSERT INTO api_schemas (id, api_id, name, content_type, document_json, etag)
 	    SELECT ? || '/schemas/' || name, ?, name, content_type, document_json, ?
 	    FROM api_schemas WHERE lower(api_id)=lower(?)`, v.ID(), v.ID(), newETag(), sourceID); err != nil {
+		return v, err
+	}
+	if _, err := tx.Exec(`INSERT INTO resource_tags (resource_id, tag_id)
+	    SELECT CASE WHEN lower(resource_id)=lower(?) THEN ? ELSE ? || substr(resource_id, length(?) + 1) END, tag_id
+	    FROM resource_tags WHERE lower(resource_id)=lower(?) OR lower(resource_id) LIKE lower(?)`,
+		sourceID, v.ID(), v.ID(), sourceID, sourceID, sourceID+"/operations/%"); err != nil {
 		return v, err
 	}
 	if _, err := tx.Exec(`INSERT INTO policies (scope_id, format, value, etag)
@@ -707,6 +721,84 @@ func (s *Store) ListAPISchemas(apiID string) ([]model.APISchema, error) {
 // DeleteAPISchema removes an API schema.
 func (s *Store) DeleteAPISchema(id string) error {
 	return deleteScopedResource(s.db, "api_schemas", id)
+}
+
+// UpsertTag creates or replaces a service tag.
+func (s *Store) UpsertTag(v model.Tag) (model.Tag, error) {
+	v.ETag = newETag()
+	_, err := s.db.Exec(`INSERT INTO tags (id, service_id, name, display_name, etag) VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET display_name=excluded.display_name, etag=excluded.etag`,
+		v.ID(), v.ServiceID, v.Name, v.DisplayName, v.ETag)
+	return v, err
+}
+
+// GetTag finds one service tag.
+func (s *Store) GetTag(id string) (model.Tag, error) {
+	var v model.Tag
+	err := s.db.QueryRow(`SELECT service_id, name, display_name, etag FROM tags WHERE lower(id)=lower(?)`, id).
+		Scan(&v.ServiceID, &v.Name, &v.DisplayName, &v.ETag)
+	if errors.Is(err, sql.ErrNoRows) {
+		return model.Tag{}, ErrNotFound
+	}
+	return v, err
+}
+
+// ListTags returns tags for a service in stable ID order.
+func (s *Store) ListTags(serviceID string) ([]model.Tag, error) {
+	return scanTags(s.db.Query(`SELECT service_id, name, display_name, etag FROM tags WHERE lower(service_id)=lower(?) ORDER BY id`, serviceID))
+}
+
+// DeleteTag removes a tag and all associations.
+func (s *Store) DeleteTag(id string) error { return deleteScopedResource(s.db, "tags", id) }
+
+// AssignTag associates an existing tag with a resource.
+func (s *Store) AssignTag(resourceID, tagID string) error {
+	_, err := s.db.Exec(`INSERT INTO resource_tags (resource_id, tag_id) VALUES (?, ?)
+        ON CONFLICT(resource_id, tag_id) DO NOTHING`, resourceID, tagID)
+	return err
+}
+
+// DetachTag removes a resource association idempotently.
+func (s *Store) DetachTag(resourceID, tagID string) error {
+	_, err := s.db.Exec(`DELETE FROM resource_tags WHERE lower(resource_id)=lower(?) AND lower(tag_id)=lower(?)`, resourceID, tagID)
+	return err
+}
+
+// GetResourceTag returns one associated tag.
+func (s *Store) GetResourceTag(resourceID, tagID string) (model.Tag, error) {
+	values, err := scanTags(s.db.Query(`SELECT tags.service_id, tags.name, tags.display_name, tags.etag
+        FROM tags JOIN resource_tags ON lower(resource_tags.tag_id)=lower(tags.id)
+        WHERE lower(resource_tags.resource_id)=lower(?) AND lower(tags.id)=lower(?)`, resourceID, tagID))
+	if err != nil {
+		return model.Tag{}, err
+	}
+	if len(values) == 0 {
+		return model.Tag{}, ErrNotFound
+	}
+	return values[0], nil
+}
+
+// ListResourceTags returns associated tags in stable ID order.
+func (s *Store) ListResourceTags(resourceID string) ([]model.Tag, error) {
+	return scanTags(s.db.Query(`SELECT tags.service_id, tags.name, tags.display_name, tags.etag
+        FROM tags JOIN resource_tags ON lower(resource_tags.tag_id)=lower(tags.id)
+        WHERE lower(resource_tags.resource_id)=lower(?) ORDER BY tags.id`, resourceID))
+}
+
+func scanTags(rows *sql.Rows, err error) ([]model.Tag, error) {
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	values := make([]model.Tag, 0)
+	for rows.Next() {
+		var v model.Tag
+		if err := rows.Scan(&v.ServiceID, &v.Name, &v.DisplayName, &v.ETag); err != nil {
+			return nil, err
+		}
+		values = append(values, v)
+	}
+	return values, rows.Err()
 }
 
 // UpsertCertificate creates or replaces a certificate.
@@ -1157,6 +1249,9 @@ func deleteScopedResource(db *sql.DB, table, id string) error {
 	}
 	defer tx.Rollback()
 	if _, err := tx.Exec(`DELETE FROM policies WHERE lower(scope_id)=lower(?) OR lower(scope_id) LIKE lower(?)`, id, id+"/%"); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM resource_tags WHERE lower(resource_id)=lower(?) OR lower(resource_id) LIKE lower(?)`, id, id+"/%"); err != nil {
 		return err
 	}
 	result, err := tx.Exec(`DELETE FROM `+table+` WHERE lower(id)=lower(?)`, id)

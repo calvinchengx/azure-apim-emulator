@@ -136,6 +136,17 @@ type APISchema struct {
 // ID returns the API schema ARM resource ID.
 func (v APISchema) ID() string { return v.APIID + "/schemas/" + v.Name }
 
+// Tag is reusable metadata associated with APIs, operations, and products.
+type Tag struct {
+	ServiceID   string
+	Name        string
+	DisplayName string
+	ETag        string
+}
+
+// ID returns the tag ARM resource ID.
+func (v Tag) ID() string { return v.ServiceID + "/tags/" + v.Name }
+
 // Operation is an HTTP operation belonging to an API.
 type Operation struct {
 	APIID       string

@@ -343,6 +343,80 @@ func TestProductAndSubscriptionBranches(t *testing.T) {
 	}
 }
 
+func TestTagAndResourceAssociationBranches(t *testing.T) {
+	handler, st := testHandler(t)
+	seedService(t, st)
+	api, err := st.UpsertAPI(model.API{ServiceID: serviceModel().ID(), Name: "a", DisplayName: "A", Path: "a", ServiceURL: "https://backend"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.UpsertOperation(model.Operation{APIID: api.ID(), Name: "get", DisplayName: "Get", Method: "GET", URLTemplate: "/"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.UpsertProduct(model.Product{ServiceID: serviceModel().ID(), Name: "p", DisplayName: "P"}); err != nil {
+		t.Fatal(err)
+	}
+
+	tagPath := basePath + "/tags/public" + apiQuery
+	assertStatus(t, handler, http.MethodGet, basePath+"/tags"+apiQuery, "", http.StatusOK)
+	assertStatus(t, handler, http.MethodPost, basePath+"/tags"+apiQuery, "", http.StatusMethodNotAllowed)
+	assertStatus(t, handler, http.MethodGet, tagPath, "", http.StatusNotFound)
+	assertStatus(t, handler, http.MethodPut, tagPath, `{`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPut, tagPath, `{"properties":{}}`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPut, tagPath, `{"properties":{"displayName":"  "}}`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPut, tagPath, `{"properties":{"displayName":"Public"}}`, http.StatusCreated)
+	assertStatus(t, handler, http.MethodPut, tagPath, `{"properties":{"displayName":"Public API"}}`, http.StatusOK)
+	assertStatus(t, handler, http.MethodPatch, basePath+"/tags/missing"+apiQuery, `{}`, http.StatusNotFound)
+	assertStatus(t, handler, http.MethodPatch, tagPath, `{`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPatch, tagPath, `{"properties":{"displayName":"Updated"}}`, http.StatusOK)
+	got := request(t, handler, http.MethodGet, tagPath, "")
+	if !strings.Contains(got.Body.String(), `"displayName":"Updated"`) || got.Header().Get("ETag") == "" {
+		t.Fatalf("tag GET = %d %s", got.Code, got.Body.String())
+	}
+	assertStatus(t, handler, http.MethodHead, tagPath, "", http.StatusOK)
+	list := request(t, handler, http.MethodGet, basePath+"/tags"+apiQuery, "")
+	if !strings.Contains(list.Body.String(), `"count":1`) || !strings.Contains(list.Body.String(), `"name":"public"`) {
+		t.Fatalf("tag list = %s", list.Body.String())
+	}
+	assertStatus(t, handler, http.MethodPost, tagPath, "", http.StatusMethodNotAllowed)
+	assertStatus(t, handler, http.MethodGet, basePath+"/tags/public/unknown"+apiQuery, "", http.StatusNotFound)
+
+	associationPaths := []string{
+		basePath + "/apis/a/tags/public" + apiQuery,
+		basePath + "/apis/a/operations/get/tags/public" + apiQuery,
+		basePath + "/products/p/tags/public" + apiQuery,
+	}
+	collectionPaths := []string{
+		basePath + "/apis/a/tags" + apiQuery,
+		basePath + "/apis/a/operations/get/tags" + apiQuery,
+		basePath + "/products/p/tags" + apiQuery,
+	}
+	for i, path := range associationPaths {
+		assertStatus(t, handler, http.MethodGet, path, "", http.StatusNotFound)
+		assertStatus(t, handler, http.MethodPut, path, `{}`, http.StatusCreated)
+		assertStatus(t, handler, http.MethodPut, path, `{}`, http.StatusOK)
+		assertStatus(t, handler, http.MethodGet, path, "", http.StatusOK)
+		assertStatus(t, handler, http.MethodHead, path, "", http.StatusOK)
+		collection := request(t, handler, http.MethodGet, collectionPaths[i], "")
+		if !strings.Contains(collection.Body.String(), `"count":1`) {
+			t.Fatalf("association list %s = %s", collectionPaths[i], collection.Body.String())
+		}
+		assertStatus(t, handler, http.MethodPost, collectionPaths[i], "", http.StatusMethodNotAllowed)
+		assertStatus(t, handler, http.MethodPost, path, "", http.StatusMethodNotAllowed)
+	}
+	assertStatus(t, handler, http.MethodPut, basePath+"/apis/a/tags/missing"+apiQuery, `{}`, http.StatusNotFound)
+	assertStatus(t, handler, http.MethodGet, basePath+"/apis/missing/tags"+apiQuery, "", http.StatusNotFound)
+	assertStatus(t, handler, http.MethodGet, basePath+"/apis/a/operations/missing/tags"+apiQuery, "", http.StatusNotFound)
+	assertStatus(t, handler, http.MethodGet, basePath+"/products/missing/tags"+apiQuery, "", http.StatusNotFound)
+
+	for _, path := range associationPaths {
+		assertStatus(t, handler, http.MethodDelete, path, "", http.StatusNoContent)
+		assertStatus(t, handler, http.MethodDelete, path, "", http.StatusNoContent)
+	}
+	assertStatus(t, handler, http.MethodDelete, tagPath, "", http.StatusNoContent)
+	assertStatus(t, handler, http.MethodDelete, tagPath, "", http.StatusNoContent)
+}
+
 func TestAPIVersionSetLifecycle(t *testing.T) {
 	handler, st := testHandler(t)
 	seedService(t, st)
@@ -587,6 +661,7 @@ func TestForeignKeyStoreErrors(t *testing.T) {
 	assertStatus(t, handler, http.MethodPut, basePath+"/apis/a/schemas/s"+apiQuery, `{"properties":{"contentType":"application/json","document":{}}}`, http.StatusConflict)
 	assertStatus(t, handler, http.MethodPut, basePath+"/apis/a/operations/get"+apiQuery, `{"properties":{"method":"GET","urlTemplate":"/"}}`, http.StatusConflict)
 	assertStatus(t, handler, http.MethodPut, basePath+"/products/p/apis/a"+apiQuery, `{}`, http.StatusConflict)
+	assertStatus(t, handler, http.MethodPut, basePath+"/tags/t"+apiQuery, `{"properties":{"displayName":"T"}}`, http.StatusConflict)
 }
 
 func TestServiceDeleteActivationFailure(t *testing.T) {
@@ -644,6 +719,13 @@ func TestClosedStoreWriteErrors(t *testing.T) {
 	assertStatus(t, handler, http.MethodGet, basePath+"/apis/a/schemas"+apiQuery, "", http.StatusConflict)
 	assertStatus(t, handler, http.MethodPut, basePath+"/apis/a/schemas/s"+apiQuery, `{"properties":{"contentType":"application/json","document":{}}}`, http.StatusConflict)
 	assertStatus(t, handler, http.MethodDelete, basePath+"/apis/a/schemas/s"+apiQuery, "", http.StatusConflict)
+	assertStatus(t, handler, http.MethodGet, basePath+"/tags"+apiQuery, "", http.StatusConflict)
+	assertStatus(t, handler, http.MethodGet, basePath+"/tags/t"+apiQuery, "", http.StatusConflict)
+	assertStatus(t, handler, http.MethodPut, basePath+"/tags/t"+apiQuery, `{"properties":{"displayName":"T"}}`, http.StatusConflict)
+	assertStatus(t, handler, http.MethodDelete, basePath+"/tags/t"+apiQuery, "", http.StatusConflict)
+	assertStatus(t, handler, http.MethodGet, basePath+"/apis/a/tags/t"+apiQuery, "", http.StatusConflict)
+	assertStatus(t, handler, http.MethodGet, basePath+"/apis/a/operations/get/tags/t"+apiQuery, "", http.StatusConflict)
+	assertStatus(t, handler, http.MethodGet, basePath+"/products/p/tags/t"+apiQuery, "", http.StatusConflict)
 }
 
 func TestServiceStoreWriteErrors(t *testing.T) {
@@ -666,6 +748,64 @@ func TestServiceStoreWriteErrors(t *testing.T) {
 	body := `{"location":"local","properties":{"publisherName":"Local","publisherEmail":"local@example.test"}}`
 	assertStatus(t, handler, http.MethodPut, basePath+apiQuery, body, http.StatusConflict)
 	assertStatus(t, handler, http.MethodPatch, basePath+apiQuery, `{}`, http.StatusConflict)
+}
+
+func TestTagStoreErrors(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(dir, clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	seedService(t, st)
+	api, err := st.UpsertAPI(model.API{ServiceID: serviceModel().ID(), Name: "a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", filepath.Join(dir, "azure-apim-emulator.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	handler := &Handler{Store: st, Auth: auth.AllowAll{}}
+	tagPath := basePath + "/tags/t" + apiQuery
+	associationPath := basePath + "/apis/a/tags/t" + apiQuery
+
+	if _, err := db.Exec(`CREATE TRIGGER reject_tag_write BEFORE INSERT ON tags BEGIN SELECT RAISE(FAIL, 'rejected'); END`); err != nil {
+		t.Fatal(err)
+	}
+	assertStatus(t, handler, http.MethodPut, tagPath, `{"properties":{"displayName":"T"}}`, http.StatusConflict)
+	if _, err := db.Exec(`DROP TRIGGER reject_tag_write`); err != nil {
+		t.Fatal(err)
+	}
+	tag, err := st.UpsertTag(model.Tag{ServiceID: serviceModel().ID(), Name: "t", DisplayName: "T"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE TRIGGER reject_tag_delete BEFORE DELETE ON tags BEGIN SELECT RAISE(FAIL, 'rejected'); END`); err != nil {
+		t.Fatal(err)
+	}
+	assertStatus(t, handler, http.MethodDelete, tagPath, "", http.StatusConflict)
+	if _, err := db.Exec(`DROP TRIGGER reject_tag_delete`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE TRIGGER reject_tag_link BEFORE INSERT ON resource_tags BEGIN SELECT RAISE(FAIL, 'rejected'); END`); err != nil {
+		t.Fatal(err)
+	}
+	assertStatus(t, handler, http.MethodPut, associationPath, `{}`, http.StatusConflict)
+	if _, err := db.Exec(`DROP TRIGGER reject_tag_link`); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AssignTag(api.ID(), tag.ID()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`DROP TABLE resource_tags`); err != nil {
+		t.Fatal(err)
+	}
+	assertStatus(t, handler, http.MethodGet, basePath+"/apis/a/tags"+apiQuery, "", http.StatusConflict)
+	assertStatus(t, handler, http.MethodGet, associationPath, "", http.StatusConflict)
+	assertStatus(t, handler, http.MethodPut, associationPath, `{}`, http.StatusConflict)
+	assertStatus(t, handler, http.MethodDelete, associationPath, "", http.StatusConflict)
 }
 
 func TestAbsoluteAndOperationHelpers(t *testing.T) {

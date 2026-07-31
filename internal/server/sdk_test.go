@@ -330,6 +330,107 @@ func TestGoManagementSDKConfiguresProtectedGateway(t *testing.T) {
 	}, nil); err != nil {
 		t.Fatal(err)
 	}
+	productClient, err := armapimanagement.NewProductClient(defaultSubscription, credential, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	productDisplayName := "Go SDK product"
+	if _, err := productClient.CreateOrUpdate(ctx, defaultResourceGroup, "emulator", "go-sdk-product", armapimanagement.ProductContract{
+		Properties: &armapimanagement.ProductContractProperties{DisplayName: &productDisplayName},
+	}, nil); err != nil {
+		t.Fatal(err)
+	}
+	tagClient, err := armapimanagement.NewTagClient(defaultSubscription, credential, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tagDisplayName := "Go SDK tag"
+	createdTag, err := tagClient.CreateOrUpdate(ctx, defaultResourceGroup, "emulator", "go-sdk-tag", armapimanagement.TagCreateUpdateParameters{
+		Properties: &armapimanagement.TagContractProperties{DisplayName: &tagDisplayName},
+	}, nil)
+	if err != nil || createdTag.Properties == nil || createdTag.Properties.DisplayName == nil || *createdTag.Properties.DisplayName != tagDisplayName {
+		t.Fatalf("tag create = %+v, %v", createdTag, err)
+	}
+	tagDisplayName = "Updated Go SDK tag"
+	updatedTag, err := tagClient.Update(ctx, defaultResourceGroup, "emulator", "go-sdk-tag", "*", armapimanagement.TagCreateUpdateParameters{
+		Properties: &armapimanagement.TagContractProperties{DisplayName: &tagDisplayName},
+	}, nil)
+	if err != nil || updatedTag.Properties == nil || updatedTag.Properties.DisplayName == nil || *updatedTag.Properties.DisplayName != tagDisplayName {
+		t.Fatalf("tag update = %+v, %v", updatedTag, err)
+	}
+	if gotTag, err := tagClient.Get(ctx, defaultResourceGroup, "emulator", "go-sdk-tag", nil); err != nil || gotTag.Properties == nil || gotTag.Properties.DisplayName == nil || *gotTag.Properties.DisplayName != tagDisplayName {
+		t.Fatalf("tag GET = %+v, %v", gotTag, err)
+	}
+	if entityTag, err := tagClient.GetEntityState(ctx, defaultResourceGroup, "emulator", "go-sdk-tag", nil); err != nil || entityTag.ETag == nil {
+		t.Fatalf("tag ETag = %+v, %v", entityTag, err)
+	}
+	if page, err := tagClient.NewListByServicePager(defaultResourceGroup, "emulator", nil).NextPage(ctx); err != nil || len(page.Value) != 1 {
+		t.Fatalf("tag service page = %+v, %v", page, err)
+	}
+	temporaryTagName := "Temporary tag"
+	if _, err := tagClient.CreateOrUpdate(ctx, defaultResourceGroup, "emulator", "temporary", armapimanagement.TagCreateUpdateParameters{Properties: &armapimanagement.TagContractProperties{DisplayName: &temporaryTagName}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tagClient.Delete(ctx, defaultResourceGroup, "emulator", "temporary", "*", nil); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := tagClient.AssignToAPI(ctx, defaultResourceGroup, "emulator", "go-sdk-full", "go-sdk-tag", nil); err != nil {
+		t.Fatal(err)
+	}
+	if gotTag, err := tagClient.GetByAPI(ctx, defaultResourceGroup, "emulator", "go-sdk-full", "go-sdk-tag", nil); err != nil || gotTag.Name == nil || *gotTag.Name != "go-sdk-tag" {
+		t.Fatalf("API tag = %+v, %v", gotTag, err)
+	}
+	if entityTag, err := tagClient.GetEntityStateByAPI(ctx, defaultResourceGroup, "emulator", "go-sdk-full", "go-sdk-tag", nil); err != nil || entityTag.ETag == nil {
+		t.Fatalf("API tag ETag = %+v, %v", entityTag, err)
+	}
+	if page, err := tagClient.NewListByAPIPager(defaultResourceGroup, "emulator", "go-sdk-full", nil).NextPage(ctx); err != nil || len(page.Value) != 1 {
+		t.Fatalf("API tag page = %+v, %v", page, err)
+	}
+	if _, err := tagClient.DetachFromAPI(ctx, defaultResourceGroup, "emulator", "go-sdk-full", "go-sdk-tag", nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tagClient.AssignToAPI(ctx, defaultResourceGroup, "emulator", "go-sdk-full", "go-sdk-tag", nil); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := tagClient.AssignToOperation(ctx, defaultResourceGroup, "emulator", "go-sdk-full", "get", "go-sdk-tag", nil); err != nil {
+		t.Fatal(err)
+	}
+	if gotTag, err := tagClient.GetByOperation(ctx, defaultResourceGroup, "emulator", "go-sdk-full", "get", "go-sdk-tag", nil); err != nil || gotTag.Name == nil || *gotTag.Name != "go-sdk-tag" {
+		t.Fatalf("operation tag = %+v, %v", gotTag, err)
+	}
+	if entityTag, err := tagClient.GetEntityStateByOperation(ctx, defaultResourceGroup, "emulator", "go-sdk-full", "get", "go-sdk-tag", nil); err != nil || entityTag.ETag == nil {
+		t.Fatalf("operation tag ETag = %+v, %v", entityTag, err)
+	}
+	if page, err := tagClient.NewListByOperationPager(defaultResourceGroup, "emulator", "go-sdk-full", "get", nil).NextPage(ctx); err != nil || len(page.Value) != 1 {
+		t.Fatalf("operation tag page = %+v, %v", page, err)
+	}
+	if _, err := tagClient.DetachFromOperation(ctx, defaultResourceGroup, "emulator", "go-sdk-full", "get", "go-sdk-tag", nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tagClient.AssignToOperation(ctx, defaultResourceGroup, "emulator", "go-sdk-full", "get", "go-sdk-tag", nil); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := tagClient.AssignToProduct(ctx, defaultResourceGroup, "emulator", "go-sdk-product", "go-sdk-tag", nil); err != nil {
+		t.Fatal(err)
+	}
+	if gotTag, err := tagClient.GetByProduct(ctx, defaultResourceGroup, "emulator", "go-sdk-product", "go-sdk-tag", nil); err != nil || gotTag.Name == nil || *gotTag.Name != "go-sdk-tag" {
+		t.Fatalf("product tag = %+v, %v", gotTag, err)
+	}
+	if entityTag, err := tagClient.GetEntityStateByProduct(ctx, defaultResourceGroup, "emulator", "go-sdk-product", "go-sdk-tag", nil); err != nil || entityTag.ETag == nil {
+		t.Fatalf("product tag ETag = %+v, %v", entityTag, err)
+	}
+	if page, err := tagClient.NewListByProductPager(defaultResourceGroup, "emulator", "go-sdk-product", nil).NextPage(ctx); err != nil || len(page.Value) != 1 {
+		t.Fatalf("product tag page = %+v, %v", page, err)
+	}
+	if _, err := tagClient.DetachFromProduct(ctx, defaultResourceGroup, "emulator", "go-sdk-product", "go-sdk-tag", nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tagClient.AssignToProduct(ctx, defaultResourceGroup, "emulator", "go-sdk-product", "go-sdk-tag", nil); err != nil {
+		t.Fatal(err)
+	}
 	schemaClient, err := armapimanagement.NewAPISchemaClient(defaultSubscription, credential, options)
 	if err != nil {
 		t.Fatal(err)
@@ -397,6 +498,12 @@ func TestGoManagementSDKConfiguresProtectedGateway(t *testing.T) {
 	}
 	if clonedSchema, err := schemaClient.Get(ctx, defaultResourceGroup, "emulator", "go-sdk-full;rev=2", "components", nil); err != nil || clonedSchema.Properties == nil || clonedSchema.Properties.ContentType == nil || *clonedSchema.Properties.ContentType != schemaContentType {
 		t.Fatalf("cloned revision schema = %+v, %v", clonedSchema, err)
+	}
+	if clonedTag, err := tagClient.GetByAPI(ctx, defaultResourceGroup, "emulator", "go-sdk-full;rev=2", "go-sdk-tag", nil); err != nil || clonedTag.Name == nil || *clonedTag.Name != "go-sdk-tag" {
+		t.Fatalf("cloned revision API tag = %+v, %v", clonedTag, err)
+	}
+	if clonedTag, err := tagClient.GetByOperation(ctx, defaultResourceGroup, "emulator", "go-sdk-full;rev=2", "get", "go-sdk-tag", nil); err != nil || clonedTag.Name == nil || *clonedTag.Name != "go-sdk-tag" {
+		t.Fatalf("cloned revision operation tag = %+v, %v", clonedTag, err)
 	}
 	revisionPager = revisionClient.NewListByServicePager(defaultResourceGroup, "emulator", "go-sdk-full", nil)
 	revisionPage, err = revisionPager.NextPage(ctx)

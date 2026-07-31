@@ -63,6 +63,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.backend(w, r, parsed)
 	case "certificates":
 		h.certificate(w, r, parsed)
+	case "tags":
+		h.tag(w, r, parsed)
 	case "products":
 		h.product(w, r, parsed)
 	case "subscriptions":
@@ -294,6 +296,14 @@ func (h *Handler) api(w http.ResponseWriter, r *http.Request, rt route) {
 		h.apiSchemaCollection(w, r, api)
 		return
 	}
+	if len(rt.Tail) == 3 && equal(rt.Tail[2], "tags") {
+		if _, err := h.Store.GetAPI(api.ID()); err != nil {
+			h.storeError(w, err, api.ID())
+			return
+		}
+		h.resourceTagCollection(w, r, api.ID())
+		return
+	}
 	if len(rt.Tail) == 3 && equal(rt.Tail[2], "revisions") {
 		if r.Method != http.MethodGet {
 			methodNotAllowed(w)
@@ -334,6 +344,32 @@ func (h *Handler) api(w http.ResponseWriter, r *http.Request, rt route) {
 	}
 	if len(rt.Tail) == 4 && equal(rt.Tail[2], "schemas") {
 		h.apiSchemaResource(w, r, model.APISchema{APIID: api.ID(), Name: rt.Tail[3]})
+		return
+	}
+	if len(rt.Tail) == 4 && equal(rt.Tail[2], "tags") {
+		if _, err := h.Store.GetAPI(api.ID()); err != nil {
+			h.storeError(w, err, api.ID())
+			return
+		}
+		h.resourceTag(w, r, service.ID(), api.ID(), rt.Tail[3])
+		return
+	}
+	if len(rt.Tail) == 5 && equal(rt.Tail[2], "operations") && equal(rt.Tail[4], "tags") {
+		operationID := api.ID() + "/operations/" + rt.Tail[3]
+		if _, err := h.Store.GetOperation(operationID); err != nil {
+			h.storeError(w, err, operationID)
+			return
+		}
+		h.resourceTagCollection(w, r, operationID)
+		return
+	}
+	if len(rt.Tail) == 6 && equal(rt.Tail[2], "operations") && equal(rt.Tail[4], "tags") {
+		operationID := api.ID() + "/operations/" + rt.Tail[3]
+		if _, err := h.Store.GetOperation(operationID); err != nil {
+			h.storeError(w, err, operationID)
+			return
+		}
+		h.resourceTag(w, r, service.ID(), operationID, rt.Tail[5])
 		return
 	}
 	if len(rt.Tail) == 4 && equal(rt.Tail[2], "releases") {
@@ -379,6 +415,156 @@ func (h *Handler) api(w http.ResponseWriter, r *http.Request, rt route) {
 		return
 	}
 	writeError(w, http.StatusNotFound, "ResourceNotFound", "The requested API resource was not found.", r.URL.Path)
+}
+
+func (h *Handler) tag(w http.ResponseWriter, r *http.Request, rt route) {
+	service := model.Service{SubscriptionID: rt.SubscriptionID, ResourceGroup: rt.ResourceGroup, Name: rt.ServiceName}
+	if len(rt.Tail) == 1 {
+		if r.Method != http.MethodGet {
+			methodNotAllowed(w)
+			return
+		}
+		values, err := h.Store.ListTags(service.ID())
+		if err != nil {
+			h.storeError(w, err, service.ID())
+			return
+		}
+		resources := make([]map[string]any, 0, len(values))
+		for _, value := range values {
+			resources = append(resources, tagWire(value))
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"value": resources, "count": len(resources)})
+		return
+	}
+	if len(rt.Tail) != 2 {
+		writeError(w, http.StatusNotFound, "ResourceNotFound", "The requested tag resource was not found.", r.URL.Path)
+		return
+	}
+	value := model.Tag{ServiceID: service.ID(), Name: rt.Tail[1]}
+	switch r.Method {
+	case http.MethodGet, http.MethodHead:
+		got, err := h.Store.GetTag(value.ID())
+		if err != nil {
+			h.storeError(w, err, value.ID())
+			return
+		}
+		if r.Method == http.MethodHead {
+			w.Header().Set("ETag", got.ETag)
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		writeResource(w, http.StatusOK, tagWire(got), got.ETag)
+	case http.MethodPut, http.MethodPatch:
+		existing, existingErr := h.Store.GetTag(value.ID())
+		if existingErr != nil && !errors.Is(existingErr, store.ErrNotFound) {
+			h.storeError(w, existingErr, value.ID())
+			return
+		}
+		if r.Method == http.MethodPatch {
+			if existingErr != nil {
+				h.storeError(w, existingErr, value.ID())
+				return
+			}
+			value = existing
+		}
+		var body struct {
+			Properties struct {
+				DisplayName *string `json:"displayName"`
+			} `json:"properties"`
+		}
+		if err := decode(r, &body); err != nil {
+			writeError(w, http.StatusBadRequest, "InvalidRequestContent", err.Error(), "")
+			return
+		}
+		if body.Properties.DisplayName != nil {
+			value.DisplayName = *body.Properties.DisplayName
+		}
+		if strings.TrimSpace(value.DisplayName) == "" {
+			writeError(w, http.StatusBadRequest, "ValidationError", "displayName is required.", "properties.displayName")
+			return
+		}
+		got, err := h.Store.UpsertTag(value)
+		if err != nil {
+			h.storeError(w, err, value.ID())
+			return
+		}
+		status := http.StatusOK
+		if r.Method == http.MethodPut && errors.Is(existingErr, store.ErrNotFound) {
+			status = http.StatusCreated
+		}
+		writeResource(w, status, tagWire(got), got.ETag)
+	case http.MethodDelete:
+		if err := h.Store.DeleteTag(value.ID()); err != nil && !errors.Is(err, store.ErrNotFound) {
+			h.storeError(w, err, value.ID())
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	default:
+		methodNotAllowed(w)
+	}
+}
+
+func (h *Handler) resourceTagCollection(w http.ResponseWriter, r *http.Request, resourceID string) {
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w)
+		return
+	}
+	values, err := h.Store.ListResourceTags(resourceID)
+	if err != nil {
+		h.storeError(w, err, resourceID)
+		return
+	}
+	resources := make([]map[string]any, 0, len(values))
+	for _, value := range values {
+		resources = append(resources, tagWire(value))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"value": resources, "count": len(resources)})
+}
+
+func (h *Handler) resourceTag(w http.ResponseWriter, r *http.Request, serviceID, resourceID, tagName string) {
+	tag := model.Tag{ServiceID: serviceID, Name: tagName}
+	switch r.Method {
+	case http.MethodGet, http.MethodHead:
+		got, err := h.Store.GetResourceTag(resourceID, tag.ID())
+		if err != nil {
+			h.storeError(w, err, tag.ID())
+			return
+		}
+		if r.Method == http.MethodHead {
+			w.Header().Set("ETag", got.ETag)
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		writeResource(w, http.StatusOK, tagWire(got), got.ETag)
+	case http.MethodPut:
+		got, err := h.Store.GetTag(tag.ID())
+		if err != nil {
+			h.storeError(w, err, tag.ID())
+			return
+		}
+		_, existingErr := h.Store.GetResourceTag(resourceID, tag.ID())
+		if existingErr != nil && !errors.Is(existingErr, store.ErrNotFound) {
+			h.storeError(w, existingErr, tag.ID())
+			return
+		}
+		if err := h.Store.AssignTag(resourceID, tag.ID()); err != nil {
+			h.storeError(w, err, tag.ID())
+			return
+		}
+		status := http.StatusOK
+		if errors.Is(existingErr, store.ErrNotFound) {
+			status = http.StatusCreated
+		}
+		writeResource(w, status, tagWire(got), got.ETag)
+	case http.MethodDelete:
+		if err := h.Store.DetachTag(resourceID, tag.ID()); err != nil {
+			h.storeError(w, err, tag.ID())
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	default:
+		methodNotAllowed(w)
+	}
 }
 
 func (h *Handler) apiSchemaCollection(w http.ResponseWriter, r *http.Request, api model.API) {
@@ -1359,6 +1545,14 @@ func (h *Handler) product(w http.ResponseWriter, r *http.Request, rt route) {
 		writeJSON(w, http.StatusOK, map[string]any{"value": resources})
 		return
 	}
+	if len(rt.Tail) == 3 && equal(rt.Tail[2], "tags") {
+		if _, err := h.Store.GetProduct(product.ID()); err != nil {
+			h.storeError(w, err, product.ID())
+			return
+		}
+		h.resourceTagCollection(w, r, product.ID())
+		return
+	}
 	if len(rt.Tail) == 4 && equal(rt.Tail[2], "apis") {
 		apiID := service.ID() + "/apis/" + rt.Tail[3]
 		switch r.Method {
@@ -1385,6 +1579,14 @@ func (h *Handler) product(w http.ResponseWriter, r *http.Request, rt route) {
 		default:
 			methodNotAllowed(w)
 		}
+		return
+	}
+	if len(rt.Tail) == 4 && equal(rt.Tail[2], "tags") {
+		if _, err := h.Store.GetProduct(product.ID()); err != nil {
+			h.storeError(w, err, product.ID())
+			return
+		}
+		h.resourceTag(w, r, service.ID(), product.ID(), rt.Tail[3])
 		return
 	}
 	writeError(w, http.StatusNotFound, "ResourceNotFound", "The requested product resource was not found.", r.URL.Path)
@@ -1726,6 +1928,9 @@ func operationWire(v model.Operation) map[string]any {
 }
 func apiSchemaWire(v model.APISchema) map[string]any {
 	return map[string]any{"id": v.ID(), "name": v.Name, "type": "Microsoft.ApiManagement/service/apis/schemas", "properties": map[string]any{"contentType": v.ContentType, "document": v.Document}}
+}
+func tagWire(v model.Tag) map[string]any {
+	return map[string]any{"id": v.ID(), "name": v.Name, "type": "Microsoft.ApiManagement/service/tags", "properties": map[string]any{"displayName": v.DisplayName}}
 }
 func productWire(v model.Product) map[string]any {
 	return map[string]any{"id": v.ID(), "name": v.Name, "type": "Microsoft.ApiManagement/service/products", "properties": map[string]any{"displayName": v.DisplayName, "state": v.State, "approvalRequired": v.ApprovalRequired, "subscriptionRequired": true}}

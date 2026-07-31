@@ -560,6 +560,9 @@ func TestBackendClientCertificateTransport(t *testing.T) {
 	if got, err := backendHTTPClient(base, service, "secure"); err != nil || got.Transport == nil {
 		t.Fatalf("default certificate transport = %+v, %v", got, err)
 	}
+	if got, err := backendHTTPClient(&http.Client{Transport: &http.Transport{}}, service, "secure"); err != nil || got.Transport == nil {
+		t.Fatalf("nil TLS config transport = %+v, %v", got, err)
+	}
 	if got, err := backendHTTPClient(base, service, ""); err != nil || got != base {
 		t.Fatalf("empty backend = %p, %v", got, err)
 	}
