@@ -41,6 +41,7 @@ type API struct {
 	Version              string
 	VersionSetID         string
 	ETag                 string
+	Document             map[string]any
 }
 
 // APIDefinition retains the source document used to import an API.

@@ -61,6 +61,15 @@ properties supplied by clients are ignored or rejected exactly as Azure does.
 Null, omitted, and empty values remain distinct where the specification or
 observed behavior distinguishes them.
 
+API resources now retain their canonical ARM document in a migration-safe
+companion table. PUT replaces that document, PATCH recursively merges it with
+explicit `null` deletion, imports strip input-only `format`/`value`, and cloned
+revisions inherit the source document before applying clone overrides. GET and
+list responses project authoritative relational fields over the retained
+document. The official Go SDK witness round-trips and patches `description`, a
+field intentionally outside the gateway's minimal routing model. This pattern
+is being extended to each remaining resource family.
+
 ## Common ARM semantics
 
 Implement centrally and test across resources:

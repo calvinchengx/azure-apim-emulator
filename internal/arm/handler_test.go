@@ -522,11 +522,14 @@ func TestAPIBranches(t *testing.T) {
 	assertStatus(t, handler, http.MethodPut, basePath+"/apis/a"+apiQuery, `{`, http.StatusBadRequest)
 	assertStatus(t, handler, http.MethodPut, basePath+"/apis/a"+apiQuery, `{"properties":{"displayName":"A"}}`, http.StatusBadRequest)
 	assertStatus(t, handler, http.MethodPut, basePath+"/apis/a"+apiQuery, `{"properties":{"displayName":"A","path":"a","serviceUrl":"https://backend"}}`, http.StatusCreated)
-	assertStatus(t, handler, http.MethodPut, basePath+"/apis/a"+apiQuery, `{"properties":{"displayName":"A","path":"a","serviceUrl":"https://backend","protocols":["https"],"subscriptionRequired":false}}`, http.StatusOK)
+	assertStatus(t, handler, http.MethodPut, basePath+"/apis/a"+apiQuery, `{"tags":{"owner":"platform"},"customRoot":{"kept":true},"properties":{"displayName":"A","path":"a","serviceUrl":"https://backend","protocols":["https"],"subscriptionRequired":false,"description":"Original","customMetadata":{"keep":"one","remove":"old"}}}`, http.StatusOK)
 	assertStatus(t, handler, http.MethodPatch, basePath+"/apis/missing"+apiQuery, `{}`, http.StatusNotFound)
 	assertStatus(t, handler, http.MethodPatch, basePath+"/apis/a"+apiQuery, `{`, http.StatusBadRequest)
-	assertStatus(t, handler, http.MethodPatch, basePath+"/apis/a"+apiQuery, `{"properties":{"displayName":"Updated","path":"updated","serviceUrl":"https://updated","protocols":["http","https"],"subscriptionRequired":true}}`, http.StatusOK)
-	assertStatus(t, handler, http.MethodGet, basePath+"/apis/a"+apiQuery, "", http.StatusOK)
+	assertStatus(t, handler, http.MethodPatch, basePath+"/apis/a"+apiQuery, `{"properties":{"displayName":"Updated","path":"updated","serviceUrl":"https://updated","protocols":["http","https"],"subscriptionRequired":true,"description":null,"customMetadata":{"add":"two","remove":null}}}`, http.StatusOK)
+	apiGet := request(t, handler, http.MethodGet, basePath+"/apis/a"+apiQuery, "")
+	if !strings.Contains(apiGet.Body.String(), `"owner":"platform"`) || !strings.Contains(apiGet.Body.String(), `"keep":"one"`) || !strings.Contains(apiGet.Body.String(), `"add":"two"`) || strings.Contains(apiGet.Body.String(), `"remove"`) || strings.Contains(apiGet.Body.String(), `"description"`) {
+		t.Fatalf("lossless API patch = %s", apiGet.Body.String())
+	}
 	list := request(t, handler, http.MethodGet, basePath+"/apis"+apiQuery, "")
 	if strings.Count(list.Body.String(), `"type":"Microsoft.ApiManagement/service/apis"`) != 1 || !strings.Contains(list.Body.String(), `"displayName":"Updated"`) {
 		t.Fatalf("API list = %s", list.Body.String())
@@ -571,6 +574,10 @@ func TestAPIBranches(t *testing.T) {
 	}
 	sourceID := serviceModel().ID() + "/apis/a;rev=1"
 	assertStatus(t, handler, http.MethodPut, basePath+"/apis/a;rev=3"+apiQuery, `{"properties":{"sourceApiId":"`+sourceID+`","apiRevision":"3","apiRevisionDescription":"Cloned revision"}}`, http.StatusCreated)
+	clonedDocument := request(t, handler, http.MethodGet, basePath+"/apis/a;rev=3"+apiQuery, "")
+	if !strings.Contains(clonedDocument.Body.String(), `"owner":"platform"`) || strings.Contains(clonedDocument.Body.String(), "sourceApiId") {
+		t.Fatalf("cloned API document = %s", clonedDocument.Body.String())
+	}
 	assertStatus(t, handler, http.MethodGet, basePath+"/apis/a;rev=3/operations/get"+apiQuery, "", http.StatusOK)
 	assertStatus(t, handler, http.MethodGet, basePath+"/apis/a;rev=3/policies/policy"+apiQuery, "", http.StatusOK)
 	revisions = request(t, handler, http.MethodGet, basePath+"/apis/a/revisions"+apiQuery, "")
@@ -617,6 +624,38 @@ func TestAPIBranches(t *testing.T) {
 	assertStatus(t, handler, http.MethodDelete, basePath+"/apis/a/operations/get"+apiQuery, "", http.StatusNoContent)
 	assertStatus(t, handler, http.MethodDelete, basePath+"/apis/a"+apiQuery, "", http.StatusNoContent)
 	assertStatus(t, handler, http.MethodDelete, basePath+"/apis/a"+apiQuery, "", http.StatusNoContent)
+}
+
+func TestAPIDocumentHelpersAndLegacyPatch(t *testing.T) {
+	document := map[string]any{"id": "supplied", "name": "supplied", "type": "supplied", "etag": "supplied", "properties": map[string]any{"format": "openapi", "value": "source", "sourceApiId": "/source"}}
+	cleanAPIDocument(document)
+	if len(document) != 1 || len(document["properties"].(map[string]any)) != 0 {
+		t.Fatalf("clean API document = %#v", document)
+	}
+	cleanAPIDocument(map[string]any{})
+	api := model.API{RevisionDescription: "description", Version: "v1", VersionSetID: "/set"}
+	clearNullAPIProperties(&api, map[string]any{"properties": map[string]any{"apiRevisionDescription": nil, "apiVersion": nil, "apiVersionSetId": nil}})
+	if api.RevisionDescription != "" || api.Version != "" || api.VersionSetID != "" {
+		t.Fatalf("null API properties = %+v", api)
+	}
+	wired := apiWire(model.API{ServiceID: "/service", Name: "api", Document: map[string]any{"properties": "invalid"}})
+	if _, ok := wired["properties"].(map[string]any); !ok {
+		t.Fatalf("API wire properties = %#v", wired)
+	}
+
+	handler, st := testHandler(t)
+	seedService(t, st)
+	if _, err := st.UpsertAPI(model.API{ServiceID: serviceModel().ID(), Name: "legacy", DisplayName: "Legacy", Path: "legacy", ServiceURL: "https://legacy"}); err != nil {
+		t.Fatal(err)
+	}
+	response := request(t, handler, http.MethodPatch, basePath+"/apis/legacy"+apiQuery, `{"properties":{"displayName":"Patched"},"custom":true}`)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"custom":true`) {
+		t.Fatalf("legacy API patch = %d: %s", response.Code, response.Body.String())
+	}
+	replaced := request(t, handler, http.MethodPut, basePath+"/apis/legacy"+apiQuery, `{"properties":{"displayName":"Replaced","path":"legacy","serviceUrl":"https://legacy"}}`)
+	if replaced.Code != http.StatusOK || strings.Contains(replaced.Body.String(), `"custom"`) {
+		t.Fatalf("API PUT replacement = %d: %s", replaced.Code, replaced.Body.String())
+	}
 }
 
 func TestOpenAPIImportExportAndLinkedImport(t *testing.T) {

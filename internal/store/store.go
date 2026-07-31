@@ -77,6 +77,10 @@ CREATE TABLE IF NOT EXISTS apis (
   service_url TEXT NOT NULL, protocols_json TEXT NOT NULL,
   subscription_required INTEGER NOT NULL, etag TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS api_documents (
+  api_id TEXT PRIMARY KEY REFERENCES apis(id) ON DELETE CASCADE,
+  document_json TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS api_revision_metadata (
   api_id TEXT PRIMARY KEY REFERENCES apis(id) ON DELETE CASCADE,
   revision TEXT NOT NULL, description TEXT NOT NULL, is_current INTEGER NOT NULL,
@@ -331,6 +335,10 @@ func (s *Store) UpsertAPI(v model.API) (model.API, error) {
 	}
 	v.UpdatedAt = now
 	protocols, _ := json.Marshal(v.Protocols)
+	document, err := json.Marshal(v.Document)
+	if err != nil {
+		return v, err
+	}
 	tx, err := s.db.Begin()
 	if err != nil {
 		return v, err
@@ -345,6 +353,10 @@ func (s *Store) UpsertAPI(v model.API) (model.API, error) {
 		v.ID(), v.ServiceID, v.Name, v.DisplayName, strings.Trim(v.Path, "/"), v.ServiceURL,
 		string(protocols), v.SubscriptionRequired, v.ETag)
 	if err != nil {
+		return v, err
+	}
+	if _, err := tx.Exec(`INSERT INTO api_documents (api_id, document_json) VALUES (?, ?)
+      ON CONFLICT(api_id) DO UPDATE SET document_json=excluded.document_json`, v.ID(), document); err != nil {
 		return v, err
 	}
 	_, err = tx.Exec(`INSERT INTO api_revision_metadata
@@ -379,6 +391,10 @@ func (s *Store) ImportAPI(v model.API, definition model.APIDefinition, operation
 	}
 	v.UpdatedAt = now
 	protocols, _ := json.Marshal(v.Protocols)
+	document, err := json.Marshal(v.Document)
+	if err != nil {
+		return v, err
+	}
 	tx, err := s.db.Begin()
 	if err != nil {
 		return v, err
@@ -393,8 +409,12 @@ func (s *Store) ImportAPI(v model.API, definition model.APIDefinition, operation
 		string(protocols), v.SubscriptionRequired, v.ETag); err != nil {
 		return v, err
 	}
+	if _, err := tx.Exec(`INSERT INTO api_documents (api_id, document_json) VALUES (?, ?)
+      ON CONFLICT(api_id) DO UPDATE SET document_json=excluded.document_json`, v.ID(), document); err != nil {
+		return v, err
+	}
 	if _, err := tx.Exec(`INSERT INTO api_revision_metadata
-      (api_id, revision, description, is_current, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)
+	  (api_id, revision, description, is_current, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)
       ON CONFLICT(api_id) DO UPDATE SET revision=excluded.revision, description=excluded.description,
         is_current=excluded.is_current, updated_at=excluded.updated_at`, v.ID(), v.Revision,
 		v.RevisionDescription, v.IsCurrent, v.CreatedAt, v.UpdatedAt); err != nil {
@@ -465,6 +485,10 @@ func (s *Store) CloneAPIRevision(sourceID string, v model.API) (model.API, error
 	now := s.Clock.Now()
 	v.CreatedAt, v.UpdatedAt = now, now
 	protocols, _ := json.Marshal(v.Protocols)
+	document, err := json.Marshal(v.Document)
+	if err != nil {
+		return v, err
+	}
 	tx, err := s.db.Begin()
 	if err != nil {
 		return v, err
@@ -475,6 +499,9 @@ func (s *Store) CloneAPIRevision(sourceID string, v model.API) (model.API, error
 	    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, v.ID(), v.ServiceID, v.Name, v.DisplayName,
 		strings.Trim(v.Path, "/"), v.ServiceURL, string(protocols), v.SubscriptionRequired, v.ETag)
 	if err != nil {
+		return v, err
+	}
+	if _, err := tx.Exec(`INSERT INTO api_documents (api_id, document_json) VALUES (?, ?)`, v.ID(), document); err != nil {
 		return v, err
 	}
 	if _, err := tx.Exec(`INSERT INTO api_revision_metadata
@@ -526,7 +553,7 @@ func (s *Store) CloneAPIRevision(sourceID string, v model.API) (model.API, error
 // GetAPI finds one API by ARM ID.
 func (s *Store) GetAPI(id string) (model.API, error) {
 	var v model.API
-	var protocols string
+	var protocols, document string
 	err := s.db.QueryRow(`SELECT service_id, name, display_name, path, service_url,
 	      protocols_json, subscription_required, etag,
 	      COALESCE((SELECT revision FROM api_revision_metadata WHERE lower(api_id)=lower(apis.id)), '1'),
@@ -535,11 +562,12 @@ func (s *Store) GetAPI(id string) (model.API, error) {
 	      COALESCE((SELECT created_at FROM api_revision_metadata WHERE lower(api_id)=lower(apis.id)), 0),
 	      COALESCE((SELECT updated_at FROM api_revision_metadata WHERE lower(api_id)=lower(apis.id)), 0),
 	      COALESCE((SELECT version FROM api_version_metadata WHERE lower(api_id)=lower(apis.id)), ''),
-	      COALESCE((SELECT version_set_id FROM api_version_metadata WHERE lower(api_id)=lower(apis.id)), '')
+	      COALESCE((SELECT version_set_id FROM api_version_metadata WHERE lower(api_id)=lower(apis.id)), ''),
+	      COALESCE((SELECT document_json FROM api_documents WHERE lower(api_id)=lower(apis.id)), '{}')
 	      FROM apis WHERE lower(id)=lower(?)`, id).
 		Scan(&v.ServiceID, &v.Name, &v.DisplayName, &v.Path, &v.ServiceURL,
 			&protocols, &v.SubscriptionRequired, &v.ETag, &v.Revision, &v.RevisionDescription,
-			&v.IsCurrent, &v.CreatedAt, &v.UpdatedAt, &v.Version, &v.VersionSetID)
+			&v.IsCurrent, &v.CreatedAt, &v.UpdatedAt, &v.Version, &v.VersionSetID, &document)
 	if errors.Is(err, sql.ErrNoRows) {
 		return model.API{}, ErrNotFound
 	}
@@ -547,6 +575,7 @@ func (s *Store) GetAPI(id string) (model.API, error) {
 		return model.API{}, err
 	}
 	_ = json.Unmarshal([]byte(protocols), &v.Protocols)
+	_ = json.Unmarshal([]byte(document), &v.Document)
 	return v, nil
 }
 
@@ -1748,7 +1777,8 @@ func scanAPIs(db *sql.DB) ([]model.API, error) {
 	    COALESCE((SELECT created_at FROM api_revision_metadata WHERE api_id=apis.id), 0),
 	    COALESCE((SELECT updated_at FROM api_revision_metadata WHERE api_id=apis.id), 0),
 	    COALESCE((SELECT version FROM api_version_metadata WHERE api_id=apis.id), ''),
-	    COALESCE((SELECT version_set_id FROM api_version_metadata WHERE api_id=apis.id), '')
+	    COALESCE((SELECT version_set_id FROM api_version_metadata WHERE api_id=apis.id), ''),
+	    COALESCE((SELECT document_json FROM api_documents WHERE api_id=apis.id), '{}')
 	    FROM apis ORDER BY id`)
 	if err != nil {
 		return nil, err
@@ -1757,13 +1787,14 @@ func scanAPIs(db *sql.DB) ([]model.API, error) {
 	var values []model.API
 	for rows.Next() {
 		var v model.API
-		var protocols string
+		var protocols, document string
 		if err := rows.Scan(&v.ServiceID, &v.Name, &v.DisplayName, &v.Path, &v.ServiceURL, &protocols,
 			&v.SubscriptionRequired, &v.ETag, &v.Revision, &v.RevisionDescription, &v.IsCurrent,
-			&v.CreatedAt, &v.UpdatedAt, &v.Version, &v.VersionSetID); err != nil {
+			&v.CreatedAt, &v.UpdatedAt, &v.Version, &v.VersionSetID, &document); err != nil {
 			return nil, err
 		}
 		_ = json.Unmarshal([]byte(protocols), &v.Protocols)
+		_ = json.Unmarshal([]byte(document), &v.Document)
 		values = append(values, v)
 	}
 	return values, rows.Err()

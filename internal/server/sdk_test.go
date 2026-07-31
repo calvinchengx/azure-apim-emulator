@@ -314,13 +314,14 @@ func TestGoManagementSDKConfiguresProtectedGateway(t *testing.T) {
 		t.Fatal(err)
 	}
 	displayName, path, required := "Go protected API", "go-sdk-full", true
+	apiDescription := "Created through the official Go SDK"
 	apiVersion := "v1"
 	protocol := armapimanagement.ProtocolHTTPS
 	apiPoller, err := apiClient.BeginCreateOrUpdate(ctx, defaultResourceGroup, "emulator", "go-sdk-full", armapimanagement.APICreateOrUpdateParameter{
 		Properties: &armapimanagement.APICreateOrUpdateProperties{
 			DisplayName: &displayName, Path: &path, ServiceURL: &backend.URL,
 			Protocols: []*armapimanagement.Protocol{&protocol}, SubscriptionRequired: &required,
-			APIVersion: &apiVersion, APIVersionSetID: &versionSetID,
+			APIVersion: &apiVersion, APIVersionSetID: &versionSetID, Description: &apiDescription,
 		},
 	}, nil)
 	if err != nil {
@@ -328,6 +329,17 @@ func TestGoManagementSDKConfiguresProtectedGateway(t *testing.T) {
 	}
 	if _, err := apiPoller.PollUntilDone(ctx, nil); err != nil {
 		t.Fatal(err)
+	}
+	gotAPI, err := apiClient.Get(ctx, defaultResourceGroup, "emulator", "go-sdk-full", nil)
+	if err != nil || gotAPI.Properties == nil || gotAPI.Properties.Description == nil || *gotAPI.Properties.Description != apiDescription {
+		t.Fatalf("lossless API GET = %+v, %v", gotAPI, err)
+	}
+	apiDescription = "Patched through the official Go SDK"
+	updatedAPI, err := apiClient.Update(ctx, defaultResourceGroup, "emulator", "go-sdk-full", "*", armapimanagement.APIUpdateContract{
+		Properties: &armapimanagement.APIContractUpdateProperties{Description: &apiDescription},
+	}, nil)
+	if err != nil || updatedAPI.Properties == nil || updatedAPI.Properties.Description == nil || *updatedAPI.Properties.Description != apiDescription {
+		t.Fatalf("lossless API update = %+v, %v", updatedAPI, err)
 	}
 	revisionClient, err := armapimanagement.NewAPIRevisionClient(defaultSubscription, credential, options)
 	if err != nil {

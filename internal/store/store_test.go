@@ -453,6 +453,7 @@ func TestScanFunctionsRejectMalformedRows(t *testing.T) {
 		{
 			"apis",
 			`CREATE TABLE apis (id, service_id, name, display_name, path, service_url, protocols_json, subscription_required, etag);
+			 CREATE TABLE api_documents (api_id, document_json);
 			 CREATE TABLE api_revision_metadata (api_id, revision, description, is_current, created_at, updated_at);
 			 CREATE TABLE api_version_metadata (api_id, version, version_set_id)`,
 			`INSERT INTO apis VALUES ('id', NULL, '', '', '', '', '[]', 0, '')`,
@@ -913,6 +914,18 @@ func TestUpsertServiceTransactionErrors(t *testing.T) {
 		}
 	})
 
+	t.Run("API document encoding", func(t *testing.T) {
+		st, err := Open("", clock.New())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer st.Close()
+		api := model.API{Name: "bad", Document: map[string]any{"unsupported": func() {}}}
+		if _, err := st.UpsertAPI(api); err == nil {
+			t.Fatal("unsupported API document was accepted")
+		}
+	})
+
 	t.Run("built-in groups", func(t *testing.T) {
 		st, err := Open("", clock.New())
 		if err != nil {
@@ -981,6 +994,28 @@ func TestUpsertAPITransactionErrors(t *testing.T) {
 		}
 		if _, err := st.GetAPI(api.ID()); !errors.Is(err, ErrNotFound) {
 			t.Fatalf("API transaction was not rolled back: %v", err)
+		}
+	})
+
+	t.Run("document", func(t *testing.T) {
+		st, err := Open("", clock.New())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer st.Close()
+		service, err := st.UpsertService(model.Service{Name: "svc"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := st.db.Exec(`CREATE TRIGGER reject_api_document BEFORE INSERT ON api_documents BEGIN SELECT RAISE(FAIL, 'rejected'); END`); err != nil {
+			t.Fatal(err)
+		}
+		api := model.API{ServiceID: service.ID(), Name: "api", Document: map[string]any{"custom": true}}
+		if _, err := st.UpsertAPI(api); err == nil {
+			t.Fatal("rejected API document was accepted")
+		}
+		if _, err := st.GetAPI(api.ID()); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("API document transaction was not rolled back: %v", err)
 		}
 	})
 
@@ -1090,7 +1125,18 @@ func TestCloneAPIRevisionTransactions(t *testing.T) {
 		}
 	})
 
+	t.Run("document encoding", func(t *testing.T) {
+		st, source := newSource(t)
+		target := source
+		target.Name = "api;rev=2"
+		target.Document = map[string]any{"bad": make(chan int)}
+		if _, err := st.CloneAPIRevision(source.ID(), target); err == nil {
+			t.Fatal("clone accepted an unsupported API document")
+		}
+	})
+
 	for _, test := range []struct{ name, trigger string }{
+		{"document", `CREATE TRIGGER reject_clone_document BEFORE INSERT ON api_documents WHEN NEW.api_id LIKE '%;rev=2' BEGIN SELECT RAISE(FAIL, 'rejected'); END`},
 		{"metadata", `CREATE TRIGGER reject_clone_metadata BEFORE INSERT ON api_revision_metadata WHEN NEW.revision='2' BEGIN SELECT RAISE(FAIL, 'rejected'); END`},
 		{"version metadata", `CREATE TRIGGER reject_clone_version BEFORE INSERT ON api_version_metadata WHEN NEW.api_id LIKE '%;rev=2' BEGIN SELECT RAISE(FAIL, 'rejected'); END`},
 		{"operations", `CREATE TRIGGER reject_clone_operation BEFORE INSERT ON operations WHEN NEW.api_id LIKE '%;rev=2' BEGIN SELECT RAISE(FAIL, 'rejected'); END`},
@@ -1559,6 +1605,7 @@ func TestImportAPITransactionFailures(t *testing.T) {
 		schema        *model.APISchema
 	}{
 		{"api", `CREATE TRIGGER reject BEFORE INSERT ON apis BEGIN SELECT RAISE(FAIL, 'rejected'); END`, nil, nil},
+		{"document", `CREATE TRIGGER reject BEFORE UPDATE ON api_documents BEGIN SELECT RAISE(FAIL, 'rejected'); END`, nil, nil},
 		{"revision", `CREATE TRIGGER reject BEFORE INSERT ON api_revision_metadata BEGIN SELECT RAISE(FAIL, 'rejected'); END`, nil, nil},
 		{"version", `CREATE TRIGGER reject BEFORE INSERT ON api_version_metadata BEGIN SELECT RAISE(FAIL, 'rejected'); END`, nil, nil},
 		{"definition", `CREATE TRIGGER reject BEFORE INSERT ON api_definitions BEGIN SELECT RAISE(FAIL, 'rejected'); END`, nil, nil},
@@ -1592,6 +1639,17 @@ func TestImportAPITransactionFailures(t *testing.T) {
 			}
 		})
 	}
+	t.Run("document encoding", func(t *testing.T) {
+		st, err := Open("", clock.New())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer st.Close()
+		api := model.API{Document: map[string]any{"bad": make(chan int)}}
+		if _, err := st.ImportAPI(api, model.APIDefinition{}, nil, nil); err == nil {
+			t.Fatal("import accepted an unsupported API document")
+		}
+	})
 }
 
 func TestAPISchemaLifecycle(t *testing.T) {

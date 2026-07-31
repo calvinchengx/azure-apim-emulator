@@ -1250,7 +1250,8 @@ func (h *Handler) apiResource(w http.ResponseWriter, r *http.Request, api model.
 			api.IsCurrent = !strings.Contains(strings.ToLower(api.Name), ";rev=")
 		}
 		var body apiPayload
-		if err := decode(r, &body); err != nil {
+		var document map[string]any
+		if err := decodeDocument(r, &body, &document); err != nil {
 			writeError(w, http.StatusBadRequest, "InvalidRequestContent", err.Error(), "")
 			return
 		}
@@ -1267,7 +1268,17 @@ func (h *Handler) apiResource(w http.ResponseWriter, r *http.Request, api model.
 			api.IsCurrent, api.CreatedAt, api.UpdatedAt, api.ETag = false, 0, 0, ""
 			cloneSourceID = sourceID
 		}
+		if r.Method == http.MethodPatch || cloneSourceID != "" {
+			if api.Document == nil {
+				api.Document = apiWire(api)
+			}
+			mergeObject(api.Document, document)
+		} else {
+			api.Document = document
+		}
+		cleanAPIDocument(api.Document)
 		applyAPIPayload(&api, body)
+		clearNullAPIProperties(&api, document)
 		var imported *struct {
 			definition model.APIDefinition
 			operations []model.Operation
@@ -1525,6 +1536,30 @@ func applyAPIPayload(api *model.API, body apiPayload) {
 	}
 	if body.Properties.APIVersionSetID != nil {
 		api.VersionSetID = *body.Properties.APIVersionSetID
+	}
+}
+
+func cleanAPIDocument(document map[string]any) {
+	delete(document, "id")
+	delete(document, "name")
+	delete(document, "type")
+	delete(document, "etag")
+	properties, _ := document["properties"].(map[string]any)
+	delete(properties, "format")
+	delete(properties, "value")
+	delete(properties, "sourceApiId")
+}
+
+func clearNullAPIProperties(api *model.API, patch map[string]any) {
+	properties, _ := patch["properties"].(map[string]any)
+	if value, present := properties["apiRevisionDescription"]; present && value == nil {
+		api.RevisionDescription = ""
+	}
+	if value, present := properties["apiVersion"]; present && value == nil {
+		api.Version = ""
+	}
+	if value, present := properties["apiVersionSetId"]; present && value == nil {
+		api.VersionSetID = ""
 	}
 }
 
@@ -2942,14 +2977,30 @@ func serviceWire(v model.Service) map[string]any {
 	return result
 }
 func apiWire(v model.API) map[string]any {
-	properties := map[string]any{"displayName": v.DisplayName, "path": v.Path, "serviceUrl": v.ServiceURL, "protocols": v.Protocols, "subscriptionRequired": v.SubscriptionRequired, "apiRevision": v.Revision, "apiRevisionDescription": v.RevisionDescription, "isCurrent": v.IsCurrent}
+	result := cloneObject(v.Document)
+	result["id"], result["name"], result["type"] = v.ID(), v.Name, "Microsoft.ApiManagement/service/apis"
+	properties, ok := result["properties"].(map[string]any)
+	if !ok {
+		properties = map[string]any{}
+		result["properties"] = properties
+	}
+	delete(properties, "format")
+	delete(properties, "value")
+	delete(properties, "sourceApiId")
+	properties["displayName"], properties["path"], properties["serviceUrl"] = v.DisplayName, v.Path, v.ServiceURL
+	properties["protocols"], properties["subscriptionRequired"] = v.Protocols, v.SubscriptionRequired
+	properties["apiRevision"], properties["apiRevisionDescription"], properties["isCurrent"] = v.Revision, v.RevisionDescription, v.IsCurrent
 	if v.Version != "" {
 		properties["apiVersion"] = v.Version
+	} else {
+		delete(properties, "apiVersion")
 	}
 	if v.VersionSetID != "" {
 		properties["apiVersionSetId"] = v.VersionSetID
+	} else {
+		delete(properties, "apiVersionSetId")
 	}
-	return map[string]any{"id": v.ID(), "name": v.Name, "type": "Microsoft.ApiManagement/service/apis", "properties": properties}
+	return result
 }
 func apiVersionSetWire(v model.APIVersionSet) map[string]any {
 	return map[string]any{"id": v.ID(), "name": v.Name, "type": "Microsoft.ApiManagement/service/apiVersionSets",
