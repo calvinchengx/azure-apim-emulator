@@ -395,6 +395,63 @@ func TestCollectionFilterContracts(t *testing.T) {
 	}
 }
 
+func TestCollectionSelectors(t *testing.T) {
+	handler, st := testHandler(t)
+	seedService(t, st)
+	assertStatus(t, handler, http.MethodPut, basePath+"/products/starter"+apiQuery, `{"properties":{"displayName":"Starter","state":"published"}}`, http.StatusCreated)
+	assertStatus(t, handler, http.MethodPut, basePath+"/tags/gateway"+apiQuery, `{"properties":{"displayName":"Gateway"}}`, http.StatusCreated)
+	assertStatus(t, handler, http.MethodPut, basePath+"/products/starter/tags/gateway"+apiQuery, "", http.StatusCreated)
+	filtered := request(t, handler, http.MethodGet, basePath+"/products?api-version=2024-05-01&tags=gateway", "")
+	if filtered.Code != http.StatusOK || !strings.Contains(filtered.Body.String(), `"count":1`) || !strings.Contains(filtered.Body.String(), `"name":"starter"`) {
+		t.Fatalf("product tag selector = %d %s", filtered.Code, filtered.Body.String())
+	}
+	for _, path := range []string{
+		basePath + "/products?api-version=2024-05-01&expandGroups=maybe",
+		basePath + "/tags?api-version=2024-05-01&tags=gateway",
+	} {
+		response := request(t, handler, http.MethodGet, path, "")
+		if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "InvalidQueryParameterValue") {
+			t.Fatalf("invalid selector = %d %s", response.Code, response.Body.String())
+		}
+	}
+
+	for _, test := range []struct {
+		rt    route
+		query url.Values
+		valid bool
+	}{
+		{route{Tail: []string{"products"}}, url.Values{"expandGroups": {"true"}}, true},
+		{route{Tail: []string{"apis"}}, url.Values{"expandApiVersionSet": {"false"}}, true},
+		{route{Tail: []string{"tags"}}, url.Values{"scope": {"apis"}}, true},
+		{route{Tail: []string{"users"}}, url.Values{"expandGroups": {"maybe"}}, false},
+		{route{Tail: []string{"tags"}}, url.Values{"tags": {"gateway"}}, false},
+		{route{Tail: []string{"products"}}, url.Values{"scope": {"apis"}}, false},
+	} {
+		if err := validateCollectionSelectors(test.query, test.rt); (err == nil) != test.valid {
+			t.Errorf("selector %v on %v valid=%v: %v", test.query, test.rt.Tail, test.valid, err)
+		}
+	}
+	if _, err := handler.applyCollectionSelectors([]any{"scalar"}, url.Values{"tags": {"gateway"}}, route{Tail: []string{"products"}}); err == nil {
+		t.Fatal("scalar product collection accepted tag selector")
+	}
+	brokenHandler, brokenStore := testHandler(t)
+	if err := brokenStore.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := brokenHandler.applyCollectionSelectors([]any{map[string]any{"id": "product"}}, url.Values{"tags": {"gateway"}}, route{Tail: []string{"products"}}); err == nil {
+		t.Fatal("closed store accepted tag selector")
+	}
+	source := httptest.NewRecorder()
+	source.WriteHeader(http.StatusOK)
+	_, _ = source.WriteString(`{"value":[{"id":"product"}]}`)
+	target := httptest.NewRecorder()
+	brokenHandler.writeCollectionResponse(target, httptest.NewRequest(http.MethodGet, basePath+"/products?api-version=2024-05-01&tags=gateway", nil), source, route{Tail: []string{"products"}})
+	if target.Code != http.StatusBadRequest {
+		t.Fatalf("closed store response = %d %s", target.Code, target.Body.String())
+	}
+	_ = st
+}
+
 func TestFilterGrammar(t *testing.T) {
 	resource := map[string]any{
 		"name":       "o'brien",

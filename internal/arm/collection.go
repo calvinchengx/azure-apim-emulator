@@ -2,6 +2,7 @@ package arm
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"net/http"
@@ -19,11 +20,19 @@ func (h *Handler) handleCollectionRequest(w http.ResponseWriter, r *http.Request
 	}
 	response := httptest.NewRecorder()
 	h.dispatch(response, r, rt)
-	writeCollectionResponse(w, r, response, rt)
+	h.writeCollectionResponse(w, r, response, rt)
 	return true
 }
 
 func writeCollectionResponse(w http.ResponseWriter, r *http.Request, response *httptest.ResponseRecorder, rt route) {
+	writeCollectionResponseWithHandler(nil, w, r, response, rt)
+}
+
+func (h *Handler) writeCollectionResponse(w http.ResponseWriter, r *http.Request, response *httptest.ResponseRecorder, rt route) {
+	writeCollectionResponseWithHandler(h, w, r, response, rt)
+}
+
+func writeCollectionResponseWithHandler(h *Handler, w http.ResponseWriter, r *http.Request, response *httptest.ResponseRecorder, rt route) {
 	if response.Code < 200 || response.Code >= 300 {
 		copyRecordedResponse(w, response)
 		return
@@ -40,6 +49,10 @@ func writeCollectionResponse(w http.ResponseWriter, r *http.Request, response *h
 	}
 	if name := unsupportedCollectionOption(r.URL.Query(), rt); name != "" {
 		writeError(w, http.StatusBadRequest, "InvalidQueryParameterValue", fmt.Sprintf("The query option %s is not supported for this operation.", name), name)
+		return
+	}
+	if err := validateCollectionSelectors(r.URL.Query(), rt); err != nil {
+		writeError(w, http.StatusBadRequest, "InvalidQueryParameterValue", err.message, err.target)
 		return
 	}
 
@@ -62,6 +75,13 @@ func writeCollectionResponse(w http.ResponseWriter, r *http.Request, response *h
 		}
 		if matches {
 			filtered = append(filtered, value)
+		}
+	}
+	if h != nil {
+		filtered, err = h.applyCollectionSelectors(filtered, r.URL.Query(), rt)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "InvalidQueryParameterValue", err.Error(), "$filter")
+			return
 		}
 	}
 	order, err := parseCollectionOrder(r.URL.Query(), rt)
@@ -111,6 +131,66 @@ func writeCollectionResponse(w http.ResponseWriter, r *http.Request, response *h
 	copyHeaders(w.Header(), response.Header())
 	w.Header().Del("Content-Length")
 	writeJSON(w, response.Code, document)
+}
+
+type collectionSelectorError struct {
+	target  string
+	message string
+}
+
+var collectionSelectors = map[string]map[string]bool{
+	"apis":            {"tags": true, "expandApiVersionSet": true},
+	"apis/operations": {"tags": true},
+	"certificates":    {"isKeyVaultRefreshFailed": true},
+	"namedValues":     {"isKeyVaultRefreshFailed": true},
+	"products":        {"expandGroups": true, "tags": true},
+	"tags":            {"scope": true},
+	"users":           {"expandGroups": true},
+}
+
+func validateCollectionSelectors(query url.Values, rt route) *collectionSelectorError {
+	allowed := collectionSelectors[collectionFilterKey(rt.Tail)]
+	for name := range query {
+		if !oneOf(name, "tags", "scope", "expandGroups", "expandApiVersionSet", "isKeyVaultRefreshFailed") {
+			continue
+		}
+		if !allowed[name] {
+			return &collectionSelectorError{target: name, message: fmt.Sprintf("The query parameter %s is not supported for this operation.", name)}
+		}
+		if oneOf(name, "expandGroups", "expandApiVersionSet", "isKeyVaultRefreshFailed") {
+			values := query[name]
+			if len(values) != 1 || !oneOf(strings.ToLower(values[0]), "true", "false") {
+				return &collectionSelectorError{target: name, message: fmt.Sprintf("%s must be a boolean.", name)}
+			}
+		}
+	}
+	return nil
+}
+
+func (h *Handler) applyCollectionSelectors(values []any, query url.Values, rt route) ([]any, error) {
+	if collectionFilterKey(rt.Tail) != "products" || query.Get("tags") == "" {
+		return values, nil
+	}
+	want := query.Get("tags")
+	filtered := make([]any, 0, len(values))
+	for _, value := range values {
+		resource, ok := value.(map[string]any)
+		if !ok {
+			return nil, errors.New("the collection cannot be filtered by tags")
+		}
+		id, _ := resource["id"].(string)
+		tags, err := h.Store.ListResourceTags(id)
+		if err != nil {
+			return nil, err
+		}
+		for _, tag := range tags {
+			if strings.EqualFold(tag.Name, want) {
+				filtered = append(filtered, value)
+				break
+			}
+		}
+	}
+	return filtered, nil
 }
 
 func unsupportedCollectionOption(query url.Values, rt route) string {

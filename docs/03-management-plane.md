@@ -219,6 +219,12 @@ functions, including correct empty-array behavior, and are exercised through
 the official JavaScript SDK. Named selectors such as
 `expandGroups`, `tags`, and `scope` also remain to be implemented.
 
+The stable selector matrix is validated centrally: `tags` is accepted on API,
+operation, and product collections, `scope` on tag collections, and the
+documented expansion/Key Vault refresh booleans only on their declared
+operations. Product `tags` performs association-backed filtering; expansion
+projection and the remaining selector response semantics are pending.
+
 All current ARM failures include the canonical JSON error envelope and mirror
 its code in `x-ms-error-code`, alongside the per-request request and correlation
 IDs. Endpoint-specific nested `details` and `additionalInfo` payloads remain in
