@@ -171,6 +171,12 @@ func TestGoManagementSDKConfiguresProtectedGateway(t *testing.T) {
 	if _, err := updatePoller.PollUntilDone(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
+	if gotNamedValue, err := namedValueClient.Get(ctx, defaultResourceGroup, "emulator", "gateway-header", nil); err != nil || gotNamedValue.Properties == nil || gotNamedValue.Properties.Value != nil || gotNamedValue.Properties.DisplayName == nil || *gotNamedValue.Properties.DisplayName != namedValueDisplayName {
+		t.Fatalf("updated named value GET = %+v, %v", gotNamedValue, err)
+	}
+	if listedValue, err := namedValueClient.ListValue(ctx, defaultResourceGroup, "emulator", "gateway-header", nil); err != nil || listedValue.Value == nil || *listedValue.Value != namedValueContent {
+		t.Fatalf("updated named value secret = %+v, %v", listedValue, err)
+	}
 	_, err = namedValueClient.BeginUpdate(ctx, defaultResourceGroup, "emulator", "gateway-header", staleNamedValueETag, armapimanagement.NamedValueUpdateParameters{
 		Properties: &armapimanagement.NamedValueUpdateParameterProperties{Value: &namedValueContent},
 	}, nil)

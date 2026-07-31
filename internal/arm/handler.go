@@ -1814,11 +1814,23 @@ func (h *Handler) namedValue(w http.ResponseWriter, r *http.Request, rt route) {
 			value = existing
 		}
 		var body namedValuePayload
-		if err := decode(r, &body); err != nil {
+		var document map[string]any
+		if err := decodeDocument(r, &body, &document); err != nil {
 			writeError(w, http.StatusBadRequest, "InvalidRequestContent", err.Error(), "")
 			return
 		}
+		if r.Method == http.MethodPatch {
+			if value.Document == nil {
+				value.Document = namedValueWire(value)
+			}
+			mergeObject(value.Document, document)
+		} else {
+			value.Document = document
+		}
+		cleanResourceDocument(value.Document)
+		sanitizeNamedValueDocument(value.Document)
 		applyNamedValuePayload(&value, body)
+		clearNullNamedValueProperties(&value, document)
 		if value.DisplayName == "" || len(value.DisplayName) > 256 || !namedValueDisplayName.MatchString(value.DisplayName) ||
 			(strings.TrimSpace(value.Value) == "" && value.KeyVaultSecretID == "") || len(value.Value) > 4096 {
 			writeError(w, http.StatusBadRequest, "ValidationError", "displayName must be a valid named-value identifier and either value or keyVault.secretIdentifier is required.", "properties")
@@ -1897,6 +1909,39 @@ func applyNamedValuePayload(value *model.NamedValue, body namedValuePayload) {
 		if body.Properties.KeyVault.IdentityClientID != nil {
 			value.KeyVaultIdentityID = *body.Properties.KeyVault.IdentityClientID
 		}
+	}
+}
+
+func sanitizeNamedValueDocument(document map[string]any) {
+	delete(document, "value")
+	properties, _ := document["properties"].(map[string]any)
+	delete(properties, "value")
+}
+
+func clearNullNamedValueProperties(value *model.NamedValue, patch map[string]any) {
+	properties, _ := patch["properties"].(map[string]any)
+	if field, present := properties["displayName"]; present && field == nil {
+		value.DisplayName = ""
+	}
+	if field, present := properties["value"]; present && field == nil {
+		value.Value = ""
+	}
+	if field, present := properties["tags"]; present && field == nil {
+		value.Tags = nil
+	}
+	if field, present := properties["secret"]; present && field == nil {
+		value.Secret = false
+	}
+	if field, present := properties["keyVault"]; present && field == nil {
+		value.KeyVaultSecretID, value.KeyVaultIdentityID = "", ""
+		return
+	}
+	keyVault, _ := properties["keyVault"].(map[string]any)
+	if field, present := keyVault["secretIdentifier"]; present && field == nil {
+		value.KeyVaultSecretID = ""
+	}
+	if field, present := keyVault["identityClientId"]; present && field == nil {
+		value.KeyVaultIdentityID = ""
 	}
 }
 
@@ -3152,11 +3197,22 @@ func apiVersionSetWire(v model.APIVersionSet) map[string]any {
 	return result
 }
 func namedValueWire(v model.NamedValue) map[string]any {
-	properties := map[string]any{"displayName": v.DisplayName, "secret": v.Secret, "tags": v.Tags}
+	result := cloneObject(v.Document)
+	result["id"], result["name"], result["type"] = v.ID(), v.Name, "Microsoft.ApiManagement/service/namedValues"
+	delete(result, "value")
+	properties, ok := result["properties"].(map[string]any)
+	if !ok {
+		properties = map[string]any{}
+		result["properties"] = properties
+	}
+	delete(properties, "value")
+	properties["displayName"], properties["secret"], properties["tags"] = v.DisplayName, v.Secret, v.Tags
 	if v.KeyVaultSecretID != "" {
 		properties["keyVault"] = map[string]any{"secretIdentifier": v.KeyVaultSecretID, "identityClientId": v.KeyVaultIdentityID}
+	} else {
+		delete(properties, "keyVault")
 	}
-	return map[string]any{"id": v.ID(), "name": v.Name, "type": "Microsoft.ApiManagement/service/namedValues", "properties": properties}
+	return result
 }
 func backendWire(v model.Backend) map[string]any {
 	result := cloneObject(v.Document)

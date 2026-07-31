@@ -130,6 +130,14 @@ returns keys, and regeneration updates those indexed keys without altering the
 canonical document. Official Go SDK evidence covers normal GET, secret listing,
 rotation, and use of the rotated key at the gateway.
 
+Named values retain canonical documents transactionally while their operational
+value remains isolated in its indexed column. Handler, store, and ordinary wire
+projections strip `value`; `listValue` is the explicit disclosure operation.
+PUT replacement and recursive PATCH preserve extension data, tags, secret state,
+and non-secret Key Vault reference metadata with explicit null clearing. The
+official Go SDK witness verifies redacted GET, updated `listValue`, ETags, and
+gateway policy substitution.
+
 ## Common ARM semantics
 
 Implement centrally and test across resources:

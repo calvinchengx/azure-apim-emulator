@@ -110,6 +110,10 @@ CREATE TABLE IF NOT EXISTS named_values (
   secret INTEGER NOT NULL, key_vault_secret_id TEXT NOT NULL,
   key_vault_identity_id TEXT NOT NULL, etag TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS named_value_documents (
+  named_value_id TEXT PRIMARY KEY REFERENCES named_values(id) ON DELETE CASCADE,
+  document_json TEXT NOT NULL
+);
 CREATE UNIQUE INDEX IF NOT EXISTS ux_named_values_service_display_name
   ON named_values(service_id, display_name COLLATE NOCASE);
 CREATE TABLE IF NOT EXISTS backends (
@@ -841,9 +845,19 @@ func (s *Store) DeleteAPIVersionSet(id string) error {
 
 // UpsertNamedValue creates or replaces a named value.
 func (s *Store) UpsertNamedValue(v model.NamedValue) (model.NamedValue, error) {
+	sanitizeNamedValueDocument(v.Document)
+	document, err := json.Marshal(v.Document)
+	if err != nil {
+		return v, err
+	}
 	v.ETag = newETag()
 	tags, _ := json.Marshal(v.Tags)
-	_, err := s.db.Exec(`INSERT INTO named_values
+	tx, err := s.db.Begin()
+	if err != nil {
+		return v, err
+	}
+	defer tx.Rollback()
+	_, err = tx.Exec(`INSERT INTO named_values
         (id, service_id, name, display_name, value, tags_json, secret, key_vault_secret_id, key_vault_identity_id, etag)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET
           display_name=excluded.display_name, value=excluded.value, tags_json=excluded.tags_json,
@@ -851,22 +865,38 @@ func (s *Store) UpsertNamedValue(v model.NamedValue) (model.NamedValue, error) {
           key_vault_identity_id=excluded.key_vault_identity_id, etag=excluded.etag`,
 		v.ID(), v.ServiceID, v.Name, v.DisplayName, v.Value, string(tags), v.Secret,
 		v.KeyVaultSecretID, v.KeyVaultIdentityID, v.ETag)
-	return v, err
+	if err != nil {
+		return v, err
+	}
+	if _, err := tx.Exec(`INSERT INTO named_value_documents (named_value_id, document_json) VALUES (?, ?)
+	    ON CONFLICT(named_value_id) DO UPDATE SET document_json=excluded.document_json`, v.ID(), document); err != nil {
+		return v, err
+	}
+	return v, tx.Commit()
+}
+
+func sanitizeNamedValueDocument(document map[string]any) {
+	delete(document, "value")
+	properties, _ := document["properties"].(map[string]any)
+	delete(properties, "value")
 }
 
 // GetNamedValue finds one named value.
 func (s *Store) GetNamedValue(id string) (model.NamedValue, error) {
 	var v model.NamedValue
-	var tags string
+	var tags, document string
 	err := s.db.QueryRow(`SELECT service_id, name, display_name, value, tags_json, secret,
-        key_vault_secret_id, key_vault_identity_id, etag FROM named_values WHERE lower(id)=lower(?)`, id).
+		key_vault_secret_id, key_vault_identity_id, etag,
+		COALESCE((SELECT document_json FROM named_value_documents WHERE lower(named_value_id)=lower(named_values.id)), '{}')
+		FROM named_values WHERE lower(id)=lower(?)`, id).
 		Scan(&v.ServiceID, &v.Name, &v.DisplayName, &v.Value, &tags, &v.Secret,
-			&v.KeyVaultSecretID, &v.KeyVaultIdentityID, &v.ETag)
+			&v.KeyVaultSecretID, &v.KeyVaultIdentityID, &v.ETag, &document)
 	if errors.Is(err, sql.ErrNoRows) {
 		return model.NamedValue{}, ErrNotFound
 	}
 	if err == nil {
 		_ = json.Unmarshal([]byte(tags), &v.Tags)
+		_ = json.Unmarshal([]byte(document), &v.Document)
 	}
 	return v, err
 }
@@ -874,7 +904,9 @@ func (s *Store) GetNamedValue(id string) (model.NamedValue, error) {
 // ListNamedValues returns named values for a service in stable ID order.
 func (s *Store) ListNamedValues(serviceID string) ([]model.NamedValue, error) {
 	rows, err := s.db.Query(`SELECT service_id, name, display_name, value, tags_json, secret,
-        key_vault_secret_id, key_vault_identity_id, etag FROM named_values
+		key_vault_secret_id, key_vault_identity_id, etag,
+		COALESCE((SELECT document_json FROM named_value_documents WHERE lower(named_value_id)=lower(named_values.id)), '{}')
+		FROM named_values
         WHERE lower(service_id)=lower(?) ORDER BY id`, serviceID)
 	if err != nil {
 		return nil, err
@@ -883,12 +915,13 @@ func (s *Store) ListNamedValues(serviceID string) ([]model.NamedValue, error) {
 	values := make([]model.NamedValue, 0)
 	for rows.Next() {
 		var v model.NamedValue
-		var tags string
+		var tags, document string
 		if err := rows.Scan(&v.ServiceID, &v.Name, &v.DisplayName, &v.Value, &tags, &v.Secret,
-			&v.KeyVaultSecretID, &v.KeyVaultIdentityID, &v.ETag); err != nil {
+			&v.KeyVaultSecretID, &v.KeyVaultIdentityID, &v.ETag, &document); err != nil {
 			return nil, err
 		}
 		_ = json.Unmarshal([]byte(tags), &v.Tags)
+		_ = json.Unmarshal([]byte(document), &v.Document)
 		values = append(values, v)
 	}
 	return values, rows.Err()

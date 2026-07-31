@@ -571,7 +571,8 @@ func TestScanFunctionsRejectMalformedRows(t *testing.T) {
 		},
 		{
 			"named values",
-			`CREATE TABLE named_values (id, service_id, name, display_name, value, tags_json, secret, key_vault_secret_id, key_vault_identity_id, etag)`,
+			`CREATE TABLE named_values (id, service_id, name, display_name, value, tags_json, secret, key_vault_secret_id, key_vault_identity_id, etag);
+			 CREATE TABLE named_value_documents (named_value_id, document_json)`,
 			`INSERT INTO named_values VALUES ('id', 'service', NULL, '', '', '[]', 0, '', '', '')`,
 			func(db *sql.DB) error { _, err := (&Store{db: db}).ListNamedValues("service"); return err },
 		},
@@ -734,6 +735,57 @@ func TestScanFunctionsRejectMalformedRows(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestUpsertNamedValueTransactionErrors(t *testing.T) {
+	t.Run("document encoding", func(t *testing.T) {
+		st, err := Open("", clock.New())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer st.Close()
+		if _, err := st.UpsertNamedValue(model.NamedValue{Document: map[string]any{"bad": make(chan int)}}); err == nil {
+			t.Fatal("named value accepted an unsupported document")
+		}
+	})
+	t.Run("begin", func(t *testing.T) {
+		st, err := Open("", clock.New())
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = st.Close()
+		if _, err := st.UpsertNamedValue(model.NamedValue{}); err == nil {
+			t.Fatal("closed store accepted a named value")
+		}
+	})
+	t.Run("named-value row", func(t *testing.T) {
+		st, err := Open("", clock.New())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer st.Close()
+		if _, err := st.UpsertNamedValue(model.NamedValue{ServiceID: "/missing", Name: "value"}); err == nil {
+			t.Fatal("named value with a missing service was accepted")
+		}
+	})
+	t.Run("document row", func(t *testing.T) {
+		st, err := Open("", clock.New())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer st.Close()
+		service, _ := st.UpsertService(model.Service{Name: "svc"})
+		if _, err := st.db.Exec(`CREATE TRIGGER reject_named_value_document BEFORE INSERT ON named_value_documents BEGIN SELECT RAISE(FAIL, 'rejected'); END`); err != nil {
+			t.Fatal(err)
+		}
+		value := model.NamedValue{ServiceID: service.ID(), Name: "value"}
+		if _, err := st.UpsertNamedValue(value); err == nil {
+			t.Fatal("rejected named-value document was accepted")
+		}
+		if _, err := st.GetNamedValue(value.ID()); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("named-value transaction was not rolled back: %v", err)
+		}
+	})
 }
 
 func TestUpsertSubscriptionTransactionErrors(t *testing.T) {
@@ -1696,12 +1748,12 @@ func TestNamedValueLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	value, err := st.UpsertNamedValue(model.NamedValue{ServiceID: service.ID(), Name: "token", DisplayName: "Token", Value: "secret", Tags: []string{"auth"}, Secret: true})
-	if err != nil || value.ID() != service.ID()+"/namedValues/token" || value.ETag == "" {
+	value, err := st.UpsertNamedValue(model.NamedValue{ServiceID: service.ID(), Name: "token", DisplayName: "Token", Value: "secret", Tags: []string{"auth"}, Secret: true, Document: map[string]any{"value": "root-secret", "custom": true, "properties": map[string]any{"value": "nested-secret"}}})
+	if err != nil || value.ID() != service.ID()+"/namedValues/token" || value.ETag == "" || value.Document["value"] != nil || value.Document["custom"] != true {
 		t.Fatalf("upsert named value = %+v, %v", value, err)
 	}
 	got, err := st.GetNamedValue(strings.ToUpper(value.ID()))
-	if err != nil || got.Value != "secret" || len(got.Tags) != 1 || !got.Secret {
+	if err != nil || got.Value != "secret" || len(got.Tags) != 1 || !got.Secret || got.Document["value"] != nil || got.Document["properties"].(map[string]any)["value"] != nil {
 		t.Fatalf("get named value = %+v, %v", got, err)
 	}
 	values, err := st.ListNamedValues(service.ID())

@@ -1468,9 +1468,16 @@ func TestNamedValueLifecycle(t *testing.T) {
 	assertStatus(t, handler, http.MethodPut, path, `{`, http.StatusBadRequest)
 	assertStatus(t, handler, http.MethodPut, path, `{"properties":{"displayName":"Token"}}`, http.StatusBadRequest)
 	assertStatus(t, handler, http.MethodPut, path, `{"properties":{"displayName":"Invalid name","value":"value"}}`, http.StatusBadRequest)
-	assertStatus(t, handler, http.MethodPut, path, `{"properties":{"displayName":"Token","value":"value","secret":true,"tags":["auth"]}}`, http.StatusCreated)
+	assertStatus(t, handler, http.MethodPut, path, `{"value":"root-secret","customRoot":{"retained":true},"properties":{"displayName":"Token","value":"value","secret":true,"tags":["auth"],"customMetadata":{"keep":"one","remove":"old"}}}`, http.StatusCreated)
+	stored, err := st.GetNamedValue(model.NamedValue{ServiceID: serviceModel().ID(), Name: "token"}.ID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Document["value"] != nil || stored.Document["properties"].(map[string]any)["value"] != nil || stored.Document["properties"].(map[string]any)["customMetadata"] == nil {
+		t.Fatalf("stored named-value document = %#v", stored.Document)
+	}
 	response := request(t, handler, http.MethodGet, path, "")
-	if strings.Contains(response.Body.String(), `"value"`) || !strings.Contains(response.Body.String(), `"secret":true`) {
+	if strings.Contains(response.Body.String(), `"value"`) || !strings.Contains(response.Body.String(), `"secret":true`) || !strings.Contains(response.Body.String(), `"retained":true`) {
 		t.Fatalf("redacted named value = %s", response.Body.String())
 	}
 	assertStatus(t, handler, http.MethodHead, path, "", http.StatusOK)
@@ -1484,10 +1491,19 @@ func TestNamedValueLifecycle(t *testing.T) {
 	assertStatus(t, handler, http.MethodPost, basePath+"/namedValues/missing/listValue"+apiQuery, "", http.StatusNotFound)
 	assertStatus(t, handler, http.MethodPatch, basePath+"/namedValues/missing"+apiQuery, `{}`, http.StatusNotFound)
 	assertStatus(t, handler, http.MethodPatch, path, `{`, http.StatusBadRequest)
-	assertStatus(t, handler, http.MethodPatch, path, `{"properties":{"displayName":"Updated","value":"new","secret":false,"tags":["one","two"],"keyVault":{"secretIdentifier":"https://vault/secrets/name","identityClientId":"client"}}}`, http.StatusOK)
+	assertStatus(t, handler, http.MethodPatch, path, `{"properties":{"displayName":"Updated","value":"new","secret":false,"tags":["one","two"],"keyVault":{"secretIdentifier":"https://vault/secrets/name","identityClientId":"client"},"customMetadata":{"add":"two","remove":null}}}`, http.StatusOK)
+	assertStatus(t, handler, http.MethodPatch, path, `{"properties":{"displayName":null}}`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPatch, path, `{"properties":{"value":null,"tags":null,"secret":null,"keyVault":{"identityClientId":null}}}`, http.StatusOK)
+	assertStatus(t, handler, http.MethodPatch, path, `{"properties":{"keyVault":{"secretIdentifier":null}}}`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPatch, path, `{"properties":{"keyVault":null}}`, http.StatusBadRequest)
 	assertStatus(t, handler, http.MethodPost, basePath+"/namedValues/token/refreshSecret"+apiQuery, "", http.StatusOK)
 	list := request(t, handler, http.MethodGet, collection, "")
-	if !strings.Contains(list.Body.String(), `"count":1`) || !strings.Contains(list.Body.String(), `"secretIdentifier":"https://vault/secrets/name"`) {
+	var collectionDocument map[string]any
+	if err := json.Unmarshal(list.Body.Bytes(), &collectionDocument); err != nil {
+		t.Fatal(err)
+	}
+	listedProperties := collectionDocument["value"].([]any)[0].(map[string]any)["properties"].(map[string]any)
+	if collectionDocument["count"] != float64(1) || listedProperties["value"] != nil || !strings.Contains(list.Body.String(), `"secretIdentifier":"https://vault/secrets/name"`) || !strings.Contains(list.Body.String(), `"keep":"one"`) || !strings.Contains(list.Body.String(), `"add":"two"`) || strings.Contains(list.Body.String(), `"remove"`) {
 		t.Fatalf("named value list = %s", list.Body.String())
 	}
 	assertStatus(t, handler, http.MethodGet, basePath+"/namedValues/token/extra/path"+apiQuery, "", http.StatusNotFound)
@@ -1498,6 +1514,24 @@ func TestNamedValueLifecycle(t *testing.T) {
 	handler.Activate = nil
 	assertStatus(t, handler, http.MethodDelete, path, "", http.StatusNoContent)
 	assertStatus(t, handler, http.MethodDelete, path, "", http.StatusNoContent)
+}
+
+func TestNamedValueDocumentFallbacks(t *testing.T) {
+	wire := namedValueWire(model.NamedValue{Name: "invalid", Document: map[string]any{"properties": "invalid", "value": "secret"}})
+	if _, ok := wire["properties"].(map[string]any); !ok || wire["value"] != nil {
+		t.Fatalf("named-value wire = %#v", wire)
+	}
+
+	handler, st := testHandler(t)
+	seedService(t, st)
+	value := model.NamedValue{ServiceID: serviceModel().ID(), Name: "legacy", DisplayName: "Legacy", Value: "value"}
+	if _, err := st.UpsertNamedValue(value); err != nil {
+		t.Fatal(err)
+	}
+	response := request(t, handler, http.MethodPatch, basePath+"/namedValues/legacy"+apiQuery, `{"properties":{"customMetadata":{"hydrated":true}}}`)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"hydrated":true`) || strings.Contains(response.Body.String(), `"value"`) {
+		t.Fatalf("legacy named-value PATCH = %d %s", response.Code, response.Body.String())
+	}
 }
 
 func TestBackendLifecycle(t *testing.T) {

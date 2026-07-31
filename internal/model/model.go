@@ -98,6 +98,7 @@ type NamedValue struct {
 	KeyVaultSecretID   string
 	KeyVaultIdentityID string
 	ETag               string
+	Document           map[string]any
 }
 
 // ID returns the named value ARM resource ID.
