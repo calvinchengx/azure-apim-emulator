@@ -5,6 +5,7 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -20,6 +21,7 @@ const (
 	ActionSetHeader ActionKind = iota
 	ActionSetQueryParameter
 	ActionSetVariable
+	ActionSetBody
 	ActionSetBackend
 	ActionRewriteURI
 	ActionForward
@@ -73,6 +75,7 @@ type State struct {
 	StatusCode int
 	Reason     string
 	Body       string
+	BodySet    bool
 	Headers    http.Header
 	Variables  map[string]string
 }
@@ -256,6 +259,15 @@ func compileNode(item node, strict bool) (Action, bool, error) {
 			return unsupported(item.Name), true, nil
 		}
 		return Action{Kind: ActionSetVariable, Variable: item.Attrs["name"], Value: value}, true, nil
+	case "set-body":
+		value := strings.TrimSpace(item.Text)
+		if value == "" {
+			value = childText(item, "value")
+		}
+		if expression(value) {
+			return unsupported(item.Name), true, nil
+		}
+		return Action{Kind: ActionSetBody, Body: value}, true, nil
 	case "set-backend-service":
 		value, backendID := item.Attrs["base-url"], item.Attrs["backend-id"]
 		if (value == "") == (backendID == "") || expression(value) || expression(backendID) {
@@ -368,6 +380,16 @@ func Execute(actions []Action, state *State) error {
 				state.Variables = map[string]string{}
 			}
 			state.Variables[action.Variable] = action.Value
+		case ActionSetBody:
+			if state.Response == nil && state.Request != nil {
+				state.Request.Body = io.NopCloser(strings.NewReader(action.Body))
+				state.Request.ContentLength = int64(len(action.Body))
+				state.Request.GetBody = func() (io.ReadCloser, error) {
+					return io.NopCloser(strings.NewReader(action.Body)), nil
+				}
+			} else {
+				state.Body, state.BodySet = action.Body, true
+			}
 		case ActionSetBackend:
 			state.BackendURL = action.Value
 			state.BackendID = action.BackendID

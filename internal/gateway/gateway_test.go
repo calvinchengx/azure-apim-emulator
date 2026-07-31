@@ -610,6 +610,12 @@ func TestSuccessfulBackendAndOutboundReturn(t *testing.T) {
 	if recorder.Code != http.StatusCreated || recorder.Body.String() != "backend" || recorder.Header().Get("X-Backend") != "yes" || recorder.Header().Get("Connection") != "" {
 		t.Fatalf("backend response = %d %q %v", recorder.Code, recorder.Body.String(), recorder.Header())
 	}
+	route.Plan.Outbound = []policy.Action{{Kind: policy.ActionSetBody, Body: "rewritten"}}
+	recorder = httptest.NewRecorder()
+	runtime.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/items", nil))
+	if recorder.Code != http.StatusCreated || recorder.Body.String() != "rewritten" {
+		t.Fatalf("set-body response = %d %q", recorder.Code, recorder.Body.String())
+	}
 }
 
 func TestBackendAndOutboundPolicyFailures(t *testing.T) {

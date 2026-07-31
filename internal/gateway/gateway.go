@@ -372,7 +372,11 @@ func (r *Runtime) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	copyHeaders(w.Header(), response.Header)
 	copyHeaders(w.Header(), state.Headers)
 	w.WriteHeader(response.StatusCode)
-	_, _ = io.Copy(w, response.Body)
+	if state.BodySet {
+		_, _ = io.WriteString(w, state.Body)
+	} else {
+		_, _ = io.Copy(w, response.Body)
+	}
 }
 
 type diagnosticWriter struct {

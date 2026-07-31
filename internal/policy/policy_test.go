@@ -1,6 +1,7 @@
 package policy
 
 import (
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -96,6 +97,40 @@ func TestQueryParameterAndVariablePolicies(t *testing.T) {
 		if _, err := Compile(value, true); err == nil {
 			t.Fatal("strict mode should reject expression mutation")
 		}
+	}
+}
+
+func TestSetBodyPolicy(t *testing.T) {
+	plan, err := Compile(`<policies><inbound><set-body>request body</set-body></inbound><outbound><set-body><value>response body</value></set-body></outbound></policies>`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("old"))
+	state := &State{Request: request}
+	if err := Execute(plan.Inbound, state); err != nil {
+		t.Fatal(err)
+	}
+	body, err := io.ReadAll(request.Body)
+	if err != nil || string(body) != "request body" || request.ContentLength != int64(len("request body")) {
+		t.Fatalf("inbound body = %q, %v, length %d", body, err, request.ContentLength)
+	}
+	replayed, err := request.GetBody()
+	if err != nil {
+		t.Fatal(err)
+	}
+	replayBody, err := io.ReadAll(replayed)
+	if err != nil || string(replayBody) != "request body" {
+		t.Fatalf("replayed body = %q, %v", replayBody, err)
+	}
+	state.Response = &http.Response{StatusCode: http.StatusOK}
+	if err := Execute(plan.Outbound, state); err != nil {
+		t.Fatal(err)
+	}
+	if !state.BodySet || state.Body != "response body" {
+		t.Fatalf("outbound body = %+v", state)
+	}
+	if _, err := Compile(`<policies><inbound><set-body>@(context.Request.Body)</set-body></inbound></policies>`, true); err == nil {
+		t.Fatal("strict mode should reject set-body expression")
 	}
 }
 
