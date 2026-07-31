@@ -162,6 +162,32 @@ type Group struct {
 // ID returns the group ARM resource ID.
 func (v Group) ID() string { return v.ServiceID + "/groups/" + v.Name }
 
+// UserIdentity links a user to an identity provider account.
+type UserIdentity struct {
+	Provider string `json:"provider"`
+	ID       string `json:"id"`
+}
+
+// User is a developer account registered with an APIM service.
+type User struct {
+	ServiceID      string
+	Name           string
+	FirstName      string
+	LastName       string
+	Email          string
+	State          string
+	Note           string
+	Identities     []UserIdentity
+	RegistrationAt int64
+	Password       string
+	PrimaryKey     string
+	SecondaryKey   string
+	ETag           string
+}
+
+// ID returns the user ARM resource ID.
+func (v User) ID() string { return v.ServiceID + "/users/" + v.Name }
+
 // Operation is an HTTP operation belonging to an API.
 type Operation struct {
 	APIID       string

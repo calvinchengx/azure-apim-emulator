@@ -138,6 +138,19 @@ CREATE TABLE IF NOT EXISTS groups (
   name TEXT NOT NULL, display_name TEXT NOT NULL, description TEXT NOT NULL, type TEXT NOT NULL,
   external_id TEXT NOT NULL, built_in INTEGER NOT NULL, etag TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS users (
+  id TEXT PRIMARY KEY, service_id TEXT NOT NULL REFERENCES services(id) ON DELETE CASCADE,
+  name TEXT NOT NULL, first_name TEXT NOT NULL, last_name TEXT NOT NULL,
+  email TEXT NOT NULL COLLATE NOCASE, state TEXT NOT NULL, note TEXT NOT NULL,
+  identities_json TEXT NOT NULL, registration_at INTEGER NOT NULL, password TEXT NOT NULL,
+  primary_key TEXT NOT NULL, secondary_key TEXT NOT NULL, etag TEXT NOT NULL,
+  UNIQUE(service_id, email)
+);
+CREATE TABLE IF NOT EXISTS group_users (
+  group_id TEXT NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  PRIMARY KEY (group_id, user_id)
+);
 CREATE TABLE IF NOT EXISTS products (
   id TEXT PRIMARY KEY, service_id TEXT NOT NULL REFERENCES services(id) ON DELETE CASCADE,
   name TEXT NOT NULL, display_name TEXT NOT NULL, state TEXT NOT NULL,
@@ -895,6 +908,116 @@ func scanGroups(rows *sql.Rows, err error) ([]model.Group, error) {
 		if err := rows.Scan(&v.ServiceID, &v.Name, &v.DisplayName, &v.Description, &v.Type, &v.ExternalID, &v.BuiltIn, &v.ETag); err != nil {
 			return nil, err
 		}
+		values = append(values, v)
+	}
+	return values, rows.Err()
+}
+
+// UpsertUser creates or replaces a service user.
+func (s *Store) UpsertUser(v model.User) (model.User, error) {
+	if v.RegistrationAt == 0 {
+		v.RegistrationAt = s.Clock.Now()
+	}
+	if v.Password == "" {
+		v.Password = NewOpaqueID()
+	}
+	if v.PrimaryKey == "" {
+		v.PrimaryKey = NewOpaqueID()
+	}
+	if v.SecondaryKey == "" {
+		v.SecondaryKey = NewOpaqueID()
+	}
+	v.ETag = newETag()
+	identities, _ := json.Marshal(v.Identities)
+	_, err := s.db.Exec(`INSERT INTO users
+        (id, service_id, name, first_name, last_name, email, state, note, identities_json,
+         registration_at, password, primary_key, secondary_key, etag)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET
+          first_name=excluded.first_name, last_name=excluded.last_name, email=excluded.email,
+          state=excluded.state, note=excluded.note, identities_json=excluded.identities_json,
+          password=excluded.password, primary_key=excluded.primary_key, secondary_key=excluded.secondary_key,
+          etag=excluded.etag`, v.ID(), v.ServiceID, v.Name, v.FirstName, v.LastName, v.Email,
+		v.State, v.Note, identities, v.RegistrationAt, v.Password, v.PrimaryKey, v.SecondaryKey, v.ETag)
+	return v, err
+}
+
+// GetUser finds one service user.
+func (s *Store) GetUser(id string) (model.User, error) {
+	values, err := scanUsers(s.db.Query(`SELECT service_id, name, first_name, last_name, email, state, note,
+        identities_json, registration_at, password, primary_key, secondary_key, etag FROM users WHERE lower(id)=lower(?)`, id))
+	if err != nil {
+		return model.User{}, err
+	}
+	if len(values) == 0 {
+		return model.User{}, ErrNotFound
+	}
+	return values[0], nil
+}
+
+// ListUsers returns users for a service in stable ID order.
+func (s *Store) ListUsers(serviceID string) ([]model.User, error) {
+	return scanUsers(s.db.Query(`SELECT service_id, name, first_name, last_name, email, state, note,
+        identities_json, registration_at, password, primary_key, secondary_key, etag
+        FROM users WHERE lower(service_id)=lower(?) ORDER BY id`, serviceID))
+}
+
+// DeleteUser removes a user and its memberships.
+func (s *Store) DeleteUser(id string) error { return deleteScopedResource(s.db, "users", id) }
+
+// LinkGroupUser associates an existing user with an existing group.
+func (s *Store) LinkGroupUser(groupID, userID string) error {
+	_, err := s.db.Exec(`INSERT INTO group_users (group_id, user_id) VALUES (?, ?)
+        ON CONFLICT(group_id, user_id) DO NOTHING`, groupID, userID)
+	return err
+}
+
+// UnlinkGroupUser removes a group membership idempotently.
+func (s *Store) UnlinkGroupUser(groupID, userID string) error {
+	_, err := s.db.Exec(`DELETE FROM group_users WHERE lower(group_id)=lower(?) AND lower(user_id)=lower(?)`, groupID, userID)
+	return err
+}
+
+// HasGroupUser reports whether a membership exists.
+func (s *Store) HasGroupUser(groupID, userID string) (bool, error) {
+	var one int
+	err := s.db.QueryRow(`SELECT 1 FROM group_users WHERE lower(group_id)=lower(?) AND lower(user_id)=lower(?)`, groupID, userID).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+// ListGroupUsers returns users associated with a group.
+func (s *Store) ListGroupUsers(groupID string) ([]model.User, error) {
+	return scanUsers(s.db.Query(`SELECT users.service_id, users.name, users.first_name, users.last_name,
+        users.email, users.state, users.note, users.identities_json, users.registration_at,
+        users.password, users.primary_key, users.secondary_key, users.etag FROM users
+        JOIN group_users ON lower(group_users.user_id)=lower(users.id)
+        WHERE lower(group_users.group_id)=lower(?) ORDER BY users.id`, groupID))
+}
+
+// ListUserGroups returns groups associated with a user.
+func (s *Store) ListUserGroups(userID string) ([]model.Group, error) {
+	return scanGroups(s.db.Query(`SELECT groups.service_id, groups.name, groups.display_name, groups.description,
+        groups.type, groups.external_id, groups.built_in, groups.etag FROM groups
+        JOIN group_users ON lower(group_users.group_id)=lower(groups.id)
+        WHERE lower(group_users.user_id)=lower(?) ORDER BY groups.id`, userID))
+}
+
+func scanUsers(rows *sql.Rows, err error) ([]model.User, error) {
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	values := make([]model.User, 0)
+	for rows.Next() {
+		var v model.User
+		var identities string
+		if err := rows.Scan(&v.ServiceID, &v.Name, &v.FirstName, &v.LastName, &v.Email, &v.State,
+			&v.Note, &identities, &v.RegistrationAt, &v.Password, &v.PrimaryKey, &v.SecondaryKey, &v.ETag); err != nil {
+			return nil, err
+		}
+		_ = json.Unmarshal([]byte(identities), &v.Identities)
 		values = append(values, v)
 	}
 	return values, rows.Err()

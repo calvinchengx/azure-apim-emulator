@@ -473,6 +473,79 @@ func TestGroupAndProductAssociationBranches(t *testing.T) {
 	assertStatus(t, handler, http.MethodDelete, groupPath, "", http.StatusNoContent)
 }
 
+func TestUserAndGroupMembershipBranches(t *testing.T) {
+	handler, st := testHandler(t)
+	seedService(t, st)
+	if _, err := st.UpsertGroup(model.Group{ServiceID: serviceModel().ID(), Name: "partners", DisplayName: "Partners", Type: "custom"}); err != nil {
+		t.Fatal(err)
+	}
+	collectionPath := basePath + "/users" + apiQuery
+	userPath := basePath + "/users/calvin" + apiQuery
+	assertStatus(t, handler, http.MethodGet, collectionPath, "", http.StatusOK)
+	assertStatus(t, handler, http.MethodPost, collectionPath, "", http.StatusMethodNotAllowed)
+	assertStatus(t, handler, http.MethodGet, userPath, "", http.StatusNotFound)
+	assertStatus(t, handler, http.MethodPut, userPath, `{`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPut, userPath, `{"properties":{}}`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPut, userPath, `{"properties":{"firstName":"Calvin","lastName":"Cheng","email":"calvin@example.test","state":"invalid"}}`, http.StatusBadRequest)
+	body := `{"properties":{"firstName":"Calvin","lastName":"Cheng","email":"calvin@example.test","state":"active","password":"secret","note":"initial","identities":[{"provider":"Azure","id":"object"}]}}`
+	assertStatus(t, handler, http.MethodPut, userPath, body, http.StatusCreated)
+	assertStatus(t, handler, http.MethodPut, userPath, body, http.StatusOK)
+	assertStatus(t, handler, http.MethodPatch, basePath+"/users/missing"+apiQuery, `{}`, http.StatusNotFound)
+	assertStatus(t, handler, http.MethodPatch, userPath, `{`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPatch, userPath, `{"properties":{"firstName":"Updated","state":"blocked"}}`, http.StatusOK)
+	got := request(t, handler, http.MethodGet, userPath, "")
+	if !strings.Contains(got.Body.String(), `"firstName":"Updated"`) || !strings.Contains(got.Body.String(), `"provider":"Azure"`) || strings.Contains(got.Body.String(), "secret") || strings.Contains(got.Body.String(), "primaryKey") || got.Header().Get("ETag") == "" {
+		t.Fatalf("user GET = %d %s", got.Code, got.Body.String())
+	}
+	assertStatus(t, handler, http.MethodHead, userPath, "", http.StatusOK)
+	list := request(t, handler, http.MethodGet, collectionPath, "")
+	if !strings.Contains(list.Body.String(), `"count":1`) || strings.Contains(list.Body.String(), "secret") {
+		t.Fatalf("user list = %s", list.Body.String())
+	}
+	assertStatus(t, handler, http.MethodPost, userPath, "", http.StatusMethodNotAllowed)
+	assertStatus(t, handler, http.MethodGet, basePath+"/users/calvin/unknown"+apiQuery, "", http.StatusNotFound)
+
+	assertStatus(t, handler, http.MethodGet, basePath+"/users/calvin/groups"+apiQuery, "", http.StatusOK)
+	assertStatus(t, handler, http.MethodPost, basePath+"/users/calvin/groups"+apiQuery, "", http.StatusMethodNotAllowed)
+	groupUsers := basePath + "/groups/partners/users" + apiQuery
+	membership := basePath + "/groups/partners/users/calvin" + apiQuery
+	assertStatus(t, handler, http.MethodGet, groupUsers, "", http.StatusOK)
+	assertStatus(t, handler, http.MethodGet, basePath+"/groups/missing/users"+apiQuery, "", http.StatusNotFound)
+	assertStatus(t, handler, http.MethodPost, groupUsers, "", http.StatusMethodNotAllowed)
+	assertStatus(t, handler, http.MethodHead, membership, "", http.StatusNotFound)
+	assertStatus(t, handler, http.MethodPut, membership, "", http.StatusCreated)
+	assertStatus(t, handler, http.MethodPut, membership, "", http.StatusOK)
+	assertStatus(t, handler, http.MethodHead, membership, "", http.StatusNoContent)
+	if list := request(t, handler, http.MethodGet, groupUsers, ""); !strings.Contains(list.Body.String(), `"count":1`) {
+		t.Fatalf("group users = %s", list.Body.String())
+	}
+	if list := request(t, handler, http.MethodGet, basePath+"/users/calvin/groups"+apiQuery, ""); !strings.Contains(list.Body.String(), `"count":1`) {
+		t.Fatalf("user groups = %s", list.Body.String())
+	}
+	assertStatus(t, handler, http.MethodGet, membership, "", http.StatusMethodNotAllowed)
+	assertStatus(t, handler, http.MethodPut, basePath+"/groups/partners/users/missing"+apiQuery, "", http.StatusNotFound)
+
+	sso := request(t, handler, http.MethodPost, basePath+"/users/calvin/generateSsoUrl"+apiQuery, "")
+	if sso.Code != http.StatusOK || !strings.Contains(sso.Body.String(), "signin-sso") {
+		t.Fatalf("SSO URL = %d %s", sso.Code, sso.Body.String())
+	}
+	assertStatus(t, handler, http.MethodGet, basePath+"/users/calvin/generateSsoUrl"+apiQuery, "", http.StatusMethodNotAllowed)
+	tokenPath := basePath + "/users/calvin/token" + apiQuery
+	assertStatus(t, handler, http.MethodPost, tokenPath, `{`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPost, tokenPath, `{"properties":{"keyType":"invalid","expiry":"`+time.Now().Add(time.Hour).UTC().Format(time.RFC3339)+`"}}`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPost, tokenPath, `{"properties":{"keyType":"primary","expiry":"`+time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)+`"}}`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPost, tokenPath, `{"properties":{"keyType":"primary","expiry":"`+time.Now().Add(31*24*time.Hour).UTC().Format(time.RFC3339)+`"}}`, http.StatusBadRequest)
+	token := request(t, handler, http.MethodPost, tokenPath, `{"properties":{"keyType":"secondary","expiry":"`+time.Now().Add(time.Hour).UTC().Format(time.RFC3339)+`"}}`)
+	if token.Code != http.StatusOK || !strings.Contains(token.Body.String(), "SharedAccessSignature") || !strings.Contains(token.Body.String(), "skn=secondary") {
+		t.Fatalf("user token = %d %s", token.Code, token.Body.String())
+	}
+	assertStatus(t, handler, http.MethodGet, tokenPath, "", http.StatusMethodNotAllowed)
+	assertStatus(t, handler, http.MethodDelete, membership, "", http.StatusNoContent)
+	assertStatus(t, handler, http.MethodDelete, membership, "", http.StatusNoContent)
+	assertStatus(t, handler, http.MethodDelete, userPath, "", http.StatusNoContent)
+	assertStatus(t, handler, http.MethodDelete, userPath, "", http.StatusNoContent)
+}
+
 func TestAPIVersionSetLifecycle(t *testing.T) {
 	handler, st := testHandler(t)
 	seedService(t, st)
@@ -789,6 +862,13 @@ func TestClosedStoreWriteErrors(t *testing.T) {
 	assertStatus(t, handler, http.MethodDelete, basePath+"/groups/g"+apiQuery, "", http.StatusConflict)
 	assertStatus(t, handler, http.MethodGet, basePath+"/products/p/groups"+apiQuery, "", http.StatusConflict)
 	assertStatus(t, handler, http.MethodGet, basePath+"/products/p/groups/g"+apiQuery, "", http.StatusConflict)
+	assertStatus(t, handler, http.MethodGet, basePath+"/groups/g/users"+apiQuery, "", http.StatusConflict)
+	assertStatus(t, handler, http.MethodGet, basePath+"/users"+apiQuery, "", http.StatusConflict)
+	assertStatus(t, handler, http.MethodGet, basePath+"/users/u/groups"+apiQuery, "", http.StatusConflict)
+	assertStatus(t, handler, http.MethodPost, basePath+"/users/u/generateSsoUrl"+apiQuery, "", http.StatusConflict)
+	assertStatus(t, handler, http.MethodPost, basePath+"/users/u/token"+apiQuery, `{}`, http.StatusConflict)
+	assertStatus(t, handler, http.MethodPut, basePath+"/users/u"+apiQuery, `{"properties":{"firstName":"U","lastName":"S","email":"u@example.test"}}`, http.StatusConflict)
+	assertStatus(t, handler, http.MethodDelete, basePath+"/users/u"+apiQuery, "", http.StatusConflict)
 }
 
 func TestServiceStoreWriteErrors(t *testing.T) {
@@ -919,6 +999,60 @@ func TestGroupStoreErrors(t *testing.T) {
 	}
 	assertStatus(t, handler, http.MethodGet, basePath+"/products/p/groups"+apiQuery, "", http.StatusConflict)
 	assertStatus(t, handler, http.MethodGet, productGroupPath, "", http.StatusConflict)
+}
+
+func TestUserStoreErrors(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(dir, clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	seedService(t, st)
+	group, err := st.UpsertGroup(model.Group{ServiceID: serviceModel().ID(), Name: "g", DisplayName: "G", Type: "custom"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	user, err := st.UpsertUser(model.User{ServiceID: serviceModel().ID(), Name: "u", FirstName: "U", LastName: "S", Email: "u@example.test", State: "active"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", filepath.Join(dir, "azure-apim-emulator.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	handler := &Handler{Store: st, Auth: auth.AllowAll{}}
+	userPath := basePath + "/users/u" + apiQuery
+	membership := basePath + "/groups/g/users/u" + apiQuery
+	if _, err := db.Exec(`CREATE TRIGGER reject_user_write BEFORE INSERT ON users BEGIN SELECT RAISE(FAIL, 'rejected'); END`); err != nil {
+		t.Fatal(err)
+	}
+	assertStatus(t, handler, http.MethodPut, userPath, `{"properties":{"firstName":"U","lastName":"S","email":"u@example.test"}}`, http.StatusConflict)
+	if _, err := db.Exec(`DROP TRIGGER reject_user_write; CREATE TRIGGER reject_user_delete BEFORE DELETE ON users BEGIN SELECT RAISE(FAIL, 'rejected'); END`); err != nil {
+		t.Fatal(err)
+	}
+	assertStatus(t, handler, http.MethodDelete, userPath, "", http.StatusConflict)
+	if _, err := db.Exec(`DROP TRIGGER reject_user_delete; CREATE TRIGGER reject_membership_insert BEFORE INSERT ON group_users BEGIN SELECT RAISE(FAIL, 'rejected'); END`); err != nil {
+		t.Fatal(err)
+	}
+	assertStatus(t, handler, http.MethodPut, membership, "", http.StatusConflict)
+	if _, err := db.Exec(`DROP TRIGGER reject_membership_insert`); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.LinkGroupUser(group.ID(), user.ID()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE TRIGGER reject_membership_delete BEFORE DELETE ON group_users BEGIN SELECT RAISE(FAIL, 'rejected'); END`); err != nil {
+		t.Fatal(err)
+	}
+	assertStatus(t, handler, http.MethodDelete, membership, "", http.StatusConflict)
+	if _, err := db.Exec(`DROP TRIGGER reject_membership_delete; DROP TABLE group_users`); err != nil {
+		t.Fatal(err)
+	}
+	assertStatus(t, handler, http.MethodGet, basePath+"/groups/g/users"+apiQuery, "", http.StatusConflict)
+	assertStatus(t, handler, http.MethodHead, membership, "", http.StatusConflict)
+	assertStatus(t, handler, http.MethodGet, basePath+"/users/u/groups"+apiQuery, "", http.StatusConflict)
 }
 
 func TestAbsoluteAndOperationHelpers(t *testing.T) {

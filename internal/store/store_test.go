@@ -349,6 +349,15 @@ func TestClosedStoreErrors(t *testing.T) {
 			_, err := st.ListProductGroups("product")
 			return err
 		},
+		"upsert user":       func() error { _, err := st.UpsertUser(model.User{}); return err },
+		"get user":          func() error { _, err := st.GetUser("user"); return err },
+		"list users":        func() error { _, err := st.ListUsers("service"); return err },
+		"delete user":       func() error { return st.DeleteUser("user") },
+		"link group user":   func() error { return st.LinkGroupUser("group", "user") },
+		"unlink group user": func() error { return st.UnlinkGroupUser("group", "user") },
+		"has group user":    func() error { _, err := st.HasGroupUser("group", "user"); return err },
+		"list group users":  func() error { _, err := st.ListGroupUsers("group"); return err },
+		"list user groups":  func() error { _, err := st.ListUserGroups("user"); return err },
 		"runtime": func() error {
 			_, _, _, _, _, _, _, err := st.RuntimeData()
 			return err
@@ -473,6 +482,20 @@ func TestScanFunctionsRejectMalformedRows(t *testing.T) {
 			`INSERT INTO groups VALUES ('group', 'service', NULL, '', '', '', '', 0, '');
 			 INSERT INTO product_groups VALUES ('product', 'group')`,
 			func(db *sql.DB) error { _, err := (&Store{db: db}).ListProductGroups("product"); return err },
+		},
+		{
+			"users",
+			`CREATE TABLE users (service_id, name, first_name, last_name, email, state, note, identities_json, registration_at, password, primary_key, secondary_key, etag)`,
+			`INSERT INTO users VALUES ('service', NULL, '', '', '', '', '', '[]', 0, '', '', '', '')`,
+			func(db *sql.DB) error { _, err := (&Store{db: db}).ListUsers("service"); return err },
+		},
+		{
+			"group users",
+			`CREATE TABLE users (id, service_id, name, first_name, last_name, email, state, note, identities_json, registration_at, password, primary_key, secondary_key, etag);
+			 CREATE TABLE group_users (group_id, user_id)`,
+			`INSERT INTO users VALUES ('user', 'service', NULL, '', '', '', '', '', '[]', 0, '', '', '', '');
+			 INSERT INTO group_users VALUES ('group', 'user')`,
+			func(db *sql.DB) error { _, err := (&Store{db: db}).ListGroupUsers("group"); return err },
 		},
 		{
 			"products",
@@ -655,6 +678,83 @@ func TestGroupAndProductAssociations(t *testing.T) {
 	}
 	if err := st.DeleteGroup(group.ID()); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("second group delete = %v", err)
+	}
+}
+
+func TestUserAndGroupMemberships(t *testing.T) {
+	st, err := Open("", clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	service, err := st.UpsertService(model.Service{Name: "svc"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	group, err := st.UpsertGroup(model.Group{ServiceID: service.ID(), Name: "partners", DisplayName: "Partners", Type: "custom"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	user := model.User{ServiceID: service.ID(), Name: "calvin", FirstName: "Calvin", LastName: "Cheng", Email: "calvin@example.test", State: "active", Identities: []model.UserIdentity{{Provider: "Azure", ID: "object"}}}
+	user, err = st.UpsertUser(user)
+	if err != nil || user.ETag == "" || user.RegistrationAt == 0 || user.Password == "" || user.PrimaryKey == "" || user.SecondaryKey == "" {
+		t.Fatalf("UpsertUser = %+v, %v", user, err)
+	}
+	updated := user
+	updated.FirstName, updated.Note = "Updated", "note"
+	updated, err = st.UpsertUser(updated)
+	if err != nil || updated.FirstName != "Updated" || updated.RegistrationAt != user.RegistrationAt || updated.PrimaryKey != user.PrimaryKey {
+		t.Fatalf("updated user = %+v, %v", updated, err)
+	}
+	got, err := st.GetUser(strings.ToUpper(user.ID()))
+	if err != nil || len(got.Identities) != 1 || got.Identities[0].ID != "object" {
+		t.Fatalf("GetUser = %+v, %v", got, err)
+	}
+	if _, err := st.GetUser("/missing"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing user = %v", err)
+	}
+	if users, err := st.ListUsers(strings.ToUpper(service.ID())); err != nil || len(users) != 1 {
+		t.Fatalf("ListUsers = %+v, %v", users, err)
+	}
+	duplicate := model.User{ServiceID: service.ID(), Name: "duplicate", FirstName: "D", LastName: "U", Email: strings.ToUpper(user.Email), State: "active"}
+	if _, err := st.UpsertUser(duplicate); err == nil {
+		t.Fatal("duplicate email was accepted")
+	}
+	if err := st.LinkGroupUser(group.ID(), user.ID()); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.LinkGroupUser(group.ID(), user.ID()); err != nil {
+		t.Fatalf("repeated link = %v", err)
+	}
+	if exists, err := st.HasGroupUser(strings.ToUpper(group.ID()), strings.ToUpper(user.ID())); err != nil || !exists {
+		t.Fatalf("membership = %v, %v", exists, err)
+	}
+	if exists, err := st.HasGroupUser(group.ID(), "/missing"); err != nil || exists {
+		t.Fatalf("missing membership = %v, %v", exists, err)
+	}
+	if users, err := st.ListGroupUsers(group.ID()); err != nil || len(users) != 1 {
+		t.Fatalf("group users = %+v, %v", users, err)
+	}
+	if groups, err := st.ListUserGroups(user.ID()); err != nil || len(groups) != 1 || groups[0].Name != group.Name {
+		t.Fatalf("user groups = %+v, %v", groups, err)
+	}
+	if err := st.UnlinkGroupUser(group.ID(), user.ID()); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.UnlinkGroupUser(group.ID(), user.ID()); err != nil {
+		t.Fatalf("repeated unlink = %v", err)
+	}
+	if err := st.LinkGroupUser(group.ID(), user.ID()); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.DeleteUser(user.ID()); err != nil {
+		t.Fatal(err)
+	}
+	if users, err := st.ListGroupUsers(group.ID()); err != nil || len(users) != 0 {
+		t.Fatalf("membership survived user deletion: %+v, %v", users, err)
+	}
+	if err := st.DeleteUser(user.ID()); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("second delete = %v", err)
 	}
 }
 

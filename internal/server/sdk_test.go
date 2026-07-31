@@ -394,6 +394,76 @@ func TestGoManagementSDKConfiguresProtectedGateway(t *testing.T) {
 	if _, err := productGroupClient.CreateOrUpdate(ctx, defaultResourceGroup, "emulator", "go-sdk-product", "go-sdk-partners", nil); err != nil {
 		t.Fatal(err)
 	}
+	userClient, err := armapimanagement.NewUserClient(defaultSubscription, credential, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstName, lastName, email, password := "Go", "Developer", "go-developer@example.test", "local-password"
+	userState := armapimanagement.UserStateActive
+	identityProvider, identityID := "Azure", "go-object"
+	createdUser, err := userClient.CreateOrUpdate(ctx, defaultResourceGroup, "emulator", "go-sdk-user", armapimanagement.UserCreateParameters{
+		Properties: &armapimanagement.UserCreateParameterProperties{FirstName: &firstName, LastName: &lastName, Email: &email, Password: &password, State: &userState, Identities: []*armapimanagement.UserIdentityContract{{Provider: &identityProvider, ID: &identityID}}},
+	}, nil)
+	if err != nil || createdUser.Properties == nil || createdUser.Properties.RegistrationDate == nil || createdUser.Properties.Email == nil || *createdUser.Properties.Email != email {
+		t.Fatalf("user create = %+v, %v", createdUser, err)
+	}
+	userNote := "Updated by the Go SDK"
+	updatedUser, err := userClient.Update(ctx, defaultResourceGroup, "emulator", "go-sdk-user", "*", armapimanagement.UserUpdateParameters{
+		Properties: &armapimanagement.UserUpdateParametersProperties{Note: &userNote},
+	}, nil)
+	if err != nil || updatedUser.Properties == nil || updatedUser.Properties.Note == nil || *updatedUser.Properties.Note != userNote {
+		t.Fatalf("user update = %+v, %v", updatedUser, err)
+	}
+	if gotUser, err := userClient.Get(ctx, defaultResourceGroup, "emulator", "go-sdk-user", nil); err != nil || gotUser.Properties == nil || len(gotUser.Properties.Identities) != 1 || gotUser.Properties.Identities[0].ID == nil || *gotUser.Properties.Identities[0].ID != identityID {
+		t.Fatalf("user GET = %+v, %v", gotUser, err)
+	}
+	if entityTag, err := userClient.GetEntityTag(ctx, defaultResourceGroup, "emulator", "go-sdk-user", nil); err != nil || entityTag.ETag == nil {
+		t.Fatalf("user ETag = %+v, %v", entityTag, err)
+	}
+	if page, err := userClient.NewListByServicePager(defaultResourceGroup, "emulator", nil).NextPage(ctx); err != nil || len(page.Value) != 1 {
+		t.Fatalf("user service page = %+v, %v", page, err)
+	}
+	if sso, err := userClient.GenerateSsoURL(ctx, defaultResourceGroup, "emulator", "go-sdk-user", nil); err != nil || sso.Value == nil || !strings.Contains(*sso.Value, "signin-sso") {
+		t.Fatalf("user SSO URL = %+v, %v", sso, err)
+	}
+	tokenExpiry := time.Now().Add(time.Hour).UTC()
+	keyType := armapimanagement.KeyTypeSecondary
+	if token, err := userClient.GetSharedAccessToken(ctx, defaultResourceGroup, "emulator", "go-sdk-user", armapimanagement.UserTokenParameters{Properties: &armapimanagement.UserTokenParameterProperties{Expiry: &tokenExpiry, KeyType: &keyType}}, nil); err != nil || token.Value == nil || !strings.Contains(*token.Value, "skn=secondary") {
+		t.Fatalf("user shared-access token = %+v, %v", token, err)
+	}
+	temporaryEmail := "temporary@example.test"
+	if _, err := userClient.CreateOrUpdate(ctx, defaultResourceGroup, "emulator", "temporary", armapimanagement.UserCreateParameters{Properties: &armapimanagement.UserCreateParameterProperties{FirstName: &firstName, LastName: &lastName, Email: &temporaryEmail}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := userClient.Delete(ctx, defaultResourceGroup, "emulator", "temporary", "*", nil); err != nil {
+		t.Fatal(err)
+	}
+	groupUserClient, err := armapimanagement.NewGroupUserClient(defaultSubscription, credential, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if linkedUser, err := groupUserClient.Create(ctx, defaultResourceGroup, "emulator", "go-sdk-partners", "go-sdk-user", nil); err != nil || linkedUser.Name == nil || *linkedUser.Name != "go-sdk-user" {
+		t.Fatalf("group user create = %+v, %v", linkedUser, err)
+	}
+	if _, err := groupUserClient.CheckEntityExists(ctx, defaultResourceGroup, "emulator", "go-sdk-partners", "go-sdk-user", nil); err != nil {
+		t.Fatal(err)
+	}
+	if page, err := groupUserClient.NewListPager(defaultResourceGroup, "emulator", "go-sdk-partners", nil).NextPage(ctx); err != nil || len(page.Value) != 1 {
+		t.Fatalf("group user page = %+v, %v", page, err)
+	}
+	userGroupClient, err := armapimanagement.NewUserGroupClient(defaultSubscription, credential, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if page, err := userGroupClient.NewListPager(defaultResourceGroup, "emulator", "go-sdk-user", nil).NextPage(ctx); err != nil || len(page.Value) != 1 {
+		t.Fatalf("user group page = %+v, %v", page, err)
+	}
+	if _, err := groupUserClient.Delete(ctx, defaultResourceGroup, "emulator", "go-sdk-partners", "go-sdk-user", nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := groupUserClient.Create(ctx, defaultResourceGroup, "emulator", "go-sdk-partners", "go-sdk-user", nil); err != nil {
+		t.Fatal(err)
+	}
 	tagClient, err := armapimanagement.NewTagClient(defaultSubscription, credential, options)
 	if err != nil {
 		t.Fatal(err)
