@@ -157,6 +157,9 @@ func validateCollectionSelectors(query url.Values, rt route) *collectionSelector
 		if !allowed[name] {
 			return &collectionSelectorError{target: name, message: fmt.Sprintf("The query parameter %s is not supported for this operation.", name)}
 		}
+		if name == "scope" && (len(query[name]) != 1 || !oneOf(strings.ToLower(query.Get(name)), "apis", "operations", "products")) {
+			return &collectionSelectorError{target: name, message: "scope must be one of apis, operations, or products."}
+		}
 		if oneOf(name, "expandGroups", "expandApiVersionSet", "isKeyVaultRefreshFailed") {
 			values := query[name]
 			if len(values) != 1 || !oneOf(strings.ToLower(values[0]), "true", "false") {
@@ -175,6 +178,21 @@ func (h *Handler) applyCollectionSelectors(values []any, query url.Values, rt ro
 		if err != nil {
 			return nil, err
 		}
+	}
+	if key == "tags" && query.Get("scope") != "" {
+		serviceID := rt.ServiceName
+		if rt.SubscriptionID != "" || rt.ResourceGroup != "" {
+			serviceID = "/subscriptions/" + rt.SubscriptionID + "/resourceGroups/" + rt.ResourceGroup + "/providers/Microsoft.ApiManagement/service/" + rt.ServiceName
+		}
+		tags, err := h.Store.ListTagsByScope(serviceID, query.Get("scope"))
+		if err != nil {
+			return nil, err
+		}
+		filtered := make([]any, 0, len(tags))
+		for _, tag := range tags {
+			filtered = append(filtered, tagWire(tag))
+		}
+		values = filtered
 	}
 	if key == "apis" && query.Get("expandApiVersionSet") == "true" {
 		for _, value := range values {

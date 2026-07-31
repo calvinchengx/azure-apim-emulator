@@ -405,9 +405,52 @@ func TestCollectionSelectors(t *testing.T) {
 	if filtered.Code != http.StatusOK || !strings.Contains(filtered.Body.String(), `"count":1`) || !strings.Contains(filtered.Body.String(), `"name":"starter"`) {
 		t.Fatalf("product tag selector = %d %s", filtered.Code, filtered.Body.String())
 	}
+	api, err := st.UpsertAPI(model.API{ServiceID: serviceModel().ID(), Name: "scoped-api", DisplayName: "Scoped API"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	operation, err := st.UpsertOperation(model.Operation{APIID: api.ID(), Name: "scoped-operation", DisplayName: "Scoped Operation"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, value := range []model.Tag{{ServiceID: serviceModel().ID(), Name: "api-scope", DisplayName: "API scope"}, {ServiceID: serviceModel().ID(), Name: "operation-scope", DisplayName: "Operation scope"}, {ServiceID: serviceModel().ID(), Name: "product-scope", DisplayName: "Product scope"}} {
+		created, err := st.UpsertTag(value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resourceID := api.ID()
+		if created.Name == "operation-scope" {
+			resourceID = operation.APIID + "/operations/" + operation.Name
+		} else if created.Name == "product-scope" {
+			resourceID = serviceModel().ID() + "/products/starter"
+		}
+		if err := st.AssignTag(resourceID, created.ID()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tags, err := st.ListTags(serviceModel().ID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	apiScoped, err := handler.applyCollectionSelectors([]any{tagWire(tags[0]), tagWire(tags[1]), tagWire(tags[2])}, url.Values{"scope": {"apis"}}, route{ServiceName: "svc", SubscriptionID: "sub", ResourceGroup: "rg", Tail: []string{"tags"}})
+	if err != nil || len(apiScoped) != 1 || resourceName(apiScoped[0]) != "api-scope" {
+		t.Fatalf("API tag scope = %#v, %v", apiScoped, err)
+	}
+	operationScoped, err := handler.applyCollectionSelectors([]any{tagWire(tags[0]), tagWire(tags[1]), tagWire(tags[2])}, url.Values{"scope": {"operations"}}, route{ServiceName: "svc", SubscriptionID: "sub", ResourceGroup: "rg", Tail: []string{"tags"}})
+	if err != nil || len(operationScoped) != 1 || resourceName(operationScoped[0]) != "operation-scope" {
+		t.Fatalf("operation tag scope = %#v, %v", operationScoped, err)
+	}
+	productScoped, err := handler.applyCollectionSelectors([]any{tagWire(tags[0]), tagWire(tags[1]), tagWire(tags[2])}, url.Values{"scope": {"products"}}, route{ServiceName: "svc", SubscriptionID: "sub", ResourceGroup: "rg", Tail: []string{"tags"}})
+	if err != nil || len(productScoped) != 2 || !containsResourceName(productScoped, "product-scope") {
+		t.Fatalf("product tag scope = %#v, %v", productScoped, err)
+	}
+	if _, err := handler.applyCollectionSelectors([]any{tagWire(tags[0])}, url.Values{"scope": {"invalid"}}, route{ServiceName: "svc", SubscriptionID: "sub", ResourceGroup: "rg", Tail: []string{"tags"}}); err == nil {
+		t.Fatal("unsupported tag scope was accepted")
+	}
 	for _, path := range []string{
 		basePath + "/products?api-version=2024-05-01&expandGroups=maybe",
 		basePath + "/tags?api-version=2024-05-01&tags=gateway",
+		basePath + "/tags?api-version=2024-05-01&scope=invalid",
 	} {
 		response := request(t, handler, http.MethodGet, path, "")
 		if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "InvalidQueryParameterValue") {
@@ -450,6 +493,21 @@ func TestCollectionSelectors(t *testing.T) {
 		t.Fatalf("closed store response = %d %s", target.Code, target.Body.String())
 	}
 	_ = st
+}
+
+func resourceName(value any) string {
+	resource, _ := value.(map[string]any)
+	name, _ := resource["name"].(string)
+	return name
+}
+
+func containsResourceName(values []any, want string) bool {
+	for _, value := range values {
+		if resourceName(value) == want {
+			return true
+		}
+	}
+	return false
 }
 
 func TestCollectionSelectorExpansion(t *testing.T) {

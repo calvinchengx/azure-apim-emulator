@@ -1134,6 +1134,34 @@ func (s *Store) ListTags(serviceID string) ([]model.Tag, error) {
 	    FROM tags WHERE lower(service_id)=lower(?) ORDER BY id`, serviceID))
 }
 
+// ListTagsByScope returns tags associated with resources in one APIM scope.
+func (s *Store) ListTagsByScope(serviceID, scope string) ([]model.Tag, error) {
+	scope = strings.ToLower(scope)
+	resource := ""
+	where := ""
+	switch strings.ToLower(scope) {
+	case "apis":
+		where = "lower(resource_tags.resource_id) LIKE lower(?) AND lower(resource_tags.resource_id) NOT LIKE lower(?)"
+		resource = serviceID + "/apis/%"
+	case "operations":
+		where = "lower(resource_tags.resource_id) LIKE lower(?)"
+		resource = serviceID + "/apis/%/operations/%"
+	case "products":
+		where = "lower(resource_tags.resource_id) LIKE lower(?)"
+		resource = serviceID + "/products/%"
+	default:
+		return nil, fmt.Errorf("unsupported tag scope %q", scope)
+	}
+	args := []any{serviceID, resource}
+	if scope == "apis" {
+		args = append(args, serviceID+"/apis/%/operations/%")
+	}
+	return scanTags(s.db.Query(`SELECT DISTINCT tags.service_id, tags.name, tags.display_name, tags.etag,
+	    COALESCE((SELECT document_json FROM tag_documents WHERE lower(tag_id)=lower(tags.id)), '{}')
+	    FROM tags JOIN resource_tags ON lower(resource_tags.tag_id)=lower(tags.id)
+	    WHERE lower(tags.service_id)=lower(?) AND `+where+` ORDER BY tags.id`, args...))
+}
+
 // DeleteTag removes a tag and all associations.
 func (s *Store) DeleteTag(id string) error { return deleteScopedResource(s.db, "tags", id) }
 
