@@ -264,6 +264,19 @@ func TestClosedStoreErrors(t *testing.T) {
 			_, err := st.GetPolicy("policy")
 			return err
 		},
+		"upsert named value": func() error {
+			_, err := st.UpsertNamedValue(model.NamedValue{})
+			return err
+		},
+		"get named value": func() error {
+			_, err := st.GetNamedValue("named")
+			return err
+		},
+		"list named values": func() error {
+			_, err := st.ListNamedValues("service")
+			return err
+		},
+		"delete named value": func() error { return st.DeleteNamedValue("named") },
 		"runtime": func() error {
 			_, _, _, _, _, _, _, err := st.RuntimeData()
 			return err
@@ -324,6 +337,12 @@ func TestScanFunctionsRejectMalformedRows(t *testing.T) {
 			`CREATE TABLE api_version_sets (id, service_id, name, display_name, versioning_scheme, version_header_name, version_query_name, description, etag)`,
 			`INSERT INTO api_version_sets VALUES ('id', 'service', NULL, '', '', '', '', '', '')`,
 			func(db *sql.DB) error { _, err := (&Store{db: db}).ListAPIVersionSets("service"); return err },
+		},
+		{
+			"named values",
+			`CREATE TABLE named_values (id, service_id, name, display_name, value, tags_json, secret, key_vault_secret_id, key_vault_identity_id, etag)`,
+			`INSERT INTO named_values VALUES ('id', 'service', NULL, '', '', '[]', 0, '', '', '')`,
+			func(db *sql.DB) error { _, err := (&Store{db: db}).ListNamedValues("service"); return err },
 		},
 		{
 			"releases",
@@ -654,6 +673,42 @@ func TestAPIVersionSetOwnership(t *testing.T) {
 	}
 	if _, err := st.UpsertAPI(model.API{ServiceID: other.ID(), Name: "api", Version: "v1", VersionSetID: versionSet.ID()}); !errors.Is(err, ErrConflict) {
 		t.Fatalf("cross-service version set = %v", err)
+	}
+}
+
+func TestNamedValueLifecycle(t *testing.T) {
+	st, err := Open("", clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	service, err := st.UpsertService(model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "named-values"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	value, err := st.UpsertNamedValue(model.NamedValue{ServiceID: service.ID(), Name: "token", DisplayName: "Token", Value: "secret", Tags: []string{"auth"}, Secret: true})
+	if err != nil || value.ID() != service.ID()+"/namedValues/token" || value.ETag == "" {
+		t.Fatalf("upsert named value = %+v, %v", value, err)
+	}
+	got, err := st.GetNamedValue(strings.ToUpper(value.ID()))
+	if err != nil || got.Value != "secret" || len(got.Tags) != 1 || !got.Secret {
+		t.Fatalf("get named value = %+v, %v", got, err)
+	}
+	values, err := st.ListNamedValues(service.ID())
+	if err != nil || len(values) != 1 {
+		t.Fatalf("list named values = %+v, %v", values, err)
+	}
+	if _, err := st.UpsertNamedValue(model.NamedValue{ServiceID: service.ID(), Name: "duplicate", DisplayName: "TOKEN", Value: "duplicate"}); err == nil {
+		t.Fatal("duplicate named-value display name should fail")
+	}
+	if err := st.DeleteNamedValue(value.ID()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.GetNamedValue(value.ID()); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing named value error = %v", err)
+	}
+	if err := st.DeleteNamedValue(value.ID()); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("second delete error = %v", err)
 	}
 }
 

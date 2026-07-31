@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 )
 
 var supportedVersions = map[string]bool{"2021-08-01": true, "2022-08-01": true, "2024-05-01": true}
+var namedValueDisplayName = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 
 // Handler serves the P0 APIM ARM resources.
 type Handler struct {
@@ -52,6 +54,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.api(w, r, parsed)
 	case "apiVersionSets":
 		h.apiVersionSet(w, r, parsed)
+	case "namedValues":
+		h.namedValue(w, r, parsed)
 	case "products":
 		h.product(w, r, parsed)
 	case "subscriptions":
@@ -631,6 +635,160 @@ func validateAPIVersionSet(value model.APIVersionSet) error {
 	return nil
 }
 
+type namedValuePayload struct {
+	Properties struct {
+		DisplayName *string   `json:"displayName"`
+		Value       *string   `json:"value"`
+		Tags        *[]string `json:"tags"`
+		Secret      *bool     `json:"secret"`
+		KeyVault    *struct {
+			SecretIdentifier *string `json:"secretIdentifier"`
+			IdentityClientID *string `json:"identityClientId"`
+		} `json:"keyVault"`
+	} `json:"properties"`
+}
+
+func (h *Handler) namedValue(w http.ResponseWriter, r *http.Request, rt route) {
+	service := model.Service{SubscriptionID: rt.SubscriptionID, ResourceGroup: rt.ResourceGroup, Name: rt.ServiceName}
+	if len(rt.Tail) == 1 {
+		if r.Method != http.MethodGet {
+			methodNotAllowed(w)
+			return
+		}
+		values, err := h.Store.ListNamedValues(service.ID())
+		if err != nil {
+			h.storeError(w, err, service.ID())
+			return
+		}
+		resources := make([]map[string]any, 0, len(values))
+		for _, value := range values {
+			resources = append(resources, namedValueWire(value))
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"value": resources, "count": len(resources)})
+		return
+	}
+	if len(rt.Tail) < 2 || len(rt.Tail) > 3 {
+		writeError(w, http.StatusNotFound, "ResourceNotFound", "The requested named value resource was not found.", r.URL.Path)
+		return
+	}
+	value := model.NamedValue{ServiceID: service.ID(), Name: rt.Tail[1]}
+	if len(rt.Tail) == 3 {
+		h.namedValueAction(w, r, value, rt.Tail[2])
+		return
+	}
+	switch r.Method {
+	case http.MethodGet, http.MethodHead:
+		got, err := h.Store.GetNamedValue(value.ID())
+		if err != nil {
+			h.storeError(w, err, value.ID())
+			return
+		}
+		if r.Method == http.MethodHead {
+			w.Header().Set("ETag", got.ETag)
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		writeResource(w, http.StatusOK, namedValueWire(got), got.ETag)
+	case http.MethodPut, http.MethodPatch:
+		existing, existingErr := h.Store.GetNamedValue(value.ID())
+		if existingErr != nil && !errors.Is(existingErr, store.ErrNotFound) {
+			h.storeError(w, existingErr, value.ID())
+			return
+		}
+		if r.Method == http.MethodPatch {
+			if existingErr != nil {
+				h.storeError(w, existingErr, value.ID())
+				return
+			}
+			value = existing
+		}
+		var body namedValuePayload
+		if err := decode(r, &body); err != nil {
+			writeError(w, http.StatusBadRequest, "InvalidRequestContent", err.Error(), "")
+			return
+		}
+		applyNamedValuePayload(&value, body)
+		if value.DisplayName == "" || len(value.DisplayName) > 256 || !namedValueDisplayName.MatchString(value.DisplayName) ||
+			(strings.TrimSpace(value.Value) == "" && value.KeyVaultSecretID == "") || len(value.Value) > 4096 {
+			writeError(w, http.StatusBadRequest, "ValidationError", "displayName must be a valid named-value identifier and either value or keyVault.secretIdentifier is required.", "properties")
+			return
+		}
+		got, err := h.Store.UpsertNamedValue(value)
+		if err != nil {
+			h.storeError(w, err, value.ID())
+			return
+		}
+		if err := h.activate(); err != nil {
+			writeError(w, http.StatusBadRequest, "ConfigurationInvalid", err.Error(), value.ID())
+			return
+		}
+		status := http.StatusOK
+		if r.Method == http.MethodPut && errors.Is(existingErr, store.ErrNotFound) {
+			status = http.StatusCreated
+		}
+		writeResource(w, status, namedValueWire(got), got.ETag)
+	case http.MethodDelete:
+		if err := h.Store.DeleteNamedValue(value.ID()); err != nil && !errors.Is(err, store.ErrNotFound) {
+			h.storeError(w, err, value.ID())
+			return
+		}
+		if err := h.activate(); err != nil {
+			writeError(w, http.StatusInternalServerError, "ConfigurationInvalid", err.Error(), value.ID())
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	default:
+		methodNotAllowed(w)
+	}
+}
+
+func (h *Handler) namedValueAction(w http.ResponseWriter, r *http.Request, value model.NamedValue, action string) {
+	if r.Method != http.MethodPost {
+		methodNotAllowed(w)
+		return
+	}
+	got, err := h.Store.GetNamedValue(value.ID())
+	if err != nil {
+		h.storeError(w, err, value.ID())
+		return
+	}
+	switch action {
+	case "listValue":
+		writeResource(w, http.StatusOK, map[string]any{"value": got.Value}, got.ETag)
+	case "refreshSecret":
+		if got.KeyVaultSecretID == "" {
+			writeError(w, http.StatusBadRequest, "ValidationError", "refreshSecret requires a Key Vault-backed named value.", value.ID())
+			return
+		}
+		writeResource(w, http.StatusOK, namedValueWire(got), got.ETag)
+	default:
+		writeError(w, http.StatusNotFound, "ResourceNotFound", "The requested named value action was not found.", r.URL.Path)
+	}
+}
+
+func applyNamedValuePayload(value *model.NamedValue, body namedValuePayload) {
+	if body.Properties.DisplayName != nil {
+		value.DisplayName = *body.Properties.DisplayName
+	}
+	if body.Properties.Value != nil {
+		value.Value = *body.Properties.Value
+	}
+	if body.Properties.Tags != nil {
+		value.Tags = *body.Properties.Tags
+	}
+	if body.Properties.Secret != nil {
+		value.Secret = *body.Properties.Secret
+	}
+	if body.Properties.KeyVault != nil {
+		if body.Properties.KeyVault.SecretIdentifier != nil {
+			value.KeyVaultSecretID = *body.Properties.KeyVault.SecretIdentifier
+		}
+		if body.Properties.KeyVault.IdentityClientID != nil {
+			value.KeyVaultIdentityID = *body.Properties.KeyVault.IdentityClientID
+		}
+	}
+}
+
 type apiReleasePayload struct {
 	Properties struct {
 		APIID *string `json:"apiId"`
@@ -1151,6 +1309,13 @@ func apiVersionSetWire(v model.APIVersionSet) map[string]any {
 	return map[string]any{"id": v.ID(), "name": v.Name, "type": "Microsoft.ApiManagement/service/apiVersionSets",
 		"properties": map[string]any{"displayName": v.DisplayName, "versioningScheme": v.VersioningScheme,
 			"versionHeaderName": v.VersionHeaderName, "versionQueryName": v.VersionQueryName, "description": v.Description}}
+}
+func namedValueWire(v model.NamedValue) map[string]any {
+	properties := map[string]any{"displayName": v.DisplayName, "secret": v.Secret, "tags": v.Tags}
+	if v.KeyVaultSecretID != "" {
+		properties["keyVault"] = map[string]any{"secretIdentifier": v.KeyVaultSecretID, "identityClientId": v.KeyVaultIdentityID}
+	}
+	return map[string]any{"id": v.ID(), "name": v.Name, "type": "Microsoft.ApiManagement/service/namedValues", "properties": properties}
 }
 func apiRevisionWire(v model.API) map[string]any {
 	base, _ := splitAPIRevision(v.Name)

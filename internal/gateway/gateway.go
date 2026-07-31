@@ -4,10 +4,12 @@ package gateway
 import (
 	"encoding/json"
 	"fmt"
+	"html"
 	"io"
 	"net"
 	"net/http"
 	"net/url"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -82,6 +84,7 @@ func (r *Runtime) Activate(st *store.Store, strict bool) error {
 		return err
 	}
 	versionSets := map[string]*model.APIVersionSet{}
+	namedValues := map[string]map[string]string{}
 	for _, service := range services {
 		values, err := st.ListAPIVersionSets(service.ID())
 		if err != nil {
@@ -91,10 +94,22 @@ func (r *Runtime) Activate(st *store.Store, strict bool) error {
 			value := values[index]
 			versionSets[strings.ToLower(value.ID())] = &value
 		}
+		serviceValues, err := st.ListNamedValues(service.ID())
+		if err != nil {
+			return err
+		}
+		namedValues[strings.ToLower(service.ID())] = map[string]string{}
+		for _, value := range serviceValues {
+			namedValues[strings.ToLower(service.ID())][strings.ToLower(value.DisplayName)] = value.Value
+		}
 	}
 	policyByScope := map[string]policy.Plan{}
 	for _, item := range policies {
-		plan, err := policy.Compile(item.Value, strict)
+		resolved, err := resolveNamedValues(item.Value, namedValues[strings.ToLower(serviceIDFromScope(item.ScopeID))])
+		if err != nil {
+			return fmt.Errorf("compile policy %s: %w", item.ScopeID, err)
+		}
+		plan, err := policy.Compile(resolved, strict)
 		if err != nil {
 			return fmt.Errorf("compile policy %s: %w", item.ScopeID, err)
 		}
@@ -155,6 +170,32 @@ func (r *Runtime) Activate(st *store.Store, strict bool) error {
 	}
 	r.current.Store(snapshot)
 	return nil
+}
+
+var namedValueReference = regexp.MustCompile(`\{\{([^{}]+)\}\}`)
+
+func resolveNamedValues(source string, values map[string]string) (string, error) {
+	var resolveErr error
+	resolved := namedValueReference.ReplaceAllStringFunc(source, func(reference string) string {
+		name := strings.TrimSpace(reference[2 : len(reference)-2])
+		value, ok := values[strings.ToLower(name)]
+		if !ok {
+			resolveErr = fmt.Errorf("named value %q was not found", name)
+			return reference
+		}
+		return html.EscapeString(value)
+	})
+	return resolved, resolveErr
+}
+
+func serviceIDFromScope(id string) string {
+	lower := strings.ToLower(id)
+	for _, child := range []string{"/apis/", "/products/", "/subscriptions/", "/namedvalues/"} {
+		if index := strings.Index(lower, child); index >= 0 {
+			return id[:index]
+		}
+	}
+	return id
 }
 
 func serviceNameFromID(id string) string {

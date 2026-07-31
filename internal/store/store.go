@@ -91,6 +91,14 @@ CREATE TABLE IF NOT EXISTS api_version_metadata (
   api_id TEXT PRIMARY KEY REFERENCES apis(id) ON DELETE CASCADE,
   version TEXT NOT NULL, version_set_id TEXT REFERENCES api_version_sets(id) ON DELETE RESTRICT
 );
+CREATE TABLE IF NOT EXISTS named_values (
+  id TEXT PRIMARY KEY, service_id TEXT NOT NULL REFERENCES services(id) ON DELETE CASCADE,
+  name TEXT NOT NULL, display_name TEXT NOT NULL, value TEXT NOT NULL, tags_json TEXT NOT NULL,
+  secret INTEGER NOT NULL, key_vault_secret_id TEXT NOT NULL,
+  key_vault_identity_id TEXT NOT NULL, etag TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_named_values_service_display_name
+  ON named_values(service_id, display_name COLLATE NOCASE);
 CREATE TABLE IF NOT EXISTS api_releases (
   id TEXT PRIMARY KEY, api_id TEXT NOT NULL REFERENCES apis(id) ON DELETE CASCADE,
   name TEXT NOT NULL, target_api_id TEXT NOT NULL REFERENCES apis(id) ON DELETE CASCADE,
@@ -512,6 +520,66 @@ func (s *Store) ListAPIVersionSets(serviceID string) ([]model.APIVersionSet, err
 // DeleteAPIVersionSet removes an unused version set.
 func (s *Store) DeleteAPIVersionSet(id string) error {
 	return deleteScopedResource(s.db, "api_version_sets", id)
+}
+
+// UpsertNamedValue creates or replaces a named value.
+func (s *Store) UpsertNamedValue(v model.NamedValue) (model.NamedValue, error) {
+	v.ETag = newETag()
+	tags, _ := json.Marshal(v.Tags)
+	_, err := s.db.Exec(`INSERT INTO named_values
+        (id, service_id, name, display_name, value, tags_json, secret, key_vault_secret_id, key_vault_identity_id, etag)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET
+          display_name=excluded.display_name, value=excluded.value, tags_json=excluded.tags_json,
+          secret=excluded.secret, key_vault_secret_id=excluded.key_vault_secret_id,
+          key_vault_identity_id=excluded.key_vault_identity_id, etag=excluded.etag`,
+		v.ID(), v.ServiceID, v.Name, v.DisplayName, v.Value, string(tags), v.Secret,
+		v.KeyVaultSecretID, v.KeyVaultIdentityID, v.ETag)
+	return v, err
+}
+
+// GetNamedValue finds one named value.
+func (s *Store) GetNamedValue(id string) (model.NamedValue, error) {
+	var v model.NamedValue
+	var tags string
+	err := s.db.QueryRow(`SELECT service_id, name, display_name, value, tags_json, secret,
+        key_vault_secret_id, key_vault_identity_id, etag FROM named_values WHERE lower(id)=lower(?)`, id).
+		Scan(&v.ServiceID, &v.Name, &v.DisplayName, &v.Value, &tags, &v.Secret,
+			&v.KeyVaultSecretID, &v.KeyVaultIdentityID, &v.ETag)
+	if errors.Is(err, sql.ErrNoRows) {
+		return model.NamedValue{}, ErrNotFound
+	}
+	if err == nil {
+		_ = json.Unmarshal([]byte(tags), &v.Tags)
+	}
+	return v, err
+}
+
+// ListNamedValues returns named values for a service in stable ID order.
+func (s *Store) ListNamedValues(serviceID string) ([]model.NamedValue, error) {
+	rows, err := s.db.Query(`SELECT service_id, name, display_name, value, tags_json, secret,
+        key_vault_secret_id, key_vault_identity_id, etag FROM named_values
+        WHERE lower(service_id)=lower(?) ORDER BY id`, serviceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	values := make([]model.NamedValue, 0)
+	for rows.Next() {
+		var v model.NamedValue
+		var tags string
+		if err := rows.Scan(&v.ServiceID, &v.Name, &v.DisplayName, &v.Value, &tags, &v.Secret,
+			&v.KeyVaultSecretID, &v.KeyVaultIdentityID, &v.ETag); err != nil {
+			return nil, err
+		}
+		_ = json.Unmarshal([]byte(tags), &v.Tags)
+		values = append(values, v)
+	}
+	return values, rows.Err()
+}
+
+// DeleteNamedValue removes a named value.
+func (s *Store) DeleteNamedValue(id string) error {
+	return deleteScopedResource(s.db, "named_values", id)
 }
 
 func (s *Store) validateAPIVersionSet(v model.API) error {

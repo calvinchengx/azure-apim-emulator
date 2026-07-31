@@ -66,6 +66,9 @@ func TestGoManagementSDKCreatesAPI(t *testing.T) {
 
 func TestGoManagementSDKConfiguresProtectedGateway(t *testing.T) {
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Named") != "go-sdk-named-value" {
+			t.Errorf("named-value policy header = %q", r.Header.Get("X-Named"))
+		}
 		_, _ = w.Write([]byte("go-sdk-backend"))
 	}))
 	defer backend.Close()
@@ -99,6 +102,60 @@ func TestGoManagementSDKConfiguresProtectedGateway(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := servicePoller.PollUntilDone(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	namedValueClient, err := armapimanagement.NewNamedValueClient(defaultSubscription, credential, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	namedValueDisplayName, namedValueContent := "GatewayHeader", "initial"
+	namedValueSecret := true
+	namedValuePoller, err := namedValueClient.BeginCreateOrUpdate(ctx, defaultResourceGroup, "emulator", "gateway-header", armapimanagement.NamedValueCreateContract{
+		Properties: &armapimanagement.NamedValueCreateContractProperties{DisplayName: &namedValueDisplayName, Value: &namedValueContent, Secret: &namedValueSecret},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := namedValuePoller.PollUntilDone(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+	gotNamedValue, err := namedValueClient.Get(ctx, defaultResourceGroup, "emulator", "gateway-header", nil)
+	if err != nil || gotNamedValue.Properties == nil || gotNamedValue.Properties.Value != nil || gotNamedValue.Properties.Secret == nil || !*gotNamedValue.Properties.Secret {
+		t.Fatalf("named value GET = %+v, %v", gotNamedValue, err)
+	}
+	if entityTag, err := namedValueClient.GetEntityTag(ctx, defaultResourceGroup, "emulator", "gateway-header", nil); err != nil || entityTag.ETag == nil {
+		t.Fatalf("named value ETag = %+v, %v", entityTag, err)
+	}
+	namedValuePage, err := namedValueClient.NewListByServicePager(defaultResourceGroup, "emulator", nil).NextPage(ctx)
+	if err != nil || len(namedValuePage.Value) != 1 {
+		t.Fatalf("named value page = %+v, %v", namedValuePage, err)
+	}
+	listedValue, err := namedValueClient.ListValue(ctx, defaultResourceGroup, "emulator", "gateway-header", nil)
+	if err != nil || listedValue.Value == nil || *listedValue.Value != namedValueContent {
+		t.Fatalf("named value secret = %+v, %v", listedValue, err)
+	}
+	namedValueContent = "go-sdk-named-value"
+	updatePoller, err := namedValueClient.BeginUpdate(ctx, defaultResourceGroup, "emulator", "gateway-header", "*", armapimanagement.NamedValueUpdateParameters{
+		Properties: &armapimanagement.NamedValueUpdateParameterProperties{Value: &namedValueContent},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := updatePoller.PollUntilDone(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+	temporaryDisplayName, temporaryValue := "Temporary", "temporary"
+	temporaryPoller, err := namedValueClient.BeginCreateOrUpdate(ctx, defaultResourceGroup, "emulator", "temporary", armapimanagement.NamedValueCreateContract{
+		Properties: &armapimanagement.NamedValueCreateContractProperties{DisplayName: &temporaryDisplayName, Value: &temporaryValue},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := temporaryPoller.PollUntilDone(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := namedValueClient.Delete(ctx, defaultResourceGroup, "emulator", "temporary", "*", nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -177,6 +234,17 @@ func TestGoManagementSDKConfiguresProtectedGateway(t *testing.T) {
 	method, template := http.MethodGet, "/items"
 	if _, err := operationClient.CreateOrUpdate(ctx, defaultResourceGroup, "emulator", "go-sdk-full", "get", armapimanagement.OperationContract{
 		Properties: &armapimanagement.OperationContractProperties{DisplayName: &displayName, Method: &method, URLTemplate: &template},
+	}, nil); err != nil {
+		t.Fatal(err)
+	}
+	apiPolicyClient, err := armapimanagement.NewAPIPolicyClient(defaultSubscription, credential, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	policyValue := `<policies><inbound><set-header name="X-Named" exists-action="override"><value>{{GatewayHeader}}</value></set-header></inbound><backend><base /></backend><outbound /><on-error /></policies>`
+	policyFormat := armapimanagement.PolicyContentFormatRawxml
+	if _, err := apiPolicyClient.CreateOrUpdate(ctx, defaultResourceGroup, "emulator", "go-sdk-full", armapimanagement.PolicyIDNamePolicy, armapimanagement.PolicyContract{
+		Properties: &armapimanagement.PolicyContractProperties{Value: &policyValue, Format: &policyFormat},
 	}, nil); err != nil {
 		t.Fatal(err)
 	}

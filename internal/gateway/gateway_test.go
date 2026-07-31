@@ -81,6 +81,72 @@ func TestRoutingHelpers(t *testing.T) {
 	}
 }
 
+func TestNamedValueResolution(t *testing.T) {
+	values := map[string]string{"token": "resolved"}
+	got, err := resolveNamedValues("before {{ Token }} after", values)
+	if err != nil || got != "before resolved after" {
+		t.Fatalf("resolved = %q, %v", got, err)
+	}
+	if _, err := resolveNamedValues("{{missing}}", values); err == nil {
+		t.Fatal("missing named value should fail")
+	}
+	if got, err := resolveNamedValues("{{xml}}", map[string]string{"xml": `a&<"`}); err != nil || got != "a&amp;&lt;&#34;" {
+		t.Fatalf("XML-safe named value = %q, %v", got, err)
+	}
+	for scope, want := range map[string]string{
+		"/service/s":                   "/service/s",
+		"/service/s/apis/a":            "/service/s",
+		"/service/s/products/p":        "/service/s",
+		"/service/s/subscriptions/key": "/service/s",
+		"/service/s/namedValues/value": "/service/s",
+	} {
+		if got := serviceIDFromScope(scope); got != want {
+			t.Errorf("serviceIDFromScope(%q) = %q", scope, got)
+		}
+	}
+}
+
+func TestActivateResolvesNamedValuesInPolicies(t *testing.T) {
+	st, err := store.Open("", clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	service, err := st.UpsertService(model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "emulator"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	api, err := st.UpsertAPI(model.API{ServiceID: service.ID(), Name: "named", DisplayName: "Named", Path: "named", ServiceURL: "https://backend.test", Protocols: []string{"https"}, IsCurrent: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.UpsertOperation(model.Operation{APIID: api.ID(), Name: "get", DisplayName: "Get", Method: http.MethodGet, URLTemplate: "/"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.UpsertNamedValue(model.NamedValue{ServiceID: service.ID(), Name: "header", DisplayName: "Header", Value: "from-named-value"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.UpsertPolicy(model.Policy{ScopeID: api.ID(), Format: "xml", Value: `<policies><inbound><set-header name="X-Named" exists-action="override"><value>{{header}}</value></set-header></inbound><backend><base /></backend><outbound /><on-error /></policies>`}); err != nil {
+		t.Fatal(err)
+	}
+	runtime := New("emulator", &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		if request.Header.Get("X-Named") != "from-named-value" {
+			t.Errorf("named header = %q", request.Header.Get("X-Named"))
+		}
+		return &http.Response{StatusCode: http.StatusNoContent, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(""))}, nil
+	})})
+	if err := runtime.Activate(st, false); err != nil {
+		t.Fatal(err)
+	}
+	assertGatewayStatus(t, runtime, httptest.NewRequest(http.MethodGet, "/named", nil), http.StatusNoContent)
+	if _, err := st.UpsertPolicy(model.Policy{ScopeID: api.ID(), Format: "xml", Value: `<policies><inbound><set-header name="X" exists-action="override"><value>{{missing}}</value></set-header></inbound></policies>`}); err != nil {
+		t.Fatal(err)
+	}
+	if err := runtime.Activate(st, false); err == nil {
+		t.Fatal("missing named value should reject activation")
+	}
+}
+
 func TestHeaderHelpers(t *testing.T) {
 	source := http.Header{"X-Test": {"one", "two"}, "Connection": {"close"}}
 	target := make(http.Header)
@@ -381,6 +447,31 @@ func TestActivateVersionSets(t *testing.T) {
 			t.Fatal("missing version-set table activated")
 		}
 	})
+}
+
+func TestActivateNamedValueStoreFailure(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(dir, clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if _, err := st.UpsertService(model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "emulator"}); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", filepath.Join(dir, "azure-apim-emulator.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`DROP TABLE named_values`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := New("emulator", nil).Activate(st, false); err == nil {
+		t.Fatal("activation should fail when named values cannot be read")
+	}
 }
 
 func TestWritePolicyResponseDefaultStatus(t *testing.T) {

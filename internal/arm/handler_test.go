@@ -375,6 +375,49 @@ func TestAPIVersionSetLifecycle(t *testing.T) {
 	assertStatus(t, handler, http.MethodPost, path, "", http.StatusMethodNotAllowed)
 }
 
+func TestNamedValueLifecycle(t *testing.T) {
+	handler, st := testHandler(t)
+	seedService(t, st)
+	collection := basePath + "/namedValues" + apiQuery
+	path := basePath + "/namedValues/token" + apiQuery
+	assertStatus(t, handler, http.MethodGet, collection, "", http.StatusOK)
+	assertStatus(t, handler, http.MethodPost, collection, "", http.StatusMethodNotAllowed)
+	assertStatus(t, handler, http.MethodGet, path, "", http.StatusNotFound)
+	assertStatus(t, handler, http.MethodPut, path, `{`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPut, path, `{"properties":{"displayName":"Token"}}`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPut, path, `{"properties":{"displayName":"Invalid name","value":"value"}}`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPut, path, `{"properties":{"displayName":"Token","value":"value","secret":true,"tags":["auth"]}}`, http.StatusCreated)
+	response := request(t, handler, http.MethodGet, path, "")
+	if strings.Contains(response.Body.String(), `"value"`) || !strings.Contains(response.Body.String(), `"secret":true`) {
+		t.Fatalf("redacted named value = %s", response.Body.String())
+	}
+	assertStatus(t, handler, http.MethodHead, path, "", http.StatusOK)
+	secret := request(t, handler, http.MethodPost, basePath+"/namedValues/token/listValue"+apiQuery, "")
+	if secret.Code != http.StatusOK || !strings.Contains(secret.Body.String(), `"value":"value"`) {
+		t.Fatalf("listed named value = %d %s", secret.Code, secret.Body.String())
+	}
+	assertStatus(t, handler, http.MethodGet, basePath+"/namedValues/token/listValue"+apiQuery, "", http.StatusMethodNotAllowed)
+	assertStatus(t, handler, http.MethodPost, basePath+"/namedValues/token/refreshSecret"+apiQuery, "", http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPost, basePath+"/namedValues/token/unknown"+apiQuery, "", http.StatusNotFound)
+	assertStatus(t, handler, http.MethodPost, basePath+"/namedValues/missing/listValue"+apiQuery, "", http.StatusNotFound)
+	assertStatus(t, handler, http.MethodPatch, basePath+"/namedValues/missing"+apiQuery, `{}`, http.StatusNotFound)
+	assertStatus(t, handler, http.MethodPatch, path, `{`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPatch, path, `{"properties":{"displayName":"Updated","value":"new","secret":false,"tags":["one","two"],"keyVault":{"secretIdentifier":"https://vault/secrets/name","identityClientId":"client"}}}`, http.StatusOK)
+	assertStatus(t, handler, http.MethodPost, basePath+"/namedValues/token/refreshSecret"+apiQuery, "", http.StatusOK)
+	list := request(t, handler, http.MethodGet, collection, "")
+	if !strings.Contains(list.Body.String(), `"count":1`) || !strings.Contains(list.Body.String(), `"secretIdentifier":"https://vault/secrets/name"`) {
+		t.Fatalf("named value list = %s", list.Body.String())
+	}
+	assertStatus(t, handler, http.MethodGet, basePath+"/namedValues/token/extra/path"+apiQuery, "", http.StatusNotFound)
+	assertStatus(t, handler, http.MethodPost, path, "", http.StatusMethodNotAllowed)
+	handler.Activate = func() error { return errors.New("activation") }
+	assertStatus(t, handler, http.MethodPatch, path, `{"properties":{"value":"activation"}}`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodDelete, path, "", http.StatusInternalServerError)
+	handler.Activate = nil
+	assertStatus(t, handler, http.MethodDelete, path, "", http.StatusNoContent)
+	assertStatus(t, handler, http.MethodDelete, path, "", http.StatusNoContent)
+}
+
 func TestProductAPIListRejectsDanglingLink(t *testing.T) {
 	dir := t.TempDir()
 	st, err := store.Open(dir, clock.New())
@@ -405,6 +448,7 @@ func TestForeignKeyStoreErrors(t *testing.T) {
 	assertStatus(t, handler, http.MethodPut, basePath+"/products/p"+apiQuery, `{"properties":{"displayName":"P"}}`, http.StatusConflict)
 	assertStatus(t, handler, http.MethodPut, basePath+"/subscriptions/s"+apiQuery, `{"properties":{"displayName":"S","scope":"/scope"}}`, http.StatusConflict)
 	assertStatus(t, handler, http.MethodPut, basePath+"/apiVersionSets/v"+apiQuery, `{"properties":{"displayName":"V","versioningScheme":"Segment"}}`, http.StatusConflict)
+	assertStatus(t, handler, http.MethodPut, basePath+"/namedValues/v"+apiQuery, `{"properties":{"displayName":"V","value":"value"}}`, http.StatusConflict)
 	assertStatus(t, handler, http.MethodPut, basePath+"/apis/a/operations/get"+apiQuery, `{"properties":{"method":"GET","urlTemplate":"/"}}`, http.StatusConflict)
 	assertStatus(t, handler, http.MethodPut, basePath+"/products/p/apis/a"+apiQuery, `{}`, http.StatusConflict)
 }
@@ -452,6 +496,9 @@ func TestClosedStoreWriteErrors(t *testing.T) {
 	assertStatus(t, handler, http.MethodGet, basePath+"/apiVersionSets/v"+apiQuery, "", http.StatusConflict)
 	assertStatus(t, handler, http.MethodPut, basePath+"/apiVersionSets/v"+apiQuery, `{"properties":{"displayName":"V","versioningScheme":"Segment"}}`, http.StatusConflict)
 	assertStatus(t, handler, http.MethodDelete, basePath+"/apiVersionSets/v"+apiQuery, "", http.StatusConflict)
+	assertStatus(t, handler, http.MethodGet, basePath+"/namedValues"+apiQuery, "", http.StatusConflict)
+	assertStatus(t, handler, http.MethodPut, basePath+"/namedValues/v"+apiQuery, `{"properties":{"displayName":"V","value":"value"}}`, http.StatusConflict)
+	assertStatus(t, handler, http.MethodDelete, basePath+"/namedValues/v"+apiQuery, "", http.StatusConflict)
 }
 
 func TestServiceStoreWriteErrors(t *testing.T) {

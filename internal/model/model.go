@@ -73,6 +73,22 @@ type APIVersionSet struct {
 // ID returns the API version-set ARM resource ID.
 func (v APIVersionSet) ID() string { return v.ServiceID + "/apiVersionSets/" + v.Name }
 
+// NamedValue is a reusable value referenced from APIM policy XML.
+type NamedValue struct {
+	ServiceID          string
+	Name               string
+	DisplayName        string
+	Value              string
+	Tags               []string
+	Secret             bool
+	KeyVaultSecretID   string
+	KeyVaultIdentityID string
+	ETag               string
+}
+
+// ID returns the named value ARM resource ID.
+func (v NamedValue) ID() string { return v.ServiceID + "/namedValues/" + v.Name }
+
 // Operation is an HTTP operation belonging to an API.
 type Operation struct {
 	APIID       string
