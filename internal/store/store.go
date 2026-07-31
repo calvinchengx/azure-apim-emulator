@@ -133,6 +133,11 @@ CREATE TABLE IF NOT EXISTS resource_tags (
   resource_id TEXT NOT NULL, tag_id TEXT NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
   PRIMARY KEY (resource_id, tag_id)
 );
+CREATE TABLE IF NOT EXISTS groups (
+  id TEXT PRIMARY KEY, service_id TEXT NOT NULL REFERENCES services(id) ON DELETE CASCADE,
+  name TEXT NOT NULL, display_name TEXT NOT NULL, description TEXT NOT NULL, type TEXT NOT NULL,
+  external_id TEXT NOT NULL, built_in INTEGER NOT NULL, etag TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS products (
   id TEXT PRIMARY KEY, service_id TEXT NOT NULL REFERENCES services(id) ON DELETE CASCADE,
   name TEXT NOT NULL, display_name TEXT NOT NULL, state TEXT NOT NULL,
@@ -142,6 +147,11 @@ CREATE TABLE IF NOT EXISTS product_apis (
   product_id TEXT NOT NULL REFERENCES products(id) ON DELETE CASCADE,
   api_id TEXT NOT NULL REFERENCES apis(id) ON DELETE CASCADE,
   PRIMARY KEY (product_id, api_id)
+);
+CREATE TABLE IF NOT EXISTS product_groups (
+  product_id TEXT NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+  group_id TEXT NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+  PRIMARY KEY (product_id, group_id)
 );
 CREATE TABLE IF NOT EXISTS subscriptions (
   id TEXT PRIMARY KEY, service_id TEXT NOT NULL REFERENCES services(id) ON DELETE CASCADE,
@@ -191,6 +201,14 @@ func (s *Store) UpsertService(v model.Service) (model.Service, error) {
 		v.SKUCapacity, v.PublisherName, v.PublisherEmail, v.ProvisioningState, v.ETag)
 	if err != nil {
 		return v, err
+	}
+	for _, group := range []struct{ name, displayName string }{{"administrators", "Administrators"}, {"developers", "Developers"}, {"guests", "Guests"}} {
+		if _, err := tx.Exec(`INSERT INTO groups
+            (id, service_id, name, display_name, description, type, external_id, built_in, etag)
+            VALUES (?, ?, ?, ?, '', 'system', '', 1, ?) ON CONFLICT(id) DO NOTHING`,
+			v.ID()+"/groups/"+group.name, v.ID(), group.name, group.displayName, newETag()); err != nil {
+			return v, err
+		}
 	}
 	if v.Document != nil {
 		document, err := json.Marshal(v.Document)
@@ -794,6 +812,87 @@ func scanTags(rows *sql.Rows, err error) ([]model.Tag, error) {
 	for rows.Next() {
 		var v model.Tag
 		if err := rows.Scan(&v.ServiceID, &v.Name, &v.DisplayName, &v.ETag); err != nil {
+			return nil, err
+		}
+		values = append(values, v)
+	}
+	return values, rows.Err()
+}
+
+// UpsertGroup creates or replaces a service group.
+func (s *Store) UpsertGroup(v model.Group) (model.Group, error) {
+	v.ETag = newETag()
+	_, err := s.db.Exec(`INSERT INTO groups
+        (id, service_id, name, display_name, description, type, external_id, built_in, etag)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET
+          display_name=excluded.display_name, description=excluded.description, type=excluded.type,
+          external_id=excluded.external_id, built_in=excluded.built_in, etag=excluded.etag`,
+		v.ID(), v.ServiceID, v.Name, v.DisplayName, v.Description, v.Type, v.ExternalID, v.BuiltIn, v.ETag)
+	return v, err
+}
+
+// GetGroup finds one service group.
+func (s *Store) GetGroup(id string) (model.Group, error) {
+	values, err := scanGroups(s.db.Query(`SELECT service_id, name, display_name, description, type, external_id, built_in, etag
+        FROM groups WHERE lower(id)=lower(?)`, id))
+	if err != nil {
+		return model.Group{}, err
+	}
+	if len(values) == 0 {
+		return model.Group{}, ErrNotFound
+	}
+	return values[0], nil
+}
+
+// ListGroups returns groups for a service in stable ID order.
+func (s *Store) ListGroups(serviceID string) ([]model.Group, error) {
+	return scanGroups(s.db.Query(`SELECT service_id, name, display_name, description, type, external_id, built_in, etag
+        FROM groups WHERE lower(service_id)=lower(?) ORDER BY id`, serviceID))
+}
+
+// DeleteGroup removes a group and its relationships.
+func (s *Store) DeleteGroup(id string) error { return deleteScopedResource(s.db, "groups", id) }
+
+// LinkProductGroup associates an existing group with an existing product.
+func (s *Store) LinkProductGroup(productID, groupID string) error {
+	_, err := s.db.Exec(`INSERT INTO product_groups (product_id, group_id) VALUES (?, ?)
+        ON CONFLICT(product_id, group_id) DO NOTHING`, productID, groupID)
+	return err
+}
+
+// UnlinkProductGroup removes a product-group association idempotently.
+func (s *Store) UnlinkProductGroup(productID, groupID string) error {
+	_, err := s.db.Exec(`DELETE FROM product_groups WHERE lower(product_id)=lower(?) AND lower(group_id)=lower(?)`, productID, groupID)
+	return err
+}
+
+// HasProductGroup reports whether a product-group association exists.
+func (s *Store) HasProductGroup(productID, groupID string) (bool, error) {
+	var one int
+	err := s.db.QueryRow(`SELECT 1 FROM product_groups WHERE lower(product_id)=lower(?) AND lower(group_id)=lower(?)`, productID, groupID).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+// ListProductGroups returns groups associated with a product.
+func (s *Store) ListProductGroups(productID string) ([]model.Group, error) {
+	return scanGroups(s.db.Query(`SELECT groups.service_id, groups.name, groups.display_name, groups.description,
+        groups.type, groups.external_id, groups.built_in, groups.etag FROM groups
+        JOIN product_groups ON lower(product_groups.group_id)=lower(groups.id)
+        WHERE lower(product_groups.product_id)=lower(?) ORDER BY groups.id`, productID))
+}
+
+func scanGroups(rows *sql.Rows, err error) ([]model.Group, error) {
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	values := make([]model.Group, 0)
+	for rows.Next() {
+		var v model.Group
+		if err := rows.Scan(&v.ServiceID, &v.Name, &v.DisplayName, &v.Description, &v.Type, &v.ExternalID, &v.BuiltIn, &v.ETag); err != nil {
 			return nil, err
 		}
 		values = append(values, v)

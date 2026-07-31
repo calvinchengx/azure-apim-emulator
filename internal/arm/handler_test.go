@@ -417,6 +417,62 @@ func TestTagAndResourceAssociationBranches(t *testing.T) {
 	assertStatus(t, handler, http.MethodDelete, tagPath, "", http.StatusNoContent)
 }
 
+func TestGroupAndProductAssociationBranches(t *testing.T) {
+	handler, st := testHandler(t)
+	seedService(t, st)
+	if _, err := st.UpsertProduct(model.Product{ServiceID: serviceModel().ID(), Name: "p", DisplayName: "P"}); err != nil {
+		t.Fatal(err)
+	}
+	collectionPath := basePath + "/groups" + apiQuery
+	groupPath := basePath + "/groups/partners" + apiQuery
+	list := request(t, handler, http.MethodGet, collectionPath, "")
+	if !strings.Contains(list.Body.String(), `"count":3`) || strings.Count(list.Body.String(), `"builtIn":true`) != 3 {
+		t.Fatalf("built-in group list = %s", list.Body.String())
+	}
+	assertStatus(t, handler, http.MethodPost, collectionPath, "", http.StatusMethodNotAllowed)
+	assertStatus(t, handler, http.MethodGet, groupPath, "", http.StatusNotFound)
+	assertStatus(t, handler, http.MethodPut, groupPath, `{`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPut, groupPath, `{"properties":{}}`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPut, groupPath, `{"properties":{"displayName":"Partners","type":"invalid"}}`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPut, groupPath, `{"properties":{"displayName":"Partners","type":"system"}}`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPut, groupPath, `{"properties":{"displayName":"Partners","type":"external"}}`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPut, groupPath, `{"properties":{"displayName":"Partners","description":"Initial","type":"custom"}}`, http.StatusCreated)
+	assertStatus(t, handler, http.MethodPut, groupPath, `{"properties":{"displayName":"Partners","description":"Updated","type":"external","externalId":"aad://partners"}}`, http.StatusOK)
+	assertStatus(t, handler, http.MethodPatch, basePath+"/groups/missing"+apiQuery, `{}`, http.StatusNotFound)
+	assertStatus(t, handler, http.MethodPatch, groupPath, `{`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPatch, groupPath, `{"properties":{"displayName":"Updated Partners"}}`, http.StatusOK)
+	got := request(t, handler, http.MethodGet, groupPath, "")
+	if !strings.Contains(got.Body.String(), `"displayName":"Updated Partners"`) || !strings.Contains(got.Body.String(), `"externalId":"aad://partners"`) || got.Header().Get("ETag") == "" {
+		t.Fatalf("group GET = %d %s", got.Code, got.Body.String())
+	}
+	assertStatus(t, handler, http.MethodHead, groupPath, "", http.StatusOK)
+	assertStatus(t, handler, http.MethodPost, groupPath, "", http.StatusMethodNotAllowed)
+	assertStatus(t, handler, http.MethodGet, basePath+"/groups/partners/unknown"+apiQuery, "", http.StatusNotFound)
+	assertStatus(t, handler, http.MethodDelete, basePath+"/groups/administrators"+apiQuery, "", http.StatusBadRequest)
+
+	productCollection := basePath + "/products/p/groups" + apiQuery
+	productGroup := basePath + "/products/p/groups/partners" + apiQuery
+	assertStatus(t, handler, http.MethodGet, productCollection, "", http.StatusOK)
+	assertStatus(t, handler, http.MethodPost, productCollection, "", http.StatusMethodNotAllowed)
+	assertStatus(t, handler, http.MethodGet, productGroup, "", http.StatusNotFound)
+	assertStatus(t, handler, http.MethodHead, productGroup, "", http.StatusNotFound)
+	assertStatus(t, handler, http.MethodPut, productGroup, "", http.StatusCreated)
+	assertStatus(t, handler, http.MethodPut, productGroup, "", http.StatusOK)
+	assertStatus(t, handler, http.MethodGet, productGroup, "", http.StatusOK)
+	assertStatus(t, handler, http.MethodHead, productGroup, "", http.StatusNoContent)
+	list = request(t, handler, http.MethodGet, productCollection, "")
+	if !strings.Contains(list.Body.String(), `"count":1`) || !strings.Contains(list.Body.String(), `"name":"partners"`) {
+		t.Fatalf("product group list = %s", list.Body.String())
+	}
+	assertStatus(t, handler, http.MethodPost, productGroup, "", http.StatusMethodNotAllowed)
+	assertStatus(t, handler, http.MethodGet, basePath+"/products/missing/groups"+apiQuery, "", http.StatusNotFound)
+	assertStatus(t, handler, http.MethodPut, basePath+"/products/p/groups/missing"+apiQuery, "", http.StatusNotFound)
+	assertStatus(t, handler, http.MethodDelete, productGroup, "", http.StatusNoContent)
+	assertStatus(t, handler, http.MethodDelete, productGroup, "", http.StatusNoContent)
+	assertStatus(t, handler, http.MethodDelete, groupPath, "", http.StatusNoContent)
+	assertStatus(t, handler, http.MethodDelete, groupPath, "", http.StatusNoContent)
+}
+
 func TestAPIVersionSetLifecycle(t *testing.T) {
 	handler, st := testHandler(t)
 	seedService(t, st)
@@ -662,6 +718,7 @@ func TestForeignKeyStoreErrors(t *testing.T) {
 	assertStatus(t, handler, http.MethodPut, basePath+"/apis/a/operations/get"+apiQuery, `{"properties":{"method":"GET","urlTemplate":"/"}}`, http.StatusConflict)
 	assertStatus(t, handler, http.MethodPut, basePath+"/products/p/apis/a"+apiQuery, `{}`, http.StatusConflict)
 	assertStatus(t, handler, http.MethodPut, basePath+"/tags/t"+apiQuery, `{"properties":{"displayName":"T"}}`, http.StatusConflict)
+	assertStatus(t, handler, http.MethodPut, basePath+"/groups/g"+apiQuery, `{"properties":{"displayName":"G"}}`, http.StatusConflict)
 }
 
 func TestServiceDeleteActivationFailure(t *testing.T) {
@@ -726,6 +783,12 @@ func TestClosedStoreWriteErrors(t *testing.T) {
 	assertStatus(t, handler, http.MethodGet, basePath+"/apis/a/tags/t"+apiQuery, "", http.StatusConflict)
 	assertStatus(t, handler, http.MethodGet, basePath+"/apis/a/operations/get/tags/t"+apiQuery, "", http.StatusConflict)
 	assertStatus(t, handler, http.MethodGet, basePath+"/products/p/tags/t"+apiQuery, "", http.StatusConflict)
+	assertStatus(t, handler, http.MethodGet, basePath+"/groups"+apiQuery, "", http.StatusConflict)
+	assertStatus(t, handler, http.MethodGet, basePath+"/groups/g"+apiQuery, "", http.StatusConflict)
+	assertStatus(t, handler, http.MethodPut, basePath+"/groups/g"+apiQuery, `{"properties":{"displayName":"G"}}`, http.StatusConflict)
+	assertStatus(t, handler, http.MethodDelete, basePath+"/groups/g"+apiQuery, "", http.StatusConflict)
+	assertStatus(t, handler, http.MethodGet, basePath+"/products/p/groups"+apiQuery, "", http.StatusConflict)
+	assertStatus(t, handler, http.MethodGet, basePath+"/products/p/groups/g"+apiQuery, "", http.StatusConflict)
 }
 
 func TestServiceStoreWriteErrors(t *testing.T) {
@@ -806,6 +869,56 @@ func TestTagStoreErrors(t *testing.T) {
 	assertStatus(t, handler, http.MethodGet, associationPath, "", http.StatusConflict)
 	assertStatus(t, handler, http.MethodPut, associationPath, `{}`, http.StatusConflict)
 	assertStatus(t, handler, http.MethodDelete, associationPath, "", http.StatusConflict)
+}
+
+func TestGroupStoreErrors(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(dir, clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	seedService(t, st)
+	product, err := st.UpsertProduct(model.Product{ServiceID: serviceModel().ID(), Name: "p", DisplayName: "P"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	group, err := st.UpsertGroup(model.Group{ServiceID: serviceModel().ID(), Name: "g", DisplayName: "G", Type: "custom"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", filepath.Join(dir, "azure-apim-emulator.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	handler := &Handler{Store: st, Auth: auth.AllowAll{}}
+	groupPath := basePath + "/groups/g" + apiQuery
+	productGroupPath := basePath + "/products/p/groups/g" + apiQuery
+
+	if _, err := db.Exec(`CREATE TRIGGER reject_group_delete BEFORE DELETE ON groups BEGIN SELECT RAISE(FAIL, 'rejected'); END`); err != nil {
+		t.Fatal(err)
+	}
+	assertStatus(t, handler, http.MethodDelete, groupPath, "", http.StatusConflict)
+	if _, err := db.Exec(`DROP TRIGGER reject_group_delete; CREATE TRIGGER reject_product_group_insert BEFORE INSERT ON product_groups BEGIN SELECT RAISE(FAIL, 'rejected'); END`); err != nil {
+		t.Fatal(err)
+	}
+	assertStatus(t, handler, http.MethodPut, productGroupPath, "", http.StatusConflict)
+	if _, err := db.Exec(`DROP TRIGGER reject_product_group_insert`); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.LinkProductGroup(product.ID(), group.ID()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE TRIGGER reject_product_group_delete BEFORE DELETE ON product_groups BEGIN SELECT RAISE(FAIL, 'rejected'); END`); err != nil {
+		t.Fatal(err)
+	}
+	assertStatus(t, handler, http.MethodDelete, productGroupPath, "", http.StatusConflict)
+	if _, err := db.Exec(`DROP TRIGGER reject_product_group_delete; DROP TABLE product_groups`); err != nil {
+		t.Fatal(err)
+	}
+	assertStatus(t, handler, http.MethodGet, basePath+"/products/p/groups"+apiQuery, "", http.StatusConflict)
+	assertStatus(t, handler, http.MethodGet, productGroupPath, "", http.StatusConflict)
 }
 
 func TestAbsoluteAndOperationHelpers(t *testing.T) {

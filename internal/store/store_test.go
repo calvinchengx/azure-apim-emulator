@@ -336,6 +336,19 @@ func TestClosedStoreErrors(t *testing.T) {
 			return err
 		},
 		"list resource tags": func() error { _, err := st.ListResourceTags("resource"); return err },
+		"upsert group":       func() error { _, err := st.UpsertGroup(model.Group{}); return err },
+		"get group":          func() error { _, err := st.GetGroup("group"); return err },
+		"list groups":        func() error { _, err := st.ListGroups("service"); return err },
+		"delete group":       func() error { return st.DeleteGroup("group") },
+		"link product group": func() error { return st.LinkProductGroup("product", "group") },
+		"unlink product group": func() error {
+			return st.UnlinkProductGroup("product", "group")
+		},
+		"has product group": func() error { _, err := st.HasProductGroup("product", "group"); return err },
+		"list product groups": func() error {
+			_, err := st.ListProductGroups("product")
+			return err
+		},
 		"runtime": func() error {
 			_, _, _, _, _, _, _, err := st.RuntimeData()
 			return err
@@ -446,6 +459,20 @@ func TestScanFunctionsRejectMalformedRows(t *testing.T) {
 			`INSERT INTO tags VALUES ('tag', 'service', NULL, '', '');
 			 INSERT INTO resource_tags VALUES ('resource', 'tag')`,
 			func(db *sql.DB) error { _, err := (&Store{db: db}).ListResourceTags("resource"); return err },
+		},
+		{
+			"groups",
+			`CREATE TABLE groups (service_id, name, display_name, description, type, external_id, built_in, etag)`,
+			`INSERT INTO groups VALUES ('service', NULL, '', '', '', '', 0, '')`,
+			func(db *sql.DB) error { _, err := (&Store{db: db}).ListGroups("service"); return err },
+		},
+		{
+			"product groups",
+			`CREATE TABLE groups (id, service_id, name, display_name, description, type, external_id, built_in, etag);
+			 CREATE TABLE product_groups (product_id, group_id)`,
+			`INSERT INTO groups VALUES ('group', 'service', NULL, '', '', '', '', 0, '');
+			 INSERT INTO product_groups VALUES ('product', 'group')`,
+			func(db *sql.DB) error { _, err := (&Store{db: db}).ListProductGroups("product"); return err },
 		},
 		{
 			"products",
@@ -561,6 +588,76 @@ func TestTagAssociations(t *testing.T) {
 	}
 }
 
+func TestGroupAndProductAssociations(t *testing.T) {
+	st, err := Open("", clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	service, err := st.UpsertService(model.Service{Name: "svc"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	groups, err := st.ListGroups(strings.ToUpper(service.ID()))
+	if err != nil || len(groups) != 3 || !groups[0].BuiltIn || groups[0].Type != "system" {
+		t.Fatalf("built-in groups = %+v, %v", groups, err)
+	}
+	group := model.Group{ServiceID: service.ID(), Name: "partners", DisplayName: "Partners", Description: "External partners", Type: "custom"}
+	group, err = st.UpsertGroup(group)
+	if err != nil || group.ETag == "" {
+		t.Fatalf("UpsertGroup = %+v, %v", group, err)
+	}
+	updated, err := st.UpsertGroup(model.Group{ServiceID: service.ID(), Name: group.Name, DisplayName: "Updated", Type: "external", ExternalID: "aad://group"})
+	if err != nil || updated.DisplayName != "Updated" || updated.ETag == group.ETag {
+		t.Fatalf("updated group = %+v, %v", updated, err)
+	}
+	got, err := st.GetGroup(strings.ToUpper(group.ID()))
+	if err != nil || got.ExternalID != "aad://group" {
+		t.Fatalf("GetGroup = %+v, %v", got, err)
+	}
+	if _, err := st.GetGroup("/missing"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing group = %v", err)
+	}
+	product, err := st.UpsertProduct(model.Product{ServiceID: service.ID(), Name: "product", DisplayName: "Product"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.LinkProductGroup(product.ID(), group.ID()); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.LinkProductGroup(product.ID(), group.ID()); err != nil {
+		t.Fatalf("repeated LinkProductGroup = %v", err)
+	}
+	if exists, err := st.HasProductGroup(strings.ToUpper(product.ID()), strings.ToUpper(group.ID())); err != nil || !exists {
+		t.Fatalf("HasProductGroup = %v, %v", exists, err)
+	}
+	if exists, err := st.HasProductGroup(product.ID(), "/missing"); err != nil || exists {
+		t.Fatalf("missing product group = %v, %v", exists, err)
+	}
+	groups, err = st.ListProductGroups(strings.ToUpper(product.ID()))
+	if err != nil || len(groups) != 1 || groups[0].Name != group.Name {
+		t.Fatalf("ListProductGroups = %+v, %v", groups, err)
+	}
+	if err := st.UnlinkProductGroup(product.ID(), group.ID()); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.UnlinkProductGroup(product.ID(), group.ID()); err != nil {
+		t.Fatalf("repeated UnlinkProductGroup = %v", err)
+	}
+	if err := st.LinkProductGroup(product.ID(), group.ID()); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.DeleteGroup(group.ID()); err != nil {
+		t.Fatal(err)
+	}
+	if groups, err := st.ListProductGroups(product.ID()); err != nil || len(groups) != 0 {
+		t.Fatalf("product link survived group deletion: %+v, %v", groups, err)
+	}
+	if err := st.DeleteGroup(group.ID()); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("second group delete = %v", err)
+	}
+}
+
 func TestUpsertServiceTransactionErrors(t *testing.T) {
 	t.Run("begin", func(t *testing.T) {
 		st, err := Open("", clock.New())
@@ -582,6 +679,24 @@ func TestUpsertServiceTransactionErrors(t *testing.T) {
 		service := model.Service{Name: "bad", Document: map[string]any{"unsupported": func() {}}}
 		if _, err := st.UpsertService(service); err == nil {
 			t.Fatal("unsupported document was accepted")
+		}
+		if _, err := st.GetService(service.ID()); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("service transaction was not rolled back: %v", err)
+		}
+	})
+
+	t.Run("built-in groups", func(t *testing.T) {
+		st, err := Open("", clock.New())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer st.Close()
+		if _, err := st.db.Exec(`CREATE TRIGGER reject_builtin_group BEFORE INSERT ON groups BEGIN SELECT RAISE(FAIL, 'rejected'); END`); err != nil {
+			t.Fatal(err)
+		}
+		service := model.Service{Name: "bad"}
+		if _, err := st.UpsertService(service); err == nil {
+			t.Fatal("rejected built-in group was accepted")
 		}
 		if _, err := st.GetService(service.ID()); !errors.Is(err, ErrNotFound) {
 			t.Fatalf("service transaction was not rolled back: %v", err)

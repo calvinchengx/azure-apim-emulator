@@ -450,8 +450,8 @@ func backendHTTPClient(base *http.Client, service *Service, backendID string) (*
 		}
 		transport = http.DefaultTransport.(*http.Transport)
 	}
-	transport = transport.Clone()
 	tlsConfig := transport.TLSClientConfig
+	transport = transport.Clone()
 	if tlsConfig == nil {
 		tlsConfig = &tls.Config{}
 	} else {

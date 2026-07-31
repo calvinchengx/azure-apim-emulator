@@ -147,6 +147,21 @@ type Tag struct {
 // ID returns the tag ARM resource ID.
 func (v Tag) ID() string { return v.ServiceID + "/tags/" + v.Name }
 
+// Group controls developer visibility and membership.
+type Group struct {
+	ServiceID   string
+	Name        string
+	DisplayName string
+	Description string
+	Type        string
+	ExternalID  string
+	BuiltIn     bool
+	ETag        string
+}
+
+// ID returns the group ARM resource ID.
+func (v Group) ID() string { return v.ServiceID + "/groups/" + v.Name }
+
 // Operation is an HTTP operation belonging to an API.
 type Operation struct {
 	APIID       string

@@ -65,6 +65,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.certificate(w, r, parsed)
 	case "tags":
 		h.tag(w, r, parsed)
+	case "groups":
+		h.group(w, r, parsed)
 	case "products":
 		h.product(w, r, parsed)
 	case "subscriptions":
@@ -559,6 +561,126 @@ func (h *Handler) resourceTag(w http.ResponseWriter, r *http.Request, serviceID,
 	case http.MethodDelete:
 		if err := h.Store.DetachTag(resourceID, tag.ID()); err != nil {
 			h.storeError(w, err, tag.ID())
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	default:
+		methodNotAllowed(w)
+	}
+}
+
+func (h *Handler) group(w http.ResponseWriter, r *http.Request, rt route) {
+	service := model.Service{SubscriptionID: rt.SubscriptionID, ResourceGroup: rt.ResourceGroup, Name: rt.ServiceName}
+	if len(rt.Tail) == 1 {
+		if r.Method != http.MethodGet {
+			methodNotAllowed(w)
+			return
+		}
+		values, err := h.Store.ListGroups(service.ID())
+		if err != nil {
+			h.storeError(w, err, service.ID())
+			return
+		}
+		resources := make([]map[string]any, 0, len(values))
+		for _, value := range values {
+			resources = append(resources, groupWire(value))
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"value": resources, "count": len(resources)})
+		return
+	}
+	if len(rt.Tail) != 2 {
+		writeError(w, http.StatusNotFound, "ResourceNotFound", "The requested group resource was not found.", r.URL.Path)
+		return
+	}
+	value := model.Group{ServiceID: service.ID(), Name: rt.Tail[1], Type: "custom"}
+	switch r.Method {
+	case http.MethodGet, http.MethodHead:
+		got, err := h.Store.GetGroup(value.ID())
+		if err != nil {
+			h.storeError(w, err, value.ID())
+			return
+		}
+		if r.Method == http.MethodHead {
+			w.Header().Set("ETag", got.ETag)
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		writeResource(w, http.StatusOK, groupWire(got), got.ETag)
+	case http.MethodPut, http.MethodPatch:
+		existing, existingErr := h.Store.GetGroup(value.ID())
+		if existingErr != nil && !errors.Is(existingErr, store.ErrNotFound) {
+			h.storeError(w, existingErr, value.ID())
+			return
+		}
+		if r.Method == http.MethodPatch {
+			if existingErr != nil {
+				h.storeError(w, existingErr, value.ID())
+				return
+			}
+			value = existing
+		}
+		var body struct {
+			Properties struct {
+				DisplayName *string `json:"displayName"`
+				Description *string `json:"description"`
+				Type        *string `json:"type"`
+				ExternalID  *string `json:"externalId"`
+			} `json:"properties"`
+		}
+		if err := decode(r, &body); err != nil {
+			writeError(w, http.StatusBadRequest, "InvalidRequestContent", err.Error(), "")
+			return
+		}
+		if body.Properties.DisplayName != nil {
+			value.DisplayName = *body.Properties.DisplayName
+		}
+		if body.Properties.Description != nil {
+			value.Description = *body.Properties.Description
+		}
+		if body.Properties.Type != nil {
+			value.Type = *body.Properties.Type
+		}
+		if body.Properties.ExternalID != nil {
+			value.ExternalID = *body.Properties.ExternalID
+		}
+		if strings.TrimSpace(value.DisplayName) == "" {
+			writeError(w, http.StatusBadRequest, "ValidationError", "displayName is required.", "properties.displayName")
+			return
+		}
+		if value.Type != "custom" && value.Type != "external" && value.Type != "system" {
+			writeError(w, http.StatusBadRequest, "ValidationError", "type must be custom, external, or system.", "properties.type")
+			return
+		}
+		if value.Type == "system" && !value.BuiltIn {
+			writeError(w, http.StatusBadRequest, "ValidationError", "system groups are managed by the service.", "properties.type")
+			return
+		}
+		if value.Type == "external" && strings.TrimSpace(value.ExternalID) == "" {
+			writeError(w, http.StatusBadRequest, "ValidationError", "externalId is required for external groups.", "properties.externalId")
+			return
+		}
+		got, err := h.Store.UpsertGroup(value)
+		if err != nil {
+			h.storeError(w, err, value.ID())
+			return
+		}
+		status := http.StatusOK
+		if r.Method == http.MethodPut && errors.Is(existingErr, store.ErrNotFound) {
+			status = http.StatusCreated
+		}
+		writeResource(w, status, groupWire(got), got.ETag)
+	case http.MethodDelete:
+		got, err := h.Store.GetGroup(value.ID())
+		if err != nil && !errors.Is(err, store.ErrNotFound) {
+			h.storeError(w, err, value.ID())
+			return
+		}
+		if err == nil && got.BuiltIn {
+			writeError(w, http.StatusBadRequest, "ValidationError", "Built-in groups cannot be deleted.", value.ID())
+			return
+		}
+		if err := h.Store.DeleteGroup(value.ID()); err != nil && !errors.Is(err, store.ErrNotFound) {
+			h.storeError(w, err, value.ID())
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
@@ -1553,6 +1675,27 @@ func (h *Handler) product(w http.ResponseWriter, r *http.Request, rt route) {
 		h.resourceTagCollection(w, r, product.ID())
 		return
 	}
+	if len(rt.Tail) == 3 && equal(rt.Tail[2], "groups") {
+		if _, err := h.Store.GetProduct(product.ID()); err != nil {
+			h.storeError(w, err, product.ID())
+			return
+		}
+		if r.Method != http.MethodGet {
+			methodNotAllowed(w)
+			return
+		}
+		values, err := h.Store.ListProductGroups(product.ID())
+		if err != nil {
+			h.storeError(w, err, product.ID())
+			return
+		}
+		resources := make([]map[string]any, 0, len(values))
+		for _, value := range values {
+			resources = append(resources, groupWire(value))
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"value": resources, "count": len(resources)})
+		return
+	}
 	if len(rt.Tail) == 4 && equal(rt.Tail[2], "apis") {
 		apiID := service.ID() + "/apis/" + rt.Tail[3]
 		switch r.Method {
@@ -1587,6 +1730,56 @@ func (h *Handler) product(w http.ResponseWriter, r *http.Request, rt route) {
 			return
 		}
 		h.resourceTag(w, r, service.ID(), product.ID(), rt.Tail[3])
+		return
+	}
+	if len(rt.Tail) == 4 && equal(rt.Tail[2], "groups") {
+		if _, err := h.Store.GetProduct(product.ID()); err != nil {
+			h.storeError(w, err, product.ID())
+			return
+		}
+		group := model.Group{ServiceID: service.ID(), Name: rt.Tail[3]}
+		got, err := h.Store.GetGroup(group.ID())
+		if err != nil {
+			h.storeError(w, err, group.ID())
+			return
+		}
+		exists, err := h.Store.HasProductGroup(product.ID(), group.ID())
+		if err != nil {
+			h.storeError(w, err, group.ID())
+			return
+		}
+		switch r.Method {
+		case http.MethodGet:
+			if !exists {
+				h.storeError(w, store.ErrNotFound, group.ID())
+				return
+			}
+			writeResource(w, http.StatusOK, groupWire(got), got.ETag)
+		case http.MethodHead:
+			if !exists {
+				h.storeError(w, store.ErrNotFound, group.ID())
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+		case http.MethodPut:
+			if err := h.Store.LinkProductGroup(product.ID(), group.ID()); err != nil {
+				h.storeError(w, err, group.ID())
+				return
+			}
+			status := http.StatusCreated
+			if exists {
+				status = http.StatusOK
+			}
+			writeResource(w, status, groupWire(got), got.ETag)
+		case http.MethodDelete:
+			if err := h.Store.UnlinkProductGroup(product.ID(), group.ID()); err != nil {
+				h.storeError(w, err, group.ID())
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			methodNotAllowed(w)
+		}
 		return
 	}
 	writeError(w, http.StatusNotFound, "ResourceNotFound", "The requested product resource was not found.", r.URL.Path)
@@ -1931,6 +2124,15 @@ func apiSchemaWire(v model.APISchema) map[string]any {
 }
 func tagWire(v model.Tag) map[string]any {
 	return map[string]any{"id": v.ID(), "name": v.Name, "type": "Microsoft.ApiManagement/service/tags", "properties": map[string]any{"displayName": v.DisplayName}}
+}
+func groupWire(v model.Group) map[string]any {
+	return map[string]any{"id": v.ID(), "name": v.Name, "type": "Microsoft.ApiManagement/service/groups", "properties": map[string]any{"displayName": v.DisplayName, "description": v.Description, "type": v.Type, "externalId": nullableString(v.ExternalID), "builtIn": v.BuiltIn}}
+}
+func nullableString(value string) any {
+	if value == "" {
+		return nil
+	}
+	return value
 }
 func productWire(v model.Product) map[string]any {
 	return map[string]any{"id": v.ID(), "name": v.Name, "type": "Microsoft.ApiManagement/service/products", "properties": map[string]any{"displayName": v.DisplayName, "state": v.State, "approvalRequired": v.ApprovalRequired, "subscriptionRequired": true}}

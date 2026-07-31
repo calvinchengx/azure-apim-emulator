@@ -340,6 +340,60 @@ func TestGoManagementSDKConfiguresProtectedGateway(t *testing.T) {
 	}, nil); err != nil {
 		t.Fatal(err)
 	}
+	groupClient, err := armapimanagement.NewGroupClient(defaultSubscription, credential, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	groupDisplayName, groupDescription := "Go SDK partners", "Created by the Go SDK"
+	groupType := armapimanagement.GroupTypeCustom
+	createdGroup, err := groupClient.CreateOrUpdate(ctx, defaultResourceGroup, "emulator", "go-sdk-partners", armapimanagement.GroupCreateParameters{
+		Properties: &armapimanagement.GroupCreateParametersProperties{DisplayName: &groupDisplayName, Description: &groupDescription, Type: &groupType},
+	}, nil)
+	if err != nil || createdGroup.Properties == nil || createdGroup.Properties.BuiltIn == nil || *createdGroup.Properties.BuiltIn {
+		t.Fatalf("group create = %+v, %v", createdGroup, err)
+	}
+	groupDescription = "Updated by the Go SDK"
+	updatedGroup, err := groupClient.Update(ctx, defaultResourceGroup, "emulator", "go-sdk-partners", "*", armapimanagement.GroupUpdateParameters{
+		Properties: &armapimanagement.GroupUpdateParametersProperties{Description: &groupDescription},
+	}, nil)
+	if err != nil || updatedGroup.Properties == nil || updatedGroup.Properties.Description == nil || *updatedGroup.Properties.Description != groupDescription {
+		t.Fatalf("group update = %+v, %v", updatedGroup, err)
+	}
+	if gotGroup, err := groupClient.Get(ctx, defaultResourceGroup, "emulator", "go-sdk-partners", nil); err != nil || gotGroup.Properties == nil || gotGroup.Properties.DisplayName == nil || *gotGroup.Properties.DisplayName != groupDisplayName {
+		t.Fatalf("group GET = %+v, %v", gotGroup, err)
+	}
+	if entityTag, err := groupClient.GetEntityTag(ctx, defaultResourceGroup, "emulator", "go-sdk-partners", nil); err != nil || entityTag.ETag == nil {
+		t.Fatalf("group ETag = %+v, %v", entityTag, err)
+	}
+	if page, err := groupClient.NewListByServicePager(defaultResourceGroup, "emulator", nil).NextPage(ctx); err != nil || len(page.Value) != 4 {
+		t.Fatalf("group service page = %+v, %v", page, err)
+	}
+	temporaryGroupName := "Temporary group"
+	if _, err := groupClient.CreateOrUpdate(ctx, defaultResourceGroup, "emulator", "temporary", armapimanagement.GroupCreateParameters{Properties: &armapimanagement.GroupCreateParametersProperties{DisplayName: &temporaryGroupName}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := groupClient.Delete(ctx, defaultResourceGroup, "emulator", "temporary", "*", nil); err != nil {
+		t.Fatal(err)
+	}
+	productGroupClient, err := armapimanagement.NewProductGroupClient(defaultSubscription, credential, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if linkedGroup, err := productGroupClient.CreateOrUpdate(ctx, defaultResourceGroup, "emulator", "go-sdk-product", "go-sdk-partners", nil); err != nil || linkedGroup.Name == nil || *linkedGroup.Name != "go-sdk-partners" {
+		t.Fatalf("product group create = %+v, %v", linkedGroup, err)
+	}
+	if _, err := productGroupClient.CheckEntityExists(ctx, defaultResourceGroup, "emulator", "go-sdk-product", "go-sdk-partners", nil); err != nil {
+		t.Fatal(err)
+	}
+	if page, err := productGroupClient.NewListByProductPager(defaultResourceGroup, "emulator", "go-sdk-product", nil).NextPage(ctx); err != nil || len(page.Value) != 1 {
+		t.Fatalf("product group page = %+v, %v", page, err)
+	}
+	if _, err := productGroupClient.Delete(ctx, defaultResourceGroup, "emulator", "go-sdk-product", "go-sdk-partners", nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := productGroupClient.CreateOrUpdate(ctx, defaultResourceGroup, "emulator", "go-sdk-product", "go-sdk-partners", nil); err != nil {
+		t.Fatal(err)
+	}
 	tagClient, err := armapimanagement.NewTagClient(defaultSubscription, credential, options)
 	if err != nil {
 		t.Fatal(err)
