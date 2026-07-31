@@ -96,6 +96,10 @@ CREATE TABLE IF NOT EXISTS api_version_sets (
   version_header_name TEXT NOT NULL, version_query_name TEXT NOT NULL,
   description TEXT NOT NULL, etag TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS api_version_set_documents (
+  version_set_id TEXT PRIMARY KEY REFERENCES api_version_sets(id) ON DELETE CASCADE,
+  document_json TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS api_version_metadata (
   api_id TEXT PRIMARY KEY REFERENCES apis(id) ON DELETE CASCADE,
   version TEXT NOT NULL, version_set_id TEXT REFERENCES api_version_sets(id) ON DELETE RESTRICT
@@ -724,25 +728,47 @@ func (s *Store) DeleteAPIRelease(id string) error {
 // UpsertAPIVersionSet creates or replaces a version set.
 func (s *Store) UpsertAPIVersionSet(v model.APIVersionSet) (model.APIVersionSet, error) {
 	v.ETag = newETag()
-	_, err := s.db.Exec(`INSERT INTO api_version_sets
+	document, err := json.Marshal(v.Document)
+	if err != nil {
+		return v, err
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return v, err
+	}
+	defer tx.Rollback()
+	_, err = tx.Exec(`INSERT INTO api_version_sets
 	    (id, service_id, name, display_name, versioning_scheme, version_header_name, version_query_name, description, etag)
 	    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET display_name=excluded.display_name,
 	      versioning_scheme=excluded.versioning_scheme, version_header_name=excluded.version_header_name,
 	      version_query_name=excluded.version_query_name, description=excluded.description, etag=excluded.etag`,
 		v.ID(), v.ServiceID, v.Name, v.DisplayName, v.VersioningScheme, v.VersionHeaderName,
 		v.VersionQueryName, v.Description, v.ETag)
-	return v, err
+	if err != nil {
+		return v, err
+	}
+	if _, err := tx.Exec(`INSERT INTO api_version_set_documents (version_set_id, document_json) VALUES (?, ?)
+	    ON CONFLICT(version_set_id) DO UPDATE SET document_json=excluded.document_json`, v.ID(), document); err != nil {
+		return v, err
+	}
+	return v, tx.Commit()
 }
 
 // GetAPIVersionSet finds one version set.
 func (s *Store) GetAPIVersionSet(id string) (model.APIVersionSet, error) {
 	var v model.APIVersionSet
+	var document string
 	err := s.db.QueryRow(`SELECT service_id, name, display_name, versioning_scheme,
-	    version_header_name, version_query_name, description, etag FROM api_version_sets WHERE lower(id)=lower(?)`, id).
+	    version_header_name, version_query_name, description, etag,
+	    COALESCE((SELECT document_json FROM api_version_set_documents WHERE lower(version_set_id)=lower(api_version_sets.id)), '{}')
+	    FROM api_version_sets WHERE lower(id)=lower(?)`, id).
 		Scan(&v.ServiceID, &v.Name, &v.DisplayName, &v.VersioningScheme, &v.VersionHeaderName,
-			&v.VersionQueryName, &v.Description, &v.ETag)
+			&v.VersionQueryName, &v.Description, &v.ETag, &document)
 	if errors.Is(err, sql.ErrNoRows) {
 		return model.APIVersionSet{}, ErrNotFound
+	}
+	if err == nil {
+		_ = json.Unmarshal([]byte(document), &v.Document)
 	}
 	return v, err
 }
@@ -750,7 +776,9 @@ func (s *Store) GetAPIVersionSet(id string) (model.APIVersionSet, error) {
 // ListAPIVersionSets returns version sets for a service in stable ID order.
 func (s *Store) ListAPIVersionSets(serviceID string) ([]model.APIVersionSet, error) {
 	rows, err := s.db.Query(`SELECT service_id, name, display_name, versioning_scheme,
-	    version_header_name, version_query_name, description, etag FROM api_version_sets
+	    version_header_name, version_query_name, description, etag,
+	    COALESCE((SELECT document_json FROM api_version_set_documents WHERE lower(version_set_id)=lower(api_version_sets.id)), '{}')
+	    FROM api_version_sets
 	    WHERE lower(service_id)=lower(?) ORDER BY id`, serviceID)
 	if err != nil {
 		return nil, err
@@ -759,10 +787,12 @@ func (s *Store) ListAPIVersionSets(serviceID string) ([]model.APIVersionSet, err
 	values := make([]model.APIVersionSet, 0)
 	for rows.Next() {
 		var v model.APIVersionSet
+		var document string
 		if err := rows.Scan(&v.ServiceID, &v.Name, &v.DisplayName, &v.VersioningScheme,
-			&v.VersionHeaderName, &v.VersionQueryName, &v.Description, &v.ETag); err != nil {
+			&v.VersionHeaderName, &v.VersionQueryName, &v.Description, &v.ETag, &document); err != nil {
 			return nil, err
 		}
+		_ = json.Unmarshal([]byte(document), &v.Document)
 		values = append(values, v)
 	}
 	return values, rows.Err()

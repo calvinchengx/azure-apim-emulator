@@ -564,7 +564,8 @@ func TestScanFunctionsRejectMalformedRows(t *testing.T) {
 		},
 		{
 			"version sets",
-			`CREATE TABLE api_version_sets (id, service_id, name, display_name, versioning_scheme, version_header_name, version_query_name, description, etag)`,
+			`CREATE TABLE api_version_sets (id, service_id, name, display_name, versioning_scheme, version_header_name, version_query_name, description, etag);
+			 CREATE TABLE api_version_set_documents (version_set_id, document_json)`,
 			`INSERT INTO api_version_sets VALUES ('id', 'service', NULL, '', '', '', '', '', '')`,
 			func(db *sql.DB) error { _, err := (&Store{db: db}).ListAPIVersionSets("service"); return err },
 		},
@@ -726,6 +727,57 @@ func TestScanFunctionsRejectMalformedRows(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestUpsertAPIVersionSetTransactionErrors(t *testing.T) {
+	t.Run("document encoding", func(t *testing.T) {
+		st, err := Open("", clock.New())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer st.Close()
+		if _, err := st.UpsertAPIVersionSet(model.APIVersionSet{Document: map[string]any{"bad": make(chan int)}}); err == nil {
+			t.Fatal("version set accepted an unsupported document")
+		}
+	})
+	t.Run("begin", func(t *testing.T) {
+		st, err := Open("", clock.New())
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = st.Close()
+		if _, err := st.UpsertAPIVersionSet(model.APIVersionSet{}); err == nil {
+			t.Fatal("closed store accepted a version set")
+		}
+	})
+	t.Run("version set row", func(t *testing.T) {
+		st, err := Open("", clock.New())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer st.Close()
+		if _, err := st.UpsertAPIVersionSet(model.APIVersionSet{ServiceID: "/missing", Name: "versions"}); err == nil {
+			t.Fatal("version set with a missing service was accepted")
+		}
+	})
+	t.Run("document row", func(t *testing.T) {
+		st, err := Open("", clock.New())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer st.Close()
+		service, _ := st.UpsertService(model.Service{Name: "svc"})
+		if _, err := st.db.Exec(`CREATE TRIGGER reject_version_set_document BEFORE INSERT ON api_version_set_documents BEGIN SELECT RAISE(FAIL, 'rejected'); END`); err != nil {
+			t.Fatal(err)
+		}
+		versionSet := model.APIVersionSet{ServiceID: service.ID(), Name: "versions"}
+		if _, err := st.UpsertAPIVersionSet(versionSet); err == nil {
+			t.Fatal("rejected version-set document was accepted")
+		}
+		if _, err := st.GetAPIVersionSet(versionSet.ID()); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("version-set transaction was not rolled back: %v", err)
+		}
+	})
 }
 
 func TestUpsertGroupTransactionErrors(t *testing.T) {

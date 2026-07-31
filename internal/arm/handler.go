@@ -1636,10 +1636,20 @@ func (h *Handler) apiVersionSet(w http.ResponseWriter, r *http.Request, rt route
 				Description       *string `json:"description"`
 			} `json:"properties"`
 		}
-		if err := decode(r, &body); err != nil {
+		var document map[string]any
+		if err := decodeDocument(r, &body, &document); err != nil {
 			writeError(w, http.StatusBadRequest, "InvalidRequestContent", err.Error(), "")
 			return
 		}
+		if r.Method == http.MethodPatch {
+			if value.Document == nil {
+				value.Document = apiVersionSetWire(value)
+			}
+			mergeObject(value.Document, document)
+		} else {
+			value.Document = document
+		}
+		cleanResourceDocument(value.Document)
 		if body.Properties.DisplayName != nil {
 			value.DisplayName = *body.Properties.DisplayName
 		}
@@ -1654,6 +1664,16 @@ func (h *Handler) apiVersionSet(w http.ResponseWriter, r *http.Request, rt route
 		}
 		if body.Properties.Description != nil {
 			value.Description = *body.Properties.Description
+		}
+		properties, _ := document["properties"].(map[string]any)
+		if field, present := properties["versionHeaderName"]; present && field == nil {
+			value.VersionHeaderName = ""
+		}
+		if field, present := properties["versionQueryName"]; present && field == nil {
+			value.VersionQueryName = ""
+		}
+		if field, present := properties["description"]; present && field == nil {
+			value.Description = ""
 		}
 		if err := validateAPIVersionSet(value); err != nil {
 			writeError(w, http.StatusBadRequest, "ValidationError", err.Error(), "properties")
@@ -3044,9 +3064,17 @@ func apiWire(v model.API) map[string]any {
 	return result
 }
 func apiVersionSetWire(v model.APIVersionSet) map[string]any {
-	return map[string]any{"id": v.ID(), "name": v.Name, "type": "Microsoft.ApiManagement/service/apiVersionSets",
-		"properties": map[string]any{"displayName": v.DisplayName, "versioningScheme": v.VersioningScheme,
-			"versionHeaderName": v.VersionHeaderName, "versionQueryName": v.VersionQueryName, "description": v.Description}}
+	result := cloneObject(v.Document)
+	result["id"], result["name"], result["type"] = v.ID(), v.Name, "Microsoft.ApiManagement/service/apiVersionSets"
+	properties, ok := result["properties"].(map[string]any)
+	if !ok {
+		properties = map[string]any{}
+		result["properties"] = properties
+	}
+	properties["displayName"], properties["versioningScheme"] = v.DisplayName, v.VersioningScheme
+	properties["versionHeaderName"], properties["versionQueryName"] = v.VersionHeaderName, v.VersionQueryName
+	properties["description"] = v.Description
+	return result
 }
 func namedValueWire(v model.NamedValue) map[string]any {
 	properties := map[string]any{"displayName": v.DisplayName, "secret": v.Secret, "tags": v.Tags}

@@ -1272,11 +1272,21 @@ func TestAPIVersionSetLifecycle(t *testing.T) {
 	assertStatus(t, handler, http.MethodPut, path, `{"properties":{"displayName":"Versions","versioningScheme":"Header"}}`, http.StatusBadRequest)
 	assertStatus(t, handler, http.MethodPut, path, `{"properties":{"displayName":"Versions","versioningScheme":"Query"}}`, http.StatusBadRequest)
 	assertStatus(t, handler, http.MethodPut, path, `{"properties":{"displayName":"Versions","versioningScheme":"Segment","description":"Segment versions"}}`, http.StatusCreated)
-	assertStatus(t, handler, http.MethodPut, path, `{"properties":{"displayName":"Versions","versioningScheme":"Header","versionHeaderName":"X-API-Version","versionQueryName":"version","description":"Header versions"}}`, http.StatusOK)
+	assertStatus(t, handler, http.MethodPut, path, `{"customRoot":{"retained":true},"properties":{"displayName":"Versions","versioningScheme":"Header","versionHeaderName":"X-API-Version","versionQueryName":"version","description":"Header versions","customMetadata":{"keep":"one","remove":"old"}}}`, http.StatusOK)
 	assertStatus(t, handler, http.MethodPatch, basePath+"/apiVersionSets/missing"+apiQuery, `{}`, http.StatusNotFound)
 	assertStatus(t, handler, http.MethodPatch, path, `{`, http.StatusBadRequest)
-	assertStatus(t, handler, http.MethodPatch, path, `{"properties":{"displayName":"Updated","versioningScheme":"Query","versionQueryName":"api-version","versionHeaderName":"X-Version","description":"Query versions"}}`, http.StatusOK)
-	assertStatus(t, handler, http.MethodGet, path, "", http.StatusOK)
+	assertStatus(t, handler, http.MethodPatch, path, `{"properties":{"displayName":"Updated","versioningScheme":"Query","versionQueryName":"api-version","versionHeaderName":null,"description":null,"customMetadata":{"add":"two","remove":null}}}`, http.StatusOK)
+	got := request(t, handler, http.MethodGet, path, "")
+	var versionSet map[string]any
+	if err := json.Unmarshal(got.Body.Bytes(), &versionSet); err != nil {
+		t.Fatal(err)
+	}
+	properties := versionSet["properties"].(map[string]any)
+	metadata := properties["customMetadata"].(map[string]any)
+	if properties["displayName"] != "Updated" || properties["versioningScheme"] != "Query" || properties["versionHeaderName"] != "" || properties["description"] != "" ||
+		versionSet["customRoot"].(map[string]any)["retained"] != true || metadata["keep"] != "one" || metadata["add"] != "two" || metadata["remove"] != nil {
+		t.Fatalf("version-set GET = %d %s", got.Code, got.Body.String())
+	}
 	assertStatus(t, handler, http.MethodHead, path, "", http.StatusOK)
 	list := request(t, handler, http.MethodGet, basePath+"/apiVersionSets"+apiQuery, "")
 	if !strings.Contains(list.Body.String(), `"count":1`) || !strings.Contains(list.Body.String(), `"versioningScheme":"Query"`) {
@@ -1299,6 +1309,25 @@ func TestAPIVersionSetLifecycle(t *testing.T) {
 	handler.Activate = nil
 	assertStatus(t, handler, http.MethodDelete, path, "", http.StatusNoContent)
 	assertStatus(t, handler, http.MethodPost, path, "", http.StatusMethodNotAllowed)
+}
+
+func TestAPIVersionSetDocumentFallbacks(t *testing.T) {
+	handler, st := testHandler(t)
+	seedService(t, st)
+	versionSet := model.APIVersionSet{ServiceID: serviceModel().ID(), Name: "legacy", DisplayName: "Legacy", VersioningScheme: "Segment"}
+	if _, err := st.UpsertAPIVersionSet(versionSet); err != nil {
+		t.Fatal(err)
+	}
+	path := basePath + "/apiVersionSets/legacy" + apiQuery
+	response := request(t, handler, http.MethodPatch, path, `{"properties":{"description":"hydrated"}}`)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"description":"hydrated"`) {
+		t.Fatalf("legacy version-set PATCH = %d %s", response.Code, response.Body.String())
+	}
+
+	wire := apiVersionSetWire(model.APIVersionSet{Name: "invalid", Document: map[string]any{"properties": "invalid"}})
+	if _, ok := wire["properties"].(map[string]any); !ok {
+		t.Fatalf("version-set wire properties = %#v", wire["properties"])
+	}
 }
 
 func TestNamedValueLifecycle(t *testing.T) {

@@ -80,6 +80,7 @@ type APIVersionSet struct {
 	VersionQueryName  string
 	Description       string
 	ETag              string
+	Document          map[string]any
 }
 
 // ID returns the API version-set ARM resource ID.

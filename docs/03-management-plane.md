@@ -89,6 +89,12 @@ merges it with explicit nullable-field clearing, and the indexed identity,
 display, type, external-directory, and built-in fields remain authoritative.
 Companion-document writes are transactional with the group row.
 
+API version sets retain canonical documents alongside indexed versioning
+fields. PUT replacement and recursive PATCH preserve unknown metadata, support
+explicit clearing of optional header/query/description fields, and project the
+authoritative scheme fields on GET and list responses. The official Go SDK
+witness verifies description persistence after update.
+
 ## Common ARM semantics
 
 Implement centrally and test across resources:

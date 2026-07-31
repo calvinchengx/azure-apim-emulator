@@ -305,6 +305,9 @@ func TestGoManagementSDKConfiguresProtectedGateway(t *testing.T) {
 	}, nil); err != nil {
 		t.Fatal(err)
 	}
+	if gotVersionSet, err := versionSetClient.Get(ctx, defaultResourceGroup, "emulator", "go-sdk-versions", nil); err != nil || gotVersionSet.Properties == nil || gotVersionSet.Properties.Description == nil || *gotVersionSet.Properties.Description != versionSetDescription {
+		t.Fatalf("API version-set description = %+v, %v", gotVersionSet, err)
+	}
 	if _, err := versionSetClient.CreateOrUpdate(ctx, defaultResourceGroup, "emulator", "temporary-versions", armapimanagement.APIVersionSetContract{
 		Properties: &armapimanagement.APIVersionSetContractProperties{DisplayName: &versionSetDisplayName, VersioningScheme: &versioningScheme},
 	}, nil); err != nil {
