@@ -18,6 +18,7 @@ import (
 	"github.com/calvinchengx/azure-apim-emulator/internal/auth"
 	certutil "github.com/calvinchengx/azure-apim-emulator/internal/certificate"
 	"github.com/calvinchengx/azure-apim-emulator/internal/model"
+	"github.com/calvinchengx/azure-apim-emulator/internal/policy"
 	"github.com/calvinchengx/azure-apim-emulator/internal/store"
 )
 
@@ -72,6 +73,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.group(w, r, parsed)
 	case "users":
 		h.user(w, r, parsed)
+	case "policyFragments":
+		h.policyFragment(w, r, parsed)
 	case "products":
 		h.product(w, r, parsed)
 	case "subscriptions":
@@ -954,6 +957,135 @@ func userToken(user model.User, keyType string, expiry time.Time) string {
 	_, _ = mac.Write([]byte(message))
 	signature := base64.StdEncoding.EncodeToString(mac.Sum(nil))
 	return "SharedAccessSignature uid=" + url.QueryEscape(user.ID()) + "&ex=" + url.QueryEscape(expires) + "&sn=" + url.QueryEscape(user.Name) + "&skn=" + keyType + "&sig=" + url.QueryEscape(signature)
+}
+
+func (h *Handler) policyFragment(w http.ResponseWriter, r *http.Request, rt route) {
+	service := model.Service{SubscriptionID: rt.SubscriptionID, ResourceGroup: rt.ResourceGroup, Name: rt.ServiceName}
+	if len(rt.Tail) == 1 {
+		if r.Method != http.MethodGet {
+			methodNotAllowed(w)
+			return
+		}
+		values, err := h.Store.ListPolicyFragments(service.ID())
+		if err != nil {
+			h.storeError(w, err, service.ID())
+			return
+		}
+		resources := make([]map[string]any, 0, len(values))
+		for _, value := range values {
+			resources = append(resources, policyFragmentWire(value, r.URL.Query().Get("format")))
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"value": resources, "count": len(resources)})
+		return
+	}
+	value := model.PolicyFragment{ServiceID: service.ID(), Name: rt.Tail[1], Format: "xml", ProvisioningState: "Succeeded"}
+	if len(rt.Tail) == 3 && (equal(rt.Tail[2], "references") || equal(rt.Tail[2], "listReferences")) {
+		method := http.MethodGet
+		if equal(rt.Tail[2], "listReferences") {
+			method = http.MethodPost
+		}
+		if r.Method != method {
+			methodNotAllowed(w)
+			return
+		}
+		if _, err := h.Store.GetPolicyFragment(value.ID()); err != nil {
+			h.storeError(w, err, value.ID())
+			return
+		}
+		references, err := h.Store.ListPolicyFragmentReferences(service.ID(), value.Name)
+		if err != nil {
+			h.storeError(w, err, value.ID())
+			return
+		}
+		resources := make([]map[string]any, 0, len(references))
+		for _, reference := range references {
+			resources = append(resources, map[string]any{"id": reference.ScopeID, "name": "policy", "type": "Microsoft.ApiManagement/service/apis/policies"})
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"value": resources, "count": len(resources)})
+		return
+	}
+	if len(rt.Tail) != 2 {
+		writeError(w, http.StatusNotFound, "ResourceNotFound", "The requested policy fragment resource was not found.", r.URL.Path)
+		return
+	}
+	switch r.Method {
+	case http.MethodGet, http.MethodHead:
+		got, err := h.Store.GetPolicyFragment(value.ID())
+		if err != nil {
+			h.storeError(w, err, value.ID())
+			return
+		}
+		if r.Method == http.MethodHead {
+			w.Header().Set("ETag", got.ETag)
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		writeResource(w, http.StatusOK, policyFragmentWire(got, r.URL.Query().Get("format")), got.ETag)
+	case http.MethodPut:
+		_, existingErr := h.Store.GetPolicyFragment(value.ID())
+		if existingErr != nil && !errors.Is(existingErr, store.ErrNotFound) {
+			h.storeError(w, existingErr, value.ID())
+			return
+		}
+		var body struct {
+			Properties struct {
+				Description string `json:"description"`
+				Format      string `json:"format"`
+				Value       string `json:"value"`
+			} `json:"properties"`
+		}
+		if err := decode(r, &body); err != nil {
+			writeError(w, http.StatusBadRequest, "InvalidRequestContent", err.Error(), "")
+			return
+		}
+		if body.Properties.Format != "" {
+			value.Format = body.Properties.Format
+		}
+		value.Description, value.Value = body.Properties.Description, body.Properties.Value
+		if value.Format != "xml" && value.Format != "rawxml" {
+			writeError(w, http.StatusBadRequest, "ValidationError", "format must be xml or rawxml.", "properties.format")
+			return
+		}
+		if err := policy.ValidateFragment(value.Value); err != nil {
+			writeError(w, http.StatusBadRequest, "ValidationError", err.Error(), "properties.value")
+			return
+		}
+		got, err := h.Store.UpsertPolicyFragment(value)
+		if err != nil {
+			h.storeError(w, err, value.ID())
+			return
+		}
+		if err := h.activate(); err != nil {
+			writeError(w, http.StatusBadRequest, "ConfigurationInvalid", err.Error(), value.ID())
+			return
+		}
+		status := http.StatusOK
+		if errors.Is(existingErr, store.ErrNotFound) {
+			status = http.StatusCreated
+		}
+		writeResource(w, status, policyFragmentWire(got, ""), got.ETag)
+	case http.MethodDelete:
+		references, err := h.Store.ListPolicyFragmentReferences(service.ID(), value.Name)
+		if err != nil {
+			h.storeError(w, err, value.ID())
+			return
+		}
+		if len(references) != 0 {
+			writeError(w, http.StatusConflict, "ResourceInUse", "The policy fragment is referenced by a policy.", value.ID())
+			return
+		}
+		if err := h.Store.DeletePolicyFragment(value.ID()); err != nil && !errors.Is(err, store.ErrNotFound) {
+			h.storeError(w, err, value.ID())
+			return
+		}
+		if err := h.activate(); err != nil {
+			writeError(w, http.StatusInternalServerError, "ConfigurationInvalid", err.Error(), value.ID())
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	default:
+		methodNotAllowed(w)
+	}
 }
 
 func (h *Handler) apiSchemaCollection(w http.ResponseWriter, r *http.Request, api model.API) {
@@ -2401,6 +2533,12 @@ func userWire(v model.User) map[string]any {
 		identities = append(identities, map[string]any{"provider": identity.Provider, "id": identity.ID})
 	}
 	return map[string]any{"id": v.ID(), "name": v.Name, "type": "Microsoft.ApiManagement/service/users", "properties": map[string]any{"firstName": v.FirstName, "lastName": v.LastName, "email": v.Email, "state": v.State, "note": v.Note, "identities": identities, "registrationDate": time.Unix(v.RegistrationAt, 0).UTC().Format(time.RFC3339)}}
+}
+func policyFragmentWire(v model.PolicyFragment, format string) map[string]any {
+	if format != "xml" && format != "rawxml" {
+		format = v.Format
+	}
+	return map[string]any{"id": v.ID(), "name": v.Name, "type": "Microsoft.ApiManagement/service/policyFragments", "properties": map[string]any{"description": v.Description, "format": format, "value": v.Value, "provisioningState": v.ProvisioningState}}
 }
 func nullableString(value string) any {
 	if value == "" {

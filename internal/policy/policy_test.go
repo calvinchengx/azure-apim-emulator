@@ -179,3 +179,42 @@ func TestMissingHeaderValueCompilesLiteral(t *testing.T) {
 		t.Fatal("missing value should compile as empty")
 	}
 }
+
+func TestCompileWithPolicyFragments(t *testing.T) {
+	fragments := map[string]string{
+		"outer": `<fragment><include-fragment fragment-id="INNER"/><set-header name="X-Outer"><value>outer</value></set-header></fragment>`,
+		"inner": `<fragment><set-header name="X-Inner"><value>inner</value></set-header></fragment>`,
+	}
+	plan, err := CompileWithFragments(`<policies><inbound><include-fragment fragment-id="outer"/></inbound></policies>`, fragments, true)
+	if err != nil || len(plan.Inbound) != 2 || plan.Inbound[0].Name != "X-Inner" || plan.Inbound[1].Name != "X-Outer" {
+		t.Fatalf("fragment plan = %+v, %v", plan, err)
+	}
+	if err := ValidateFragment(`<fragment><set-header name="X"><value>v</value></set-header></fragment>`); err != nil {
+		t.Fatal(err)
+	}
+	for name, value := range map[string]string{
+		"malformed":  `<fragment>`,
+		"wrong root": `<policies/>`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := ValidateFragment(value); err == nil {
+				t.Fatal("invalid fragment was accepted")
+			}
+		})
+	}
+	for name, value := range map[string]string{
+		"malformed policy":    `<policies>`,
+		"missing id":          `<policies><inbound><include-fragment/></inbound></policies>`,
+		"missing fragment":    `<policies><inbound><include-fragment fragment-id="missing"/></inbound></policies>`,
+		"malformed fragment":  `<policies><inbound><include-fragment fragment-id="bad"/></inbound></policies>`,
+		"wrong fragment root": `<policies><inbound><include-fragment fragment-id="wrong"/></inbound></policies>`,
+		"cycle":               `<policies><inbound><include-fragment fragment-id="cycle"/></inbound></policies>`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			values := map[string]string{"bad": `<fragment>`, "wrong": `<policies/>`, "cycle": `<fragment><include-fragment fragment-id="cycle"/></fragment>`}
+			if _, err := CompileWithFragments(value, values, true); err == nil {
+				t.Fatal("invalid fragment policy was accepted")
+			}
+		})
+	}
+}

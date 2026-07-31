@@ -151,6 +151,11 @@ CREATE TABLE IF NOT EXISTS group_users (
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   PRIMARY KEY (group_id, user_id)
 );
+CREATE TABLE IF NOT EXISTS policy_fragments (
+  id TEXT PRIMARY KEY, service_id TEXT NOT NULL REFERENCES services(id) ON DELETE CASCADE,
+  name TEXT NOT NULL, description TEXT NOT NULL, format TEXT NOT NULL, value TEXT NOT NULL,
+  provisioning_state TEXT NOT NULL, etag TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS products (
   id TEXT PRIMARY KEY, service_id TEXT NOT NULL REFERENCES services(id) ON DELETE CASCADE,
   name TEXT NOT NULL, display_name TEXT NOT NULL, state TEXT NOT NULL,
@@ -1018,6 +1023,86 @@ func scanUsers(rows *sql.Rows, err error) ([]model.User, error) {
 			return nil, err
 		}
 		_ = json.Unmarshal([]byte(identities), &v.Identities)
+		values = append(values, v)
+	}
+	return values, rows.Err()
+}
+
+// UpsertPolicyFragment creates or replaces a reusable policy fragment.
+func (s *Store) UpsertPolicyFragment(v model.PolicyFragment) (model.PolicyFragment, error) {
+	if v.Format == "" {
+		v.Format = "xml"
+	}
+	if v.ProvisioningState == "" {
+		v.ProvisioningState = "Succeeded"
+	}
+	v.ETag = newETag()
+	_, err := s.db.Exec(`INSERT INTO policy_fragments
+        (id, service_id, name, description, format, value, provisioning_state, etag)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET description=excluded.description,
+          format=excluded.format, value=excluded.value, provisioning_state=excluded.provisioning_state,
+          etag=excluded.etag`, v.ID(), v.ServiceID, v.Name, v.Description, v.Format, v.Value, v.ProvisioningState, v.ETag)
+	return v, err
+}
+
+// GetPolicyFragment finds one policy fragment.
+func (s *Store) GetPolicyFragment(id string) (model.PolicyFragment, error) {
+	values, err := scanPolicyFragments(s.db.Query(`SELECT service_id, name, description, format, value, provisioning_state, etag
+        FROM policy_fragments WHERE lower(id)=lower(?)`, id))
+	if err != nil {
+		return model.PolicyFragment{}, err
+	}
+	if len(values) == 0 {
+		return model.PolicyFragment{}, ErrNotFound
+	}
+	return values[0], nil
+}
+
+// ListPolicyFragments returns fragments for a service in stable ID order.
+func (s *Store) ListPolicyFragments(serviceID string) ([]model.PolicyFragment, error) {
+	return scanPolicyFragments(s.db.Query(`SELECT service_id, name, description, format, value, provisioning_state, etag
+        FROM policy_fragments WHERE lower(service_id)=lower(?) ORDER BY id`, serviceID))
+}
+
+// DeletePolicyFragment removes a policy fragment.
+func (s *Store) DeletePolicyFragment(id string) error {
+	return deleteScopedResource(s.db, "policy_fragments", id)
+}
+
+// ListPolicyFragmentReferences returns policies that include a fragment.
+func (s *Store) ListPolicyFragmentReferences(serviceID, name string) ([]model.Policy, error) {
+	patternDouble := `%fragment-id="` + name + `"%`
+	patternSingle := `%fragment-id='` + name + `'%`
+	rows, err := s.db.Query(`SELECT scope_id, format, value, etag FROM policies
+        WHERE (lower(scope_id)=lower(?) OR lower(scope_id) LIKE lower(?))
+          AND (lower(value) LIKE lower(?) OR lower(value) LIKE lower(?)) ORDER BY scope_id`,
+		serviceID, serviceID+"/%", patternDouble, patternSingle)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	values := make([]model.Policy, 0)
+	for rows.Next() {
+		var v model.Policy
+		if err := rows.Scan(&v.ScopeID, &v.Format, &v.Value, &v.ETag); err != nil {
+			return nil, err
+		}
+		values = append(values, v)
+	}
+	return values, rows.Err()
+}
+
+func scanPolicyFragments(rows *sql.Rows, err error) ([]model.PolicyFragment, error) {
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	values := make([]model.PolicyFragment, 0)
+	for rows.Next() {
+		var v model.PolicyFragment
+		if err := rows.Scan(&v.ServiceID, &v.Name, &v.Description, &v.Format, &v.Value, &v.ProvisioningState, &v.ETag); err != nil {
+			return nil, err
+		}
 		values = append(values, v)
 	}
 	return values, rows.Err()

@@ -40,6 +40,39 @@ await client.apiOperation.createOrUpdate(resourceGroup, serviceName, "javascript
   method: "GET",
   urlTemplate: "/items",
 });
+const fragment = await client.policyFragment.beginCreateOrUpdateAndWait(
+  resourceGroup,
+  serviceName,
+  "javascript-sdk-fragment",
+  {
+    description: "Created by the JavaScript SDK",
+    format: "rawxml",
+    value: '<fragment><set-header name="X-JavaScript-Fragment"><value>yes</value></set-header></fragment>',
+  },
+);
+if (fragment.name !== "javascript-sdk-fragment" || fragment.provisioningState !== "Succeeded") {
+  throw new Error("JavaScript SDK policy fragment did not round-trip");
+}
+const gotFragment = await client.policyFragment.get(resourceGroup, serviceName, "javascript-sdk-fragment", { format: "rawxml" });
+if (gotFragment.format !== "rawxml" || !gotFragment.value.includes("X-JavaScript-Fragment")) {
+  throw new Error("JavaScript SDK policy fragment GET failed");
+}
+const fragmentState = await client.policyFragment.getEntityTag(resourceGroup, serviceName, "javascript-sdk-fragment");
+if (!fragmentState.eTag) {
+  throw new Error("JavaScript SDK policy fragment ETag missing");
+}
+const fragments = [];
+for await (const item of client.policyFragment.listByService(resourceGroup, serviceName)) {
+  fragments.push(item);
+}
+if (fragments.length !== 1) {
+  throw new Error(`unexpected policy fragment count: ${fragments.length}`);
+}
+const references = await client.policyFragment.listReferences(resourceGroup, serviceName, "javascript-sdk-fragment");
+if ((references.value ?? []).length !== 0) {
+  throw new Error("unreferenced policy fragment reported references");
+}
+await client.policyFragment.delete(resourceGroup, serviceName, "javascript-sdk-fragment", "*");
 const scope = `/subscriptions/${process.env.APIM_SUBSCRIPTION_ID}/resourceGroups/${resourceGroup}/providers/Microsoft.ApiManagement/service/${serviceName}/apis/javascript-sdk-api`;
 await client.subscription.createOrUpdate(resourceGroup, serviceName, "javascript-sdk-subscription", {
   displayName: "JavaScript SDK subscription",

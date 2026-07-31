@@ -156,6 +156,72 @@ func TestActivateResolvesNamedValuesInPolicies(t *testing.T) {
 	}
 }
 
+func TestActivateExpandsPolicyFragments(t *testing.T) {
+	st, err := store.Open("", clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	service, err := st.UpsertService(model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "emulator"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	api, err := st.UpsertAPI(model.API{ServiceID: service.ID(), Name: "fragment", Path: "fragment", ServiceURL: "https://backend.test", IsCurrent: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.UpsertOperation(model.Operation{APIID: api.ID(), Name: "get", Method: http.MethodGet, URLTemplate: "/"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.UpsertPolicyFragment(model.PolicyFragment{ServiceID: service.ID(), Name: "headers", Format: "rawxml", Value: `<fragment><set-header name="X-Fragment"><value>expanded</value></set-header></fragment>`}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.UpsertPolicy(model.Policy{ScopeID: api.ID(), Value: `<policies><inbound><include-fragment fragment-id="headers"/></inbound></policies>`}); err != nil {
+		t.Fatal(err)
+	}
+	runtime := New("emulator", &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		if request.Header.Get("X-Fragment") != "expanded" {
+			t.Errorf("fragment header = %q", request.Header.Get("X-Fragment"))
+		}
+		return &http.Response{StatusCode: http.StatusNoContent, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(""))}, nil
+	})})
+	if err := runtime.Activate(st, true); err != nil {
+		t.Fatal(err)
+	}
+	assertGatewayStatus(t, runtime, httptest.NewRequest(http.MethodGet, "/fragment", nil), http.StatusNoContent)
+	if _, err := st.UpsertPolicy(model.Policy{ScopeID: api.ID(), Value: `<policies><inbound><include-fragment fragment-id="missing"/></inbound></policies>`}); err != nil {
+		t.Fatal(err)
+	}
+	if err := runtime.Activate(st, true); err == nil {
+		t.Fatal("missing fragment should reject activation")
+	}
+}
+
+func TestActivatePolicyFragmentStoreFailure(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(dir, clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if _, err := st.UpsertService(model.Service{Name: "emulator"}); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", filepath.Join(dir, "azure-apim-emulator.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`DROP TABLE policy_fragments`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := New("emulator", nil).Activate(st, false); err == nil {
+		t.Fatal("activation should fail when fragments cannot be read")
+	}
+}
+
 func TestHeaderHelpers(t *testing.T) {
 	source := http.Header{"X-Test": {"one", "two"}, "Connection": {"close"}}
 	target := make(http.Header)

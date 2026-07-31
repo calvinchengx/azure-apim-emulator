@@ -188,6 +188,20 @@ type User struct {
 // ID returns the user ARM resource ID.
 func (v User) ID() string { return v.ServiceID + "/users/" + v.Name }
 
+// PolicyFragment is reusable policy XML included by other policies.
+type PolicyFragment struct {
+	ServiceID         string
+	Name              string
+	Description       string
+	Format            string
+	Value             string
+	ProvisioningState string
+	ETag              string
+}
+
+// ID returns the policy fragment ARM resource ID.
+func (v PolicyFragment) ID() string { return v.ServiceID + "/policyFragments/" + v.Name }
+
 // Operation is an HTTP operation belonging to an API.
 type Operation struct {
 	APIID       string

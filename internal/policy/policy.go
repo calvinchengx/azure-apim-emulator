@@ -108,6 +108,74 @@ func Compile(value string, strict bool) (Plan, error) {
 	if err := xml.Unmarshal([]byte(value), &root); err != nil {
 		return Plan{}, fmt.Errorf("invalid policy XML: %w", err)
 	}
+	return compileRoot(root, strict)
+}
+
+// ValidateFragment validates the root shape of reusable fragment XML.
+func ValidateFragment(value string) error {
+	var root node
+	if err := xml.Unmarshal([]byte(value), &root); err != nil {
+		return fmt.Errorf("invalid policy fragment XML: %w", err)
+	}
+	if root.Name != "fragment" {
+		return fmt.Errorf("policy fragment root must be <fragment>")
+	}
+	return nil
+}
+
+// CompileWithFragments expands include-fragment nodes before compiling a policy.
+func CompileWithFragments(value string, fragments map[string]string, strict bool) (Plan, error) {
+	var root node
+	if err := xml.Unmarshal([]byte(value), &root); err != nil {
+		return Plan{}, fmt.Errorf("invalid policy XML: %w", err)
+	}
+	expanded, err := expandNodes(root.Children, fragments, map[string]bool{})
+	if err != nil {
+		return Plan{}, err
+	}
+	root.Children = expanded
+	return compileRoot(root, strict)
+}
+
+func expandNodes(nodes []node, fragments map[string]string, stack map[string]bool) ([]node, error) {
+	result := make([]node, 0, len(nodes))
+	for _, item := range nodes {
+		if item.Name == "include-fragment" {
+			id := strings.ToLower(item.Attrs["fragment-id"])
+			value, ok := fragments[id]
+			if id == "" || !ok {
+				return nil, fmt.Errorf("policy fragment %q was not found", item.Attrs["fragment-id"])
+			}
+			if stack[id] {
+				return nil, fmt.Errorf("policy fragment cycle includes %q", item.Attrs["fragment-id"])
+			}
+			var fragment node
+			if err := xml.Unmarshal([]byte(value), &fragment); err != nil {
+				return nil, fmt.Errorf("invalid policy fragment %q: %w", item.Attrs["fragment-id"], err)
+			}
+			if fragment.Name != "fragment" {
+				return nil, fmt.Errorf("policy fragment %q root must be <fragment>", item.Attrs["fragment-id"])
+			}
+			stack[id] = true
+			children, err := expandNodes(fragment.Children, fragments, stack)
+			delete(stack, id)
+			if err != nil {
+				return nil, err
+			}
+			result = append(result, children...)
+			continue
+		}
+		children, err := expandNodes(item.Children, fragments, stack)
+		if err != nil {
+			return nil, err
+		}
+		item.Children = children
+		result = append(result, item)
+	}
+	return result, nil
+}
+
+func compileRoot(root node, strict bool) (Plan, error) {
 	if root.Name != "policies" {
 		return Plan{}, fmt.Errorf("policy root must be <policies>")
 	}

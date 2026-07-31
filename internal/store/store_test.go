@@ -358,6 +358,20 @@ func TestClosedStoreErrors(t *testing.T) {
 		"has group user":    func() error { _, err := st.HasGroupUser("group", "user"); return err },
 		"list group users":  func() error { _, err := st.ListGroupUsers("group"); return err },
 		"list user groups":  func() error { _, err := st.ListUserGroups("user"); return err },
+		"upsert policy fragment": func() error {
+			_, err := st.UpsertPolicyFragment(model.PolicyFragment{})
+			return err
+		},
+		"get policy fragment": func() error { _, err := st.GetPolicyFragment("fragment"); return err },
+		"list policy fragments": func() error {
+			_, err := st.ListPolicyFragments("service")
+			return err
+		},
+		"delete policy fragment": func() error { return st.DeletePolicyFragment("fragment") },
+		"list fragment references": func() error {
+			_, err := st.ListPolicyFragmentReferences("service", "fragment")
+			return err
+		},
 		"runtime": func() error {
 			_, _, _, _, _, _, _, err := st.RuntimeData()
 			return err
@@ -496,6 +510,21 @@ func TestScanFunctionsRejectMalformedRows(t *testing.T) {
 			`INSERT INTO users VALUES ('user', 'service', NULL, '', '', '', '', '', '[]', 0, '', '', '', '');
 			 INSERT INTO group_users VALUES ('group', 'user')`,
 			func(db *sql.DB) error { _, err := (&Store{db: db}).ListGroupUsers("group"); return err },
+		},
+		{
+			"policy fragments",
+			`CREATE TABLE policy_fragments (id, service_id, name, description, format, value, provisioning_state, etag)`,
+			`INSERT INTO policy_fragments VALUES ('fragment', 'service', NULL, '', '', '', '', '')`,
+			func(db *sql.DB) error { _, err := (&Store{db: db}).ListPolicyFragments("service"); return err },
+		},
+		{
+			"policy fragment references",
+			`CREATE TABLE policies (scope_id, format, value, etag)`,
+			`INSERT INTO policies VALUES ('service/api', NULL, '<include-fragment fragment-id="fragment"/>', '')`,
+			func(db *sql.DB) error {
+				_, err := (&Store{db: db}).ListPolicyFragmentReferences("service", "fragment")
+				return err
+			},
 		},
 		{
 			"products",
@@ -754,6 +783,56 @@ func TestUserAndGroupMemberships(t *testing.T) {
 		t.Fatalf("membership survived user deletion: %+v, %v", users, err)
 	}
 	if err := st.DeleteUser(user.ID()); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("second delete = %v", err)
+	}
+}
+
+func TestPolicyFragmentLifecycleAndReferences(t *testing.T) {
+	st, err := Open("", clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	service, err := st.UpsertService(model.Service{Name: "svc"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	api, err := st.UpsertAPI(model.API{ServiceID: service.ID(), Name: "api"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fragment := model.PolicyFragment{ServiceID: service.ID(), Name: "headers", Description: "Headers", Value: `<fragment/>`}
+	fragment, err = st.UpsertPolicyFragment(fragment)
+	if err != nil || fragment.Format != "xml" || fragment.ProvisioningState != "Succeeded" || fragment.ETag == "" {
+		t.Fatalf("fragment = %+v, %v", fragment, err)
+	}
+	updated, err := st.UpsertPolicyFragment(model.PolicyFragment{ServiceID: service.ID(), Name: fragment.Name, Description: "Updated", Format: "rawxml", Value: `<fragment><base/></fragment>`})
+	if err != nil || updated.Description != "Updated" || updated.ETag == fragment.ETag {
+		t.Fatalf("updated fragment = %+v, %v", updated, err)
+	}
+	got, err := st.GetPolicyFragment(strings.ToUpper(fragment.ID()))
+	if err != nil || got.Format != "rawxml" {
+		t.Fatalf("GetPolicyFragment = %+v, %v", got, err)
+	}
+	if _, err := st.GetPolicyFragment("/missing"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing fragment = %v", err)
+	}
+	if values, err := st.ListPolicyFragments(strings.ToUpper(service.ID())); err != nil || len(values) != 1 {
+		t.Fatalf("ListPolicyFragments = %+v, %v", values, err)
+	}
+	if _, err := st.UpsertPolicy(model.Policy{ScopeID: api.ID(), Value: `<policies><inbound><include-fragment fragment-id='HEADERS'/></inbound></policies>`}); err != nil {
+		t.Fatal(err)
+	}
+	if refs, err := st.ListPolicyFragmentReferences(strings.ToUpper(service.ID()), "headers"); err != nil || len(refs) != 1 || refs[0].ScopeID != api.ID() {
+		t.Fatalf("fragment references = %+v, %v", refs, err)
+	}
+	if refs, err := st.ListPolicyFragmentReferences(service.ID(), "missing"); err != nil || len(refs) != 0 {
+		t.Fatalf("missing references = %+v, %v", refs, err)
+	}
+	if err := st.DeletePolicyFragment(fragment.ID()); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.DeletePolicyFragment(fragment.ID()); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("second delete = %v", err)
 	}
 }

@@ -546,6 +546,57 @@ func TestUserAndGroupMembershipBranches(t *testing.T) {
 	assertStatus(t, handler, http.MethodDelete, userPath, "", http.StatusNoContent)
 }
 
+func TestPolicyFragmentBranches(t *testing.T) {
+	handler, st := testHandler(t)
+	seedService(t, st)
+	api, err := st.UpsertAPI(model.API{ServiceID: serviceModel().ID(), Name: "a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	collectionPath := basePath + "/policyFragments" + apiQuery
+	fragmentPath := basePath + "/policyFragments/headers" + apiQuery
+	assertStatus(t, handler, http.MethodGet, collectionPath, "", http.StatusOK)
+	assertStatus(t, handler, http.MethodPost, collectionPath, "", http.StatusMethodNotAllowed)
+	assertStatus(t, handler, http.MethodGet, fragmentPath, "", http.StatusNotFound)
+	assertStatus(t, handler, http.MethodPut, fragmentPath, `{`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPut, fragmentPath, `{"properties":{"format":"invalid","value":"<fragment/>"}}`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPut, fragmentPath, `{"properties":{"format":"rawxml","value":"<policies/>"}}`, http.StatusBadRequest)
+	body := `{"properties":{"description":"Shared headers","format":"rawxml","value":"<fragment><set-header name=\"X-Fragment\"><value>yes</value></set-header></fragment>"}}`
+	assertStatus(t, handler, http.MethodPut, fragmentPath, body, http.StatusCreated)
+	assertStatus(t, handler, http.MethodPut, fragmentPath, body, http.StatusOK)
+	got := request(t, handler, http.MethodGet, basePath+"/policyFragments/headers?api-version=2024-05-01&format=xml", "")
+	if !strings.Contains(got.Body.String(), `"format":"xml"`) || !strings.Contains(got.Body.String(), `"provisioningState":"Succeeded"`) || got.Header().Get("ETag") == "" {
+		t.Fatalf("fragment GET = %d %s", got.Code, got.Body.String())
+	}
+	assertStatus(t, handler, http.MethodHead, fragmentPath, "", http.StatusOK)
+	list := request(t, handler, http.MethodGet, basePath+"/policyFragments?api-version=2024-05-01&format=rawxml", "")
+	if !strings.Contains(list.Body.String(), `"count":1`) || !strings.Contains(list.Body.String(), `"name":"headers"`) {
+		t.Fatalf("fragment list = %s", list.Body.String())
+	}
+	assertStatus(t, handler, http.MethodPost, fragmentPath, "", http.StatusMethodNotAllowed)
+	assertStatus(t, handler, http.MethodGet, basePath+"/policyFragments/headers/unknown"+apiQuery, "", http.StatusNotFound)
+	refsPath := basePath + "/policyFragments/headers/references" + apiQuery
+	assertStatus(t, handler, http.MethodGet, refsPath, "", http.StatusOK)
+	assertStatus(t, handler, http.MethodPost, basePath+"/policyFragments/headers/listReferences"+apiQuery, "", http.StatusOK)
+	assertStatus(t, handler, http.MethodPost, refsPath, "", http.StatusMethodNotAllowed)
+	if _, err := st.UpsertPolicy(model.Policy{ScopeID: api.ID(), Value: `<policies><inbound><include-fragment fragment-id="headers"/></inbound></policies>`}); err != nil {
+		t.Fatal(err)
+	}
+	refs := request(t, handler, http.MethodGet, refsPath, "")
+	if !strings.Contains(refs.Body.String(), `"count":1`) || !strings.Contains(refs.Body.String(), api.ID()) {
+		t.Fatalf("fragment refs = %s", refs.Body.String())
+	}
+	assertStatus(t, handler, http.MethodDelete, fragmentPath, "", http.StatusConflict)
+	if err := st.DeleteAPI(api.ID()); err != nil {
+		t.Fatal(err)
+	}
+	handler.Activate = func() error { return errors.New("activation") }
+	assertStatus(t, handler, http.MethodPut, fragmentPath, body, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodDelete, fragmentPath, "", http.StatusInternalServerError)
+	handler.Activate = nil
+	assertStatus(t, handler, http.MethodDelete, fragmentPath, "", http.StatusNoContent)
+}
+
 func TestAPIVersionSetLifecycle(t *testing.T) {
 	handler, st := testHandler(t)
 	seedService(t, st)
@@ -792,6 +843,7 @@ func TestForeignKeyStoreErrors(t *testing.T) {
 	assertStatus(t, handler, http.MethodPut, basePath+"/products/p/apis/a"+apiQuery, `{}`, http.StatusConflict)
 	assertStatus(t, handler, http.MethodPut, basePath+"/tags/t"+apiQuery, `{"properties":{"displayName":"T"}}`, http.StatusConflict)
 	assertStatus(t, handler, http.MethodPut, basePath+"/groups/g"+apiQuery, `{"properties":{"displayName":"G"}}`, http.StatusConflict)
+	assertStatus(t, handler, http.MethodPut, basePath+"/policyFragments/f"+apiQuery, `{"properties":{"value":"<fragment/>"}}`, http.StatusConflict)
 }
 
 func TestServiceDeleteActivationFailure(t *testing.T) {
@@ -869,6 +921,11 @@ func TestClosedStoreWriteErrors(t *testing.T) {
 	assertStatus(t, handler, http.MethodPost, basePath+"/users/u/token"+apiQuery, `{}`, http.StatusConflict)
 	assertStatus(t, handler, http.MethodPut, basePath+"/users/u"+apiQuery, `{"properties":{"firstName":"U","lastName":"S","email":"u@example.test"}}`, http.StatusConflict)
 	assertStatus(t, handler, http.MethodDelete, basePath+"/users/u"+apiQuery, "", http.StatusConflict)
+	assertStatus(t, handler, http.MethodGet, basePath+"/policyFragments"+apiQuery, "", http.StatusConflict)
+	assertStatus(t, handler, http.MethodGet, basePath+"/policyFragments/f"+apiQuery, "", http.StatusConflict)
+	assertStatus(t, handler, http.MethodPut, basePath+"/policyFragments/f"+apiQuery, `{"properties":{"value":"<fragment/>"}}`, http.StatusConflict)
+	assertStatus(t, handler, http.MethodGet, basePath+"/policyFragments/f/references"+apiQuery, "", http.StatusConflict)
+	assertStatus(t, handler, http.MethodDelete, basePath+"/policyFragments/f"+apiQuery, "", http.StatusConflict)
 }
 
 func TestServiceStoreWriteErrors(t *testing.T) {
@@ -1053,6 +1110,42 @@ func TestUserStoreErrors(t *testing.T) {
 	assertStatus(t, handler, http.MethodGet, basePath+"/groups/g/users"+apiQuery, "", http.StatusConflict)
 	assertStatus(t, handler, http.MethodHead, membership, "", http.StatusConflict)
 	assertStatus(t, handler, http.MethodGet, basePath+"/users/u/groups"+apiQuery, "", http.StatusConflict)
+}
+
+func TestPolicyFragmentStoreErrors(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(dir, clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	seedService(t, st)
+	fragment, err := st.UpsertPolicyFragment(model.PolicyFragment{ServiceID: serviceModel().ID(), Name: "f", Value: `<fragment/>`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", filepath.Join(dir, "azure-apim-emulator.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	handler := &Handler{Store: st, Auth: auth.AllowAll{}}
+	path := basePath + "/policyFragments/f" + apiQuery
+	if _, err := db.Exec(`CREATE TRIGGER reject_fragment_write BEFORE INSERT ON policy_fragments BEGIN SELECT RAISE(FAIL, 'rejected'); END`); err != nil {
+		t.Fatal(err)
+	}
+	assertStatus(t, handler, http.MethodPut, path, `{"properties":{"value":"<fragment/>"}}`, http.StatusConflict)
+	if _, err := db.Exec(`DROP TRIGGER reject_fragment_write; CREATE TRIGGER reject_fragment_delete BEFORE DELETE ON policy_fragments BEGIN SELECT RAISE(FAIL, 'rejected'); END`); err != nil {
+		t.Fatal(err)
+	}
+	assertStatus(t, handler, http.MethodDelete, path, "", http.StatusConflict)
+	if _, err := db.Exec(`DROP TRIGGER reject_fragment_delete; DROP TABLE policies`); err != nil {
+		t.Fatal(err)
+	}
+	assertStatus(t, handler, http.MethodGet, basePath+"/policyFragments/f/references"+apiQuery, "", http.StatusConflict)
+	if _, err := st.GetPolicyFragment(fragment.ID()); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestAbsoluteAndOperationHelpers(t *testing.T) {

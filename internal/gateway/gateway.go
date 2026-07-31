@@ -91,6 +91,7 @@ func (r *Runtime) Activate(st *store.Store, strict bool) error {
 	namedValues := map[string]map[string]string{}
 	backends := map[string]map[string]model.Backend{}
 	certificates := map[string]map[string]model.Certificate{}
+	fragments := map[string]map[string]string{}
 	for _, service := range services {
 		values, err := st.ListAPIVersionSets(service.ID())
 		if err != nil {
@@ -128,6 +129,14 @@ func (r *Runtime) Activate(st *store.Store, strict bool) error {
 		if err := validateBackendCertificates(backends[strings.ToLower(service.ID())], certificates[strings.ToLower(service.ID())]); err != nil {
 			return err
 		}
+		serviceFragments, err := st.ListPolicyFragments(service.ID())
+		if err != nil {
+			return err
+		}
+		fragments[strings.ToLower(service.ID())] = map[string]string{}
+		for _, value := range serviceFragments {
+			fragments[strings.ToLower(service.ID())][strings.ToLower(value.Name)] = value.Value
+		}
 	}
 	policyByScope := map[string]policy.Plan{}
 	for _, item := range policies {
@@ -135,7 +144,7 @@ func (r *Runtime) Activate(st *store.Store, strict bool) error {
 		if err != nil {
 			return fmt.Errorf("compile policy %s: %w", item.ScopeID, err)
 		}
-		plan, err := policy.Compile(resolved, strict)
+		plan, err := policy.CompileWithFragments(resolved, fragments[strings.ToLower(serviceIDFromScope(item.ScopeID))], strict)
 		if err != nil {
 			return fmt.Errorf("compile policy %s: %w", item.ScopeID, err)
 		}
