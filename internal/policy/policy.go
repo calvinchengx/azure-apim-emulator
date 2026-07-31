@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 )
 
 // ErrUnsupported is returned when execution reaches an unsupported policy.
@@ -21,21 +22,26 @@ const (
 	ActionRewriteURI
 	ActionForward
 	ActionReturnResponse
+	ActionRetry
 	ActionUnsupported
 )
 
 // Action is a compiled policy node.
 type Action struct {
-	Kind       ActionKind
-	Name       string
-	Value      string
-	BackendID  string
-	Action     string
-	StatusCode int
-	Reason     string
-	Body       string
-	Headers    []Header
-	Source     string
+	Kind          ActionKind
+	Name          string
+	Value         string
+	BackendID     string
+	Action        string
+	StatusCode    int
+	Reason        string
+	Body          string
+	Headers       []Header
+	Children      []Action
+	RetryCount    int
+	RetryInterval time.Duration
+	Condition     string
+	Source        string
 }
 
 // Header is a set-header result.
@@ -209,7 +215,7 @@ func compileRoot(root node, strict bool) (Plan, error) {
 func compileNodes(nodes []node, strict bool) ([]Action, error) {
 	var actions []Action
 	for _, item := range nodes {
-		action, include, err := compileNode(item)
+		action, include, err := compileNode(item, strict)
 		if err != nil {
 			return nil, err
 		}
@@ -224,7 +230,7 @@ func compileNodes(nodes []node, strict bool) ([]Action, error) {
 	return actions, nil
 }
 
-func compileNode(item node) (Action, bool, error) {
+func compileNode(item node, strict bool) (Action, bool, error) {
 	switch item.Name {
 	case "base":
 		return Action{}, false, nil
@@ -248,6 +254,26 @@ func compileNode(item node) (Action, bool, error) {
 		return Action{Kind: ActionRewriteURI, Value: value}, true, nil
 	case "forward-request":
 		return Action{Kind: ActionForward}, true, nil
+	case "retry":
+		count := 3
+		if value := item.Attrs["count"]; value != "" {
+			if _, err := fmt.Sscanf(value, "%d", &count); err != nil || count < 0 {
+				return Action{}, false, fmt.Errorf("invalid retry count")
+			}
+		}
+		interval := time.Duration(0)
+		if value := item.Attrs["interval"]; value != "" {
+			seconds, err := time.ParseDuration(value + "s")
+			if err != nil || seconds < 0 {
+				return Action{}, false, fmt.Errorf("invalid retry interval")
+			}
+			interval = seconds
+		}
+		children, err := compileNodes(item.Children, strict)
+		if err != nil {
+			return Action{}, false, err
+		}
+		return Action{Kind: ActionRetry, Children: children, RetryCount: count, RetryInterval: interval, Condition: item.Attrs["condition"]}, true, nil
 	case "return-response":
 		result := Action{Kind: ActionReturnResponse, StatusCode: http.StatusOK}
 		for _, child := range item.Children {
@@ -318,6 +344,10 @@ func Execute(actions []Action, state *State) error {
 				setHeader(state.Headers, header)
 			}
 			return nil
+		case ActionRetry:
+			if err := Execute(action.Children, state); err != nil {
+				return err
+			}
 		case ActionUnsupported:
 			return fmt.Errorf("%w: <%s>", ErrUnsupported, action.Source)
 		}

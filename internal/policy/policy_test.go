@@ -29,6 +29,46 @@ func TestCompileAndExecute(t *testing.T) {
 	}
 }
 
+func TestRetryPolicyCompilationAndExecution(t *testing.T) {
+	plan, err := Compile(`<policies><backend><retry count="2" interval="0" condition="@(context.Response.StatusCode >= 500)"><set-backend-service base-url="https://retry.example"/><forward-request/></retry></backend></policies>`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.Backend) != 1 || plan.Backend[0].Kind != ActionRetry || plan.Backend[0].RetryCount != 2 || len(plan.Backend[0].Children) != 2 || plan.Backend[0].Condition == "" {
+		t.Fatalf("retry action = %+v", plan.Backend)
+	}
+	state := &State{Request: httptest.NewRequest(http.MethodGet, "/", nil)}
+	if err := Execute(plan.Backend, state); err != nil {
+		t.Fatal(err)
+	}
+	if state.BackendURL != "https://retry.example" {
+		t.Fatalf("retry child execution state = %+v", state)
+	}
+
+	for name, xml := range map[string]string{
+		"negative count":    `<policies><backend><retry count="-1"/></backend></policies>`,
+		"invalid count":     `<policies><backend><retry count="bad"/></backend></policies>`,
+		"negative interval": `<policies><backend><retry interval="-1"/></backend></policies>`,
+		"invalid interval":  `<policies><backend><retry interval="bad"/></backend></policies>`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := Compile(xml, false); err == nil {
+				t.Fatal("invalid retry setting was accepted")
+			}
+		})
+	}
+	if _, err := Compile(`<policies><backend><retry><set-header name="X"><value>@(1)</value></set-header></retry></backend></policies>`, true); err == nil {
+		t.Fatal("strict mode should reject unsupported retry child")
+	}
+	nonstrict, err := Compile(`<policies><backend><retry><set-header name="X"><value>@(1)</value></set-header></retry></backend></policies>`, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := Execute(nonstrict.Backend, state); err == nil {
+		t.Fatal("unsupported retry child should fail during execution")
+	}
+}
+
 func TestUnsupportedExpressionModes(t *testing.T) {
 	xml := `<policies><inbound><set-header name="X"><value>@(context.Request.Method)</value></set-header></inbound><backend/><outbound/><on-error/></policies>`
 	plan, err := Compile(xml, false)

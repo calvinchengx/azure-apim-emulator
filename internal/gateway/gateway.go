@@ -2,6 +2,7 @@
 package gateway
 
 import (
+	"bytes"
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 	"net/url"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -351,7 +353,7 @@ func (r *Runtime) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		r.policyFailure(w, req, route.Plan, state, err)
 		return
 	}
-	response, err := forwardWithClient(client, req, state.BackendURL, state.Path)
+	response, err := forwardWithRetry(client, req, state.BackendURL, state.Path, route.Plan.Backend)
 	if err != nil {
 		r.policyFailure(w, req, route.Plan, state, fmt.Errorf("backend request failed: %w", err))
 		return
@@ -517,6 +519,84 @@ func (r *Runtime) policyFailure(w http.ResponseWriter, req *http.Request, plan p
 
 func (r *Runtime) forward(original *http.Request, backend, path string) (*http.Response, error) {
 	return forwardWithClient(r.client, original, backend, path)
+}
+
+func forwardWithRetry(client *http.Client, original *http.Request, backend, path string, actions []policy.Action) (*http.Response, error) {
+	var retry *policy.Action
+	for index := range actions {
+		if actions[index].Kind == policy.ActionRetry {
+			retry = &actions[index]
+			break
+		}
+	}
+	if retry == nil {
+		return forwardWithClient(client, original, backend, path)
+	}
+	var body []byte
+	var err error
+	if original.Body != nil {
+		body, err = io.ReadAll(original.Body)
+		if err != nil {
+			return nil, err
+		}
+		_ = original.Body.Close()
+	}
+	for attempt := 0; ; attempt++ {
+		if body != nil {
+			original.Body = io.NopCloser(bytes.NewReader(body))
+		}
+		response, requestErr := forwardWithClient(client, original, backend, path)
+		if attempt >= retry.RetryCount || !retryConditionMatches(retry.Condition, response, requestErr) {
+			return response, requestErr
+		}
+		if response != nil && response.Body != nil {
+			_ = response.Body.Close()
+		}
+		if retry.RetryInterval > 0 {
+			timer := time.NewTimer(retry.RetryInterval)
+			select {
+			case <-timer.C:
+			case <-original.Context().Done():
+				timer.Stop()
+				return nil, original.Context().Err()
+			}
+		}
+	}
+}
+
+var retryStatusCondition = regexp.MustCompile(`(?i)context\.Response\.StatusCode\s*(==|!=|>=|<=|>|<)\s*(\d+)`)
+
+func retryConditionMatches(condition string, response *http.Response, requestErr error) bool {
+	if requestErr != nil {
+		value := strings.ToLower(condition)
+		return strings.TrimSpace(condition) == "" || strings.Contains(value, "lastresult") || strings.Contains(value, "lasterror")
+	}
+	if response == nil {
+		return false
+	}
+	condition = strings.TrimSpace(condition)
+	if condition == "" {
+		return response.StatusCode >= http.StatusInternalServerError
+	}
+	matches := retryStatusCondition.FindStringSubmatch(condition)
+	if len(matches) != 3 {
+		return false
+	}
+	status, _ := strconv.Atoi(matches[2])
+	switch matches[1] {
+	case "==":
+		return response.StatusCode == status
+	case "!=":
+		return response.StatusCode != status
+	case ">=":
+		return response.StatusCode >= status
+	case "<=":
+		return response.StatusCode <= status
+	case ">":
+		return response.StatusCode > status
+	default:
+		return response.StatusCode < status
+	}
 }
 
 func forwardWithClient(client *http.Client, original *http.Request, backend, path string) (*http.Response, error) {

@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -109,6 +110,111 @@ func TestRoutingHelpers(t *testing.T) {
 		t.Fatal("operation matching mismatch")
 	}
 }
+
+func TestRetryConditionMatches(t *testing.T) {
+	response := &http.Response{StatusCode: http.StatusServiceUnavailable}
+	for _, test := range []struct {
+		condition string
+		want      bool
+	}{
+		{"", true},
+		{"@(context.Response.StatusCode == 503)", true},
+		{"@(context.Response.StatusCode != 500)", true},
+		{"@(context.Response.StatusCode >= 503)", true},
+		{"@(context.Response.StatusCode <= 503)", true},
+		{"@(context.Response.StatusCode > 500)", true},
+		{"@(context.Response.StatusCode < 500)", false},
+		{"@(context.Request.Method == 'GET')", false},
+	} {
+		if got := retryConditionMatches(test.condition, response, nil); got != test.want {
+			t.Errorf("retryConditionMatches(%q) = %v, want %v", test.condition, got, test.want)
+		}
+	}
+	if retryConditionMatches("", &http.Response{StatusCode: http.StatusOK}, nil) {
+		t.Fatal("successful response should not retry by default")
+	}
+	if retryConditionMatches("", nil, nil) {
+		t.Fatal("nil response should not retry")
+	}
+	if !retryConditionMatches("@(context.LastError != null)", nil, errors.New("temporary")) {
+		t.Fatal("last-error condition should retry request errors")
+	}
+	if !retryConditionMatches("", nil, errors.New("temporary")) {
+		t.Fatal("unconditional retry should retry request errors")
+	}
+	if retryConditionMatches("@(context.Response.StatusCode >= 500)", nil, errors.New("temporary")) {
+		t.Fatal("response condition should not retry request errors")
+	}
+}
+
+func TestForwardWithRetryReplaysRequestBody(t *testing.T) {
+	attempts := 0
+	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		attempts++
+		if request.Body != nil && request.Body != http.NoBody {
+			body, err := io.ReadAll(request.Body)
+			if err != nil {
+				return nil, err
+			}
+			if string(body) != "payload" {
+				t.Errorf("attempt %d body = %q", attempts, body)
+			}
+		}
+		status := http.StatusServiceUnavailable
+		if attempts == 3 {
+			status = http.StatusOK
+		}
+		return &http.Response{StatusCode: status, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("ok"))}, nil
+	})}
+	request := httptest.NewRequest(http.MethodPost, "http://gateway/input", strings.NewReader("payload"))
+	response, err := forwardWithRetry(client, request, "https://backend.example", "/input", []policy.Action{{Kind: policy.ActionRetry, RetryCount: 2, RetryInterval: time.Millisecond, Condition: "@(context.Response.StatusCode >= 500)"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if attempts != 3 || response.StatusCode != http.StatusOK {
+		t.Fatalf("retry result = attempts %d status %d", attempts, response.StatusCode)
+	}
+
+	noRetry, err := forwardWithRetry(client, httptest.NewRequest(http.MethodGet, "/", nil), "https://backend.example", "/", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	noRetry.Body.Close()
+}
+
+func TestForwardWithRetryHandlesErrorsAndCancellation(t *testing.T) {
+	attempts := 0
+	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		attempts++
+		return nil, errors.New("temporary")
+	})}
+	_, err := forwardWithRetry(client, httptest.NewRequest(http.MethodGet, "/", nil), "https://backend.example", "/", []policy.Action{{Kind: policy.ActionRetry, RetryCount: 1, Condition: "@(context.LastError != null)"}})
+	if err == nil || attempts != 2 {
+		t.Fatalf("error retry = %v attempts %d", err, attempts)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	cancelClient := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusServiceUnavailable, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("retry"))}, nil
+	})}
+	request := httptest.NewRequest(http.MethodGet, "/", nil).WithContext(ctx)
+	_, err = forwardWithRetry(cancelClient, request, "https://backend.example", "/", []policy.Action{{Kind: policy.ActionRetry, RetryCount: 1, RetryInterval: time.Hour}})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled retry = %v", err)
+	}
+	badBody := httptest.NewRequest(http.MethodPost, "/", nil)
+	badBody.Body = failingReadCloser{}
+	if _, err := forwardWithRetry(client, badBody, "https://backend.example", "/", []policy.Action{{Kind: policy.ActionRetry}}); err == nil {
+		t.Fatal("body read error should fail before forwarding")
+	}
+}
+
+type failingReadCloser struct{}
+
+func (failingReadCloser) Read([]byte) (int, error) { return 0, errors.New("body read failed") }
+func (failingReadCloser) Close() error             { return nil }
 
 func TestNamedValueResolution(t *testing.T) {
 	values := map[string]string{"token": "resolved"}

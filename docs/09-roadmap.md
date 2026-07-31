@@ -37,7 +37,7 @@ part of the identity expansion.
 - Complete ARM common semantics: ETags, paging, filters, patch, LROs, errors, and secret operations.
   Conditional ETag evaluation, stable-contract required `If-Match` enforcement for implemented entity mutations, common collection paging/filter grammar, undocumented OData-option rejection, policy-fragment `$orderby=name`, the stable scalar field/operator/function matrix for every implemented collection shape, named-value `tags/any(...)`/`tags/all(...)` predicates, selector availability/boolean validation, association-backed product tag filtering, and API/version-set/tag/product/user expansion projections are implemented centrally; tag `scope`, Key Vault refresh-failure projection, and the remaining semantics are still open.
 - HTTP routing edge cases, custom domains, backend TLS, pools, retries, circuit breakers, streaming, SSE, and WebSocket.
-  Custom hostname routing from persisted `hostnameConfigurations` and backend TLS chain-validation/client-certificate behavior are implemented; retries, circuit breakers, streaming, SSE, and WebSocket remain open.
+  Custom hostname routing from persisted `hostnameConfigurations`, backend TLS chain-validation/client-certificate behavior, and backend retry execution for transient failures/status predicates are implemented; circuit breakers, streaming, SSE, and WebSocket remain open.
 - Entra JWT, managed identity, OAuth/OIDC, client certificates, and Key Vault-backed named values.
 - Core policy families: routing, mutation, control flow, auth, limits, cache, validation, send-request, transforms, and tracing.
 - Operator portal for resources, snapshots, traces, clock, faults, and parity.

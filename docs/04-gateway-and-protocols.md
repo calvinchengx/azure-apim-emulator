@@ -22,7 +22,7 @@ validation and configured custom domains follow tier-specific rules.
 3. Match API and operation using protocol-specific routing and revision/version rules.
 4. Resolve subscription key and caller context.
 5. Execute effective inbound policies from broadest to narrowest scope.
-6. Select and call the backend through the backend policy section, honoring backend TLS chain-validation settings and client certificates.
+6. Select and call the backend through the backend policy section, honoring backend TLS chain-validation settings, client certificates, and compiled retry policies.
 7. Execute outbound policies in the documented order.
 8. On failure, create `LastError` and run applicable `on-error` policies.
 9. Emit response, trace, metrics, logs, analytics, and quota effects.
@@ -40,7 +40,7 @@ Build on `net/http` with a gateway-owned transport rather than exposing
 - raw path, escaped path, query ordering, duplicate header, and trailer correctness
 - HTTP/1.1 and HTTP/2 first; documented HTTP/3 behavior when the Go stack permits
 - backend connection pooling, proxy settings, client certificates, SNI, TLS validation, and custom CAs
-- timeout, retry, circuit-breaker, pool, and load-balancing semantics
+- timeout, circuit-breaker, pool, and load-balancing semantics; retry execution is implemented for transient failures and status predicates
 - bounded request/response buffering activated only by policies that inspect bodies
 - body replay rules for retries and `send-request`
 - request size, decompression, encoding, chunking, and malformed-message behavior
