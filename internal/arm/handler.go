@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"mime"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -289,6 +290,10 @@ func (h *Handler) api(w http.ResponseWriter, r *http.Request, rt route) {
 		writeJSON(w, http.StatusOK, map[string]any{"value": resources})
 		return
 	}
+	if len(rt.Tail) == 3 && equal(rt.Tail[2], "schemas") {
+		h.apiSchemaCollection(w, r, api)
+		return
+	}
 	if len(rt.Tail) == 3 && equal(rt.Tail[2], "revisions") {
 		if r.Method != http.MethodGet {
 			methodNotAllowed(w)
@@ -325,6 +330,10 @@ func (h *Handler) api(w http.ResponseWriter, r *http.Request, rt route) {
 	}
 	if len(rt.Tail) == 4 && equal(rt.Tail[2], "operations") {
 		h.operationResource(w, r, model.Operation{APIID: api.ID(), Name: rt.Tail[3]})
+		return
+	}
+	if len(rt.Tail) == 4 && equal(rt.Tail[2], "schemas") {
+		h.apiSchemaResource(w, r, model.APISchema{APIID: api.ID(), Name: rt.Tail[3]})
 		return
 	}
 	if len(rt.Tail) == 4 && equal(rt.Tail[2], "releases") {
@@ -370,6 +379,79 @@ func (h *Handler) api(w http.ResponseWriter, r *http.Request, rt route) {
 		return
 	}
 	writeError(w, http.StatusNotFound, "ResourceNotFound", "The requested API resource was not found.", r.URL.Path)
+}
+
+func (h *Handler) apiSchemaCollection(w http.ResponseWriter, r *http.Request, api model.API) {
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w)
+		return
+	}
+	values, err := h.Store.ListAPISchemas(api.ID())
+	if err != nil {
+		h.storeError(w, err, api.ID())
+		return
+	}
+	resources := make([]map[string]any, 0, len(values))
+	for _, value := range values {
+		resources = append(resources, apiSchemaWire(value))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"value": resources, "count": len(resources)})
+}
+
+func (h *Handler) apiSchemaResource(w http.ResponseWriter, r *http.Request, value model.APISchema) {
+	switch r.Method {
+	case http.MethodGet, http.MethodHead:
+		got, err := h.Store.GetAPISchema(value.ID())
+		if err != nil {
+			h.storeError(w, err, value.ID())
+			return
+		}
+		if r.Method == http.MethodHead {
+			w.Header().Set("ETag", got.ETag)
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		writeResource(w, http.StatusOK, apiSchemaWire(got), got.ETag)
+	case http.MethodPut:
+		_, existingErr := h.Store.GetAPISchema(value.ID())
+		if existingErr != nil && !errors.Is(existingErr, store.ErrNotFound) {
+			h.storeError(w, existingErr, value.ID())
+			return
+		}
+		var body struct {
+			Properties struct {
+				ContentType string         `json:"contentType"`
+				Document    map[string]any `json:"document"`
+			} `json:"properties"`
+		}
+		if err := decode(r, &body); err != nil {
+			writeError(w, http.StatusBadRequest, "InvalidRequestContent", err.Error(), "")
+			return
+		}
+		if _, _, err := mime.ParseMediaType(body.Properties.ContentType); err != nil || !strings.Contains(body.Properties.ContentType, "/") {
+			writeError(w, http.StatusBadRequest, "ValidationError", "properties.contentType must be a valid media type.", "properties.contentType")
+			return
+		}
+		value.ContentType, value.Document = body.Properties.ContentType, body.Properties.Document
+		got, err := h.Store.UpsertAPISchema(value)
+		if err != nil {
+			h.storeError(w, err, value.ID())
+			return
+		}
+		status := http.StatusOK
+		if errors.Is(existingErr, store.ErrNotFound) {
+			status = http.StatusCreated
+		}
+		writeResource(w, status, apiSchemaWire(got), got.ETag)
+	case http.MethodDelete:
+		if err := h.Store.DeleteAPISchema(value.ID()); err != nil && !errors.Is(err, store.ErrNotFound) {
+			h.storeError(w, err, value.ID())
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	default:
+		methodNotAllowed(w)
+	}
 }
 
 type apiPayload struct {
@@ -1641,6 +1723,9 @@ func apiReleaseWire(v model.APIRelease) map[string]any {
 }
 func operationWire(v model.Operation) map[string]any {
 	return map[string]any{"id": v.APIID + "/operations/" + v.Name, "name": v.Name, "type": "Microsoft.ApiManagement/service/apis/operations", "properties": map[string]any{"displayName": v.DisplayName, "method": v.Method, "urlTemplate": v.URLTemplate}}
+}
+func apiSchemaWire(v model.APISchema) map[string]any {
+	return map[string]any{"id": v.ID(), "name": v.Name, "type": "Microsoft.ApiManagement/service/apis/schemas", "properties": map[string]any{"contentType": v.ContentType, "document": v.Document}}
 }
 func productWire(v model.Product) map[string]any {
 	return map[string]any{"id": v.ID(), "name": v.Name, "type": "Microsoft.ApiManagement/service/products", "properties": map[string]any{"displayName": v.DisplayName, "state": v.State, "approvalRequired": v.ApprovalRequired, "subscriptionRequired": true}}

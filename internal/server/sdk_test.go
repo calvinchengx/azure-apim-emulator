@@ -330,6 +330,43 @@ func TestGoManagementSDKConfiguresProtectedGateway(t *testing.T) {
 	}, nil); err != nil {
 		t.Fatal(err)
 	}
+	schemaClient, err := armapimanagement.NewAPISchemaClient(defaultSubscription, credential, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	schemaContentType := "application/vnd.oai.openapi.components+json"
+	schemaPoller, err := schemaClient.BeginCreateOrUpdate(ctx, defaultResourceGroup, "emulator", "go-sdk-full", "components", armapimanagement.SchemaContract{
+		Properties: &armapimanagement.SchemaContractProperties{ContentType: &schemaContentType, Document: &armapimanagement.SchemaDocumentProperties{Components: map[string]any{"schemas": map[string]any{"Item": map[string]any{"type": "object"}}}}},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := schemaPoller.PollUntilDone(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+	gotSchema, err := schemaClient.Get(ctx, defaultResourceGroup, "emulator", "go-sdk-full", "components", nil)
+	if err != nil || gotSchema.Properties == nil || gotSchema.Properties.ContentType == nil || *gotSchema.Properties.ContentType != schemaContentType {
+		t.Fatalf("schema GET = %+v, %v", gotSchema, err)
+	}
+	if entityTag, err := schemaClient.GetEntityTag(ctx, defaultResourceGroup, "emulator", "go-sdk-full", "components", nil); err != nil || entityTag.ETag == nil {
+		t.Fatalf("schema ETag = %+v, %v", entityTag, err)
+	}
+	schemaPage, err := schemaClient.NewListByAPIPager(defaultResourceGroup, "emulator", "go-sdk-full", nil).NextPage(ctx)
+	if err != nil || len(schemaPage.Value) != 1 {
+		t.Fatalf("schema page = %+v, %v", schemaPage, err)
+	}
+	temporarySchemaValue := `<schema xmlns="http://www.w3.org/2001/XMLSchema" />`
+	temporarySchemaType := "application/vnd.ms-azure-apim.xsd+xml"
+	temporarySchemaPoller, err := schemaClient.BeginCreateOrUpdate(ctx, defaultResourceGroup, "emulator", "go-sdk-full", "temporary", armapimanagement.SchemaContract{Properties: &armapimanagement.SchemaContractProperties{ContentType: &temporarySchemaType, Document: &armapimanagement.SchemaDocumentProperties{Value: &temporarySchemaValue}}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := temporarySchemaPoller.PollUntilDone(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := schemaClient.Delete(ctx, defaultResourceGroup, "emulator", "go-sdk-full", "temporary", "*", nil); err != nil {
+		t.Fatal(err)
+	}
 	apiPolicyClient, err := armapimanagement.NewAPIPolicyClient(defaultSubscription, credential, options)
 	if err != nil {
 		t.Fatal(err)
@@ -357,6 +394,9 @@ func TestGoManagementSDKConfiguresProtectedGateway(t *testing.T) {
 	clonedOperation, err := operationClient.Get(ctx, defaultResourceGroup, "emulator", "go-sdk-full;rev=2", "get", nil)
 	if err != nil || clonedOperation.Properties == nil || clonedOperation.Properties.Method == nil || *clonedOperation.Properties.Method != method {
 		t.Fatalf("cloned revision operation = %+v, %v", clonedOperation, err)
+	}
+	if clonedSchema, err := schemaClient.Get(ctx, defaultResourceGroup, "emulator", "go-sdk-full;rev=2", "components", nil); err != nil || clonedSchema.Properties == nil || clonedSchema.Properties.ContentType == nil || *clonedSchema.Properties.ContentType != schemaContentType {
+		t.Fatalf("cloned revision schema = %+v, %v", clonedSchema, err)
 	}
 	revisionPager = revisionClient.NewListByServicePager(defaultResourceGroup, "emulator", "go-sdk-full", nil)
 	revisionPage, err = revisionPager.NextPage(ctx)

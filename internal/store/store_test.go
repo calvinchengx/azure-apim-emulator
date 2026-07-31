@@ -286,6 +286,10 @@ func TestClosedStoreErrors(t *testing.T) {
 		"get certificate":    func() error { _, err := st.GetCertificate("certificate"); return err },
 		"list certificates":  func() error { _, err := st.ListCertificates("service"); return err },
 		"delete certificate": func() error { return st.DeleteCertificate("certificate") },
+		"upsert API schema":  func() error { _, err := st.UpsertAPISchema(model.APISchema{}); return err },
+		"get API schema":     func() error { _, err := st.GetAPISchema("schema"); return err },
+		"list API schemas":   func() error { _, err := st.ListAPISchemas("api"); return err },
+		"delete API schema":  func() error { return st.DeleteAPISchema("schema") },
 		"runtime": func() error {
 			_, _, _, _, _, _, _, err := st.RuntimeData()
 			return err
@@ -376,6 +380,12 @@ func TestScanFunctionsRejectMalformedRows(t *testing.T) {
 			`CREATE TABLE operations (id, api_id, name, display_name, method, url_template, etag)`,
 			`INSERT INTO operations VALUES ('id', NULL, '', '', '', '', '')`,
 			func(db *sql.DB) error { _, err := scanOperations(db); return err },
+		},
+		{
+			"API schemas",
+			`CREATE TABLE api_schemas (id, api_id, name, content_type, document_json, etag)`,
+			`INSERT INTO api_schemas VALUES ('id', 'api', NULL, '', '{}', '')`,
+			func(db *sql.DB) error { _, err := (&Store{db: db}).ListAPISchemas("api"); return err },
 		},
 		{
 			"products",
@@ -547,6 +557,9 @@ func TestCloneAPIRevisionTransactions(t *testing.T) {
 		if _, err := st.UpsertPolicy(model.Policy{ScopeID: api.ID(), Value: "<policies/>"}); err != nil {
 			t.Fatal(err)
 		}
+		if _, err := st.UpsertAPISchema(model.APISchema{APIID: api.ID(), Name: "schema", ContentType: "application/json", Document: map[string]any{"components": map[string]any{"Example": map[string]any{"type": "string"}}}}); err != nil {
+			t.Fatal(err)
+		}
 		return st, api
 	}
 
@@ -557,6 +570,9 @@ func TestCloneAPIRevisionTransactions(t *testing.T) {
 		cloned, err := st.CloneAPIRevision(source.ID(), target)
 		if err != nil || cloned.Revision != "2" || cloned.IsCurrent {
 			t.Fatalf("cloned API = %+v, %v", cloned, err)
+		}
+		if schemas, err := st.ListAPISchemas(cloned.ID()); err != nil || len(schemas) != 1 {
+			t.Fatalf("cloned schemas = %+v, %v", schemas, err)
 		}
 	})
 
@@ -590,6 +606,7 @@ func TestCloneAPIRevisionTransactions(t *testing.T) {
 		{"metadata", `CREATE TRIGGER reject_clone_metadata BEFORE INSERT ON api_revision_metadata WHEN NEW.revision='2' BEGIN SELECT RAISE(FAIL, 'rejected'); END`},
 		{"version metadata", `CREATE TRIGGER reject_clone_version BEFORE INSERT ON api_version_metadata WHEN NEW.api_id LIKE '%;rev=2' BEGIN SELECT RAISE(FAIL, 'rejected'); END`},
 		{"operations", `CREATE TRIGGER reject_clone_operation BEFORE INSERT ON operations WHEN NEW.api_id LIKE '%;rev=2' BEGIN SELECT RAISE(FAIL, 'rejected'); END`},
+		{"schemas", `CREATE TRIGGER reject_clone_schema BEFORE INSERT ON api_schemas WHEN NEW.api_id LIKE '%;rev=2' BEGIN SELECT RAISE(FAIL, 'rejected'); END`},
 		{"policy", `CREATE TRIGGER reject_clone_policy BEFORE INSERT ON policies WHEN NEW.scope_id LIKE '%;rev=2' BEGIN SELECT RAISE(FAIL, 'rejected'); END`},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -803,6 +820,43 @@ func TestCertificateLifecycle(t *testing.T) {
 		t.Fatalf("missing certificate = %v", err)
 	}
 	if err := st.DeleteCertificate(certificate.ID()); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("second delete = %v", err)
+	}
+}
+
+func TestAPISchemaLifecycle(t *testing.T) {
+	st, err := Open("", clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	service, err := st.UpsertService(model.Service{Name: "schemas"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	api, err := st.UpsertAPI(model.API{ServiceID: service.ID(), Name: "api"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	schema, err := st.UpsertAPISchema(model.APISchema{APIID: api.ID(), Name: "payload", ContentType: "application/json", Document: map[string]any{"definitions": map[string]any{"Item": map[string]any{"type": "object"}}}})
+	if err != nil || schema.ID() != api.ID()+"/schemas/payload" || schema.ETag == "" {
+		t.Fatalf("schema = %+v, %v", schema, err)
+	}
+	got, err := st.GetAPISchema(strings.ToUpper(schema.ID()))
+	if err != nil || got.ContentType != "application/json" || got.Document["definitions"] == nil {
+		t.Fatalf("get schema = %+v, %v", got, err)
+	}
+	values, err := st.ListAPISchemas(api.ID())
+	if err != nil || len(values) != 1 {
+		t.Fatalf("list schemas = %+v, %v", values, err)
+	}
+	if err := st.DeleteAPISchema(schema.ID()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.GetAPISchema(schema.ID()); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing schema = %v", err)
+	}
+	if err := st.DeleteAPISchema(schema.ID()); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("second delete = %v", err)
 	}
 }

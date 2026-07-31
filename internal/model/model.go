@@ -124,6 +124,18 @@ type Certificate struct {
 // ID returns the certificate ARM resource ID.
 func (v Certificate) ID() string { return v.ServiceID + "/certificates/" + v.Name }
 
+// APISchema is a lossless schema document owned by one API revision.
+type APISchema struct {
+	APIID       string
+	Name        string
+	ContentType string
+	Document    map[string]any
+	ETag        string
+}
+
+// ID returns the API schema ARM resource ID.
+func (v APISchema) ID() string { return v.APIID + "/schemas/" + v.Name }
+
 // Operation is an HTTP operation belonging to an API.
 type Operation struct {
 	APIID       string

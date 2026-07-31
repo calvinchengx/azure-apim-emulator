@@ -501,6 +501,34 @@ func TestCertificateLifecycle(t *testing.T) {
 	assertStatus(t, handler, http.MethodDelete, path, "", http.StatusNoContent)
 }
 
+func TestAPISchemaLifecycle(t *testing.T) {
+	handler, st := testHandler(t)
+	seedService(t, st)
+	assertStatus(t, handler, http.MethodPut, basePath+"/apis/a"+apiQuery, `{"properties":{"displayName":"A","serviceUrl":"https://backend"}}`, http.StatusCreated)
+	collection, path := basePath+"/apis/a/schemas"+apiQuery, basePath+"/apis/a/schemas/payload"+apiQuery
+	assertStatus(t, handler, http.MethodGet, collection, "", http.StatusOK)
+	assertStatus(t, handler, http.MethodPost, collection, "", http.StatusMethodNotAllowed)
+	assertStatus(t, handler, http.MethodGet, path, "", http.StatusNotFound)
+	assertStatus(t, handler, http.MethodPut, path, `{`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPut, path, `{"properties":{"contentType":"invalid"}}`, http.StatusBadRequest)
+	body := `{"properties":{"contentType":"application/vnd.oai.openapi.components+json","document":{"components":{"schemas":{"Item":{"type":"object","properties":{"id":{"type":"string"}}}}}}}}`
+	assertStatus(t, handler, http.MethodPut, path, body, http.StatusCreated)
+	assertStatus(t, handler, http.MethodPut, path, `{"properties":{"contentType":"application/json","document":{"definitions":{"Item":{"type":"string"}}}}}`, http.StatusOK)
+	got := request(t, handler, http.MethodGet, path, "")
+	if !strings.Contains(got.Body.String(), `"definitions":{"Item":{"type":"string"}}`) {
+		t.Fatalf("schema GET = %s", got.Body.String())
+	}
+	assertStatus(t, handler, http.MethodHead, path, "", http.StatusOK)
+	list := request(t, handler, http.MethodGet, collection, "")
+	if !strings.Contains(list.Body.String(), `"count":1`) {
+		t.Fatalf("schema list = %s", list.Body.String())
+	}
+	assertStatus(t, handler, http.MethodGet, basePath+"/apis/a/schemas/payload/extra"+apiQuery, "", http.StatusNotFound)
+	assertStatus(t, handler, http.MethodPost, path, "", http.StatusMethodNotAllowed)
+	assertStatus(t, handler, http.MethodDelete, path, "", http.StatusNoContent)
+	assertStatus(t, handler, http.MethodDelete, path, "", http.StatusNoContent)
+}
+
 func testPKCS12(t *testing.T, password string) string {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -556,6 +584,7 @@ func TestForeignKeyStoreErrors(t *testing.T) {
 	assertStatus(t, handler, http.MethodPut, basePath+"/namedValues/v"+apiQuery, `{"properties":{"displayName":"V","value":"value"}}`, http.StatusConflict)
 	assertStatus(t, handler, http.MethodPut, basePath+"/backends/v"+apiQuery, `{"properties":{"url":"https://backend","protocol":"http"}}`, http.StatusConflict)
 	assertStatus(t, handler, http.MethodPut, basePath+"/certificates/v"+apiQuery, `{"properties":{"keyVault":{"secretIdentifier":"https://vault/secret"}}}`, http.StatusConflict)
+	assertStatus(t, handler, http.MethodPut, basePath+"/apis/a/schemas/s"+apiQuery, `{"properties":{"contentType":"application/json","document":{}}}`, http.StatusConflict)
 	assertStatus(t, handler, http.MethodPut, basePath+"/apis/a/operations/get"+apiQuery, `{"properties":{"method":"GET","urlTemplate":"/"}}`, http.StatusConflict)
 	assertStatus(t, handler, http.MethodPut, basePath+"/products/p/apis/a"+apiQuery, `{}`, http.StatusConflict)
 }
@@ -612,6 +641,9 @@ func TestClosedStoreWriteErrors(t *testing.T) {
 	assertStatus(t, handler, http.MethodGet, basePath+"/certificates"+apiQuery, "", http.StatusConflict)
 	assertStatus(t, handler, http.MethodPut, basePath+"/certificates/v"+apiQuery, `{"properties":{"keyVault":{"secretIdentifier":"https://vault/secret"}}}`, http.StatusConflict)
 	assertStatus(t, handler, http.MethodDelete, basePath+"/certificates/v"+apiQuery, "", http.StatusConflict)
+	assertStatus(t, handler, http.MethodGet, basePath+"/apis/a/schemas"+apiQuery, "", http.StatusConflict)
+	assertStatus(t, handler, http.MethodPut, basePath+"/apis/a/schemas/s"+apiQuery, `{"properties":{"contentType":"application/json","document":{}}}`, http.StatusConflict)
+	assertStatus(t, handler, http.MethodDelete, basePath+"/apis/a/schemas/s"+apiQuery, "", http.StatusConflict)
 }
 
 func TestServiceStoreWriteErrors(t *testing.T) {

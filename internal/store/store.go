@@ -121,6 +121,10 @@ CREATE TABLE IF NOT EXISTS operations (
   name TEXT NOT NULL, display_name TEXT NOT NULL, method TEXT NOT NULL,
   url_template TEXT NOT NULL, etag TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS api_schemas (
+  id TEXT PRIMARY KEY, api_id TEXT NOT NULL REFERENCES apis(id) ON DELETE CASCADE,
+  name TEXT NOT NULL, content_type TEXT NOT NULL, document_json TEXT NOT NULL, etag TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS products (
   id TEXT PRIMARY KEY, service_id TEXT NOT NULL REFERENCES services(id) ON DELETE CASCADE,
   name TEXT NOT NULL, display_name TEXT NOT NULL, state TEXT NOT NULL,
@@ -330,6 +334,11 @@ func (s *Store) CloneAPIRevision(sourceID string, v model.API) (model.API, error
 	if _, err := tx.Exec(`INSERT INTO operations (id, api_id, name, display_name, method, url_template, etag)
 	    SELECT ? || '/operations/' || name, ?, name, display_name, method, url_template, ?
 	    FROM operations WHERE lower(api_id)=lower(?)`, v.ID(), v.ID(), childETag, sourceID); err != nil {
+		return v, err
+	}
+	if _, err := tx.Exec(`INSERT INTO api_schemas (id, api_id, name, content_type, document_json, etag)
+	    SELECT ? || '/schemas/' || name, ?, name, content_type, document_json, ?
+	    FROM api_schemas WHERE lower(api_id)=lower(?)`, v.ID(), v.ID(), newETag(), sourceID); err != nil {
 		return v, err
 	}
 	if _, err := tx.Exec(`INSERT INTO policies (scope_id, format, value, etag)
@@ -647,6 +656,58 @@ func (s *Store) ListBackends(serviceID string) ([]model.Backend, error) {
 
 // DeleteBackend removes a backend.
 func (s *Store) DeleteBackend(id string) error { return deleteScopedResource(s.db, "backends", id) }
+
+// UpsertAPISchema creates or replaces an API schema.
+func (s *Store) UpsertAPISchema(v model.APISchema) (model.APISchema, error) {
+	v.ETag = newETag()
+	document, _ := json.Marshal(v.Document)
+	_, err := s.db.Exec(`INSERT INTO api_schemas (id, api_id, name, content_type, document_json, etag)
+        VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET content_type=excluded.content_type,
+          document_json=excluded.document_json, etag=excluded.etag`,
+		v.ID(), v.APIID, v.Name, v.ContentType, string(document), v.ETag)
+	return v, err
+}
+
+// GetAPISchema finds one API schema.
+func (s *Store) GetAPISchema(id string) (model.APISchema, error) {
+	var v model.APISchema
+	var document string
+	err := s.db.QueryRow(`SELECT api_id, name, content_type, document_json, etag
+        FROM api_schemas WHERE lower(id)=lower(?)`, id).Scan(&v.APIID, &v.Name, &v.ContentType, &document, &v.ETag)
+	if errors.Is(err, sql.ErrNoRows) {
+		return model.APISchema{}, ErrNotFound
+	}
+	if err == nil {
+		_ = json.Unmarshal([]byte(document), &v.Document)
+	}
+	return v, err
+}
+
+// ListAPISchemas returns schemas for an API in stable ID order.
+func (s *Store) ListAPISchemas(apiID string) ([]model.APISchema, error) {
+	rows, err := s.db.Query(`SELECT api_id, name, content_type, document_json, etag
+        FROM api_schemas WHERE lower(api_id)=lower(?) ORDER BY id`, apiID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	values := make([]model.APISchema, 0)
+	for rows.Next() {
+		var v model.APISchema
+		var document string
+		if err := rows.Scan(&v.APIID, &v.Name, &v.ContentType, &document, &v.ETag); err != nil {
+			return nil, err
+		}
+		_ = json.Unmarshal([]byte(document), &v.Document)
+		values = append(values, v)
+	}
+	return values, rows.Err()
+}
+
+// DeleteAPISchema removes an API schema.
+func (s *Store) DeleteAPISchema(id string) error {
+	return deleteScopedResource(s.db, "api_schemas", id)
+}
 
 // UpsertCertificate creates or replaces a certificate.
 func (s *Store) UpsertCertificate(v model.Certificate) (model.Certificate, error) {
