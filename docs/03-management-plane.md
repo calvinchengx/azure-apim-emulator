@@ -169,6 +169,14 @@ existing named-value references remain unchanged. The official Go SDK witness
 verifies that the submitted instrumentation key is not returned. Exact Azure
 reference naming remains assigned to the live differential fixture.
 
+Service and API diagnostics retain canonical documents atomically with indexed
+logger, sampling, client-IP, always-log, and verbosity fields. PATCH recursively
+merges complex frontend/backend, correlation, and operation-name settings while
+explicit nulls reset indexed optional fields to their stable defaults. Resource
+identity is stripped before persistence and projected authoritatively at each
+scope. The official Go SDK witness verifies correlation protocol, operation-name
+format, pipeline settings, sampling, revision cloning, and ETags.
+
 ## Common ARM semantics
 
 Implement centrally and test across resources:

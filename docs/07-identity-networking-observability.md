@@ -86,11 +86,11 @@ credentials or network calls are never required for the standard test suite.
 
 The current P1 slice implements lossless logger and service/API diagnostic ARM
 documents, logger credential isolation and reference projection, logger resource
-reference protection, revision cloning, fixed sampling, `allErrors` override
-behavior, and local request events containing correlation, status, duration,
-method, path, and optional client IP. Header/body capture, exact Azure credential
-reference naming, external adapters, analytics, and metrics remain tracked parity
-work.
+reference protection, recursive diagnostic PATCH with indexed null/default
+synchronization, revision cloning, fixed sampling, `allErrors` override behavior,
+and local request events containing correlation, status, duration, method, path,
+and optional client IP. Header/body capture, exact Azure credential reference
+naming, external adapters, analytics, and metrics remain tracked parity work.
 
 ## Security posture
 

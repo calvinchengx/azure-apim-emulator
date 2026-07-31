@@ -2311,9 +2311,11 @@ func (h *Handler) diagnostic(w http.ResponseWriter, r *http.Request, rt route, s
 		}
 		if r.Method == http.MethodPatch {
 			mergeObject(value.Document, document)
+			clearNullDiagnosticProperties(&value, document)
 		} else {
 			value.Document = document
 		}
+		cleanResourceDocument(value.Document)
 		applyDiagnosticPayload(&value, body)
 		if value.LoggerID == "" {
 			writeError(w, http.StatusBadRequest, "ValidationError", "loggerId is required.", "properties.loggerId")
@@ -2385,6 +2387,34 @@ func applyDiagnosticPayload(value *model.Diagnostic, body diagnosticPayload) {
 		if body.Properties.Sampling.Percentage != nil {
 			value.SamplingPercentage = *body.Properties.Sampling.Percentage
 		}
+	}
+}
+
+func clearNullDiagnosticProperties(value *model.Diagnostic, patch map[string]any) {
+	properties, _ := patch["properties"].(map[string]any)
+	if field, present := properties["loggerId"]; present && field == nil {
+		value.LoggerID = ""
+	}
+	if field, present := properties["alwaysLog"]; present && field == nil {
+		value.AlwaysLog = ""
+	}
+	if field, present := properties["logClientIp"]; present && field == nil {
+		value.LogClientIP = false
+	}
+	if field, present := properties["verbosity"]; present && field == nil {
+		value.Verbosity = ""
+	}
+	sampling, present := properties["sampling"]
+	if present && sampling == nil {
+		value.SamplingType, value.SamplingPercentage = "fixed", 100
+		return
+	}
+	samplingObject, _ := sampling.(map[string]any)
+	if field, present := samplingObject["samplingType"]; present && field == nil {
+		value.SamplingType = "fixed"
+	}
+	if field, present := samplingObject["percentage"]; present && field == nil {
+		value.SamplingPercentage = 100
 	}
 }
 

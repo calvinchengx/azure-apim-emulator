@@ -763,9 +763,11 @@ func TestGoManagementSDKConfiguresProtectedGateway(t *testing.T) {
 		t.Fatal(err)
 	}
 	alwaysLog, verbosity := armapimanagement.AlwaysLogAllErrors, armapimanagement.VerbosityInformation
+	correlationProtocol, operationNameFormat := armapimanagement.HTTPCorrelationProtocolW3C, armapimanagement.OperationNameFormatURL
 	samplingType, samplingPercentage, logClientIP := armapimanagement.SamplingTypeFixed, 100.0, true
 	diagnosticContract := armapimanagement.DiagnosticContract{Properties: &armapimanagement.DiagnosticContractProperties{
 		LoggerID: &loggerID, AlwaysLog: &alwaysLog, LogClientIP: &logClientIP, Verbosity: &verbosity,
+		HTTPCorrelationProtocol: &correlationProtocol, OperationNameFormat: &operationNameFormat,
 		Sampling: &armapimanagement.SamplingSettings{SamplingType: &samplingType, Percentage: &samplingPercentage},
 		Frontend: &armapimanagement.PipelineDiagnosticSettings{Request: &armapimanagement.HTTPMessageDiagnostic{Headers: []*string{&displayName}}},
 	}}
@@ -773,7 +775,7 @@ func TestGoManagementSDKConfiguresProtectedGateway(t *testing.T) {
 	if err != nil || createdDiagnostic.Properties == nil || createdDiagnostic.Properties.LoggerID == nil || *createdDiagnostic.Properties.LoggerID != loggerID {
 		t.Fatalf("diagnostic create = %+v, %v", createdDiagnostic, err)
 	}
-	if got, err := diagnosticClient.Get(ctx, defaultResourceGroup, "emulator", "go-sdk-diagnostic", nil); err != nil || got.Properties == nil || got.Properties.Frontend == nil {
+	if got, err := diagnosticClient.Get(ctx, defaultResourceGroup, "emulator", "go-sdk-diagnostic", nil); err != nil || got.Properties == nil || got.Properties.Frontend == nil || got.Properties.HTTPCorrelationProtocol == nil || *got.Properties.HTTPCorrelationProtocol != correlationProtocol || got.Properties.OperationNameFormat == nil || *got.Properties.OperationNameFormat != operationNameFormat {
 		t.Fatalf("diagnostic GET = %+v, %v", got, err)
 	}
 	if entityTag, err := diagnosticClient.GetEntityTag(ctx, defaultResourceGroup, "emulator", "go-sdk-diagnostic", nil); err != nil || entityTag.ETag == nil {

@@ -395,7 +395,7 @@ func TestLoggerAndDiagnosticBranches(t *testing.T) {
 	assertStatus(t, handler, http.MethodPost, loggerPath, "", http.StatusMethodNotAllowed)
 
 	diagnosticPath := basePath + "/diagnostics/local" + apiQuery
-	diagnosticBody := `{"properties":{"loggerId":"` + serviceModel().ID() + `/loggers/app","alwaysLog":"allErrors","logClientIp":true,"verbosity":"information","sampling":{"samplingType":"fixed","percentage":50},"frontend":{"request":{"body":{"bytes":64}}}}}`
+	diagnosticBody := `{"id":"malicious","name":"malicious","type":"malicious","customRoot":{"retained":true},"properties":{"loggerId":"` + serviceModel().ID() + `/loggers/app","alwaysLog":"allErrors","logClientIp":true,"verbosity":"information","sampling":{"samplingType":"fixed","percentage":50},"httpCorrelationProtocol":"W3C","operationNameFormat":"Url","frontend":{"request":{"body":{"bytes":64}}}}}`
 	assertStatus(t, handler, http.MethodPost, basePath+"/diagnostics"+apiQuery, "", http.StatusMethodNotAllowed)
 	assertStatus(t, handler, http.MethodGet, basePath+"/diagnostics/too/deep"+apiQuery, "", http.StatusNotFound)
 	assertStatus(t, handler, http.MethodGet, diagnosticPath, "", http.StatusNotFound)
@@ -410,11 +410,22 @@ func TestLoggerAndDiagnosticBranches(t *testing.T) {
 	assertStatus(t, handler, http.MethodPut, diagnosticPath, diagnosticBody, http.StatusOK)
 	assertStatus(t, handler, http.MethodHead, diagnosticPath, "", http.StatusOK)
 	diagnosticGet := request(t, handler, http.MethodGet, diagnosticPath, "")
-	if !strings.Contains(diagnosticGet.Body.String(), `"bytes":64`) || !strings.Contains(diagnosticGet.Body.String(), `"percentage":50`) {
+	if !strings.Contains(diagnosticGet.Body.String(), `"bytes":64`) || !strings.Contains(diagnosticGet.Body.String(), `"percentage":50`) || !strings.Contains(diagnosticGet.Body.String(), `"customRoot":{"retained":true}`) || strings.Contains(diagnosticGet.Body.String(), `"id":"malicious"`) {
 		t.Fatalf("diagnostic GET = %s", diagnosticGet.Body.String())
+	}
+	storedDiagnostic, err := st.GetDiagnostic(serviceModel().ID() + "/diagnostics/local")
+	if err != nil || storedDiagnostic.Document["id"] != nil || storedDiagnostic.Document["properties"].(map[string]any)["httpCorrelationProtocol"] != "W3C" {
+		t.Fatalf("stored diagnostic = %+v, %v", storedDiagnostic, err)
 	}
 	assertStatus(t, handler, http.MethodPatch, basePath+"/diagnostics/missing"+apiQuery, `{}`, http.StatusNotFound)
 	assertStatus(t, handler, http.MethodPatch, diagnosticPath, `{`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPatch, diagnosticPath, `{"properties":{"loggerId":null}}`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPatch, diagnosticPath, `{"properties":{"alwaysLog":null,"logClientIp":null,"verbosity":null,"sampling":{"samplingType":null,"percentage":null}}}`, http.StatusOK)
+	diagnosticGet = request(t, handler, http.MethodGet, diagnosticPath, "")
+	if !strings.Contains(diagnosticGet.Body.String(), `"alwaysLog":""`) || !strings.Contains(diagnosticGet.Body.String(), `"logClientIp":false`) || !strings.Contains(diagnosticGet.Body.String(), `"percentage":100`) {
+		t.Fatalf("cleared diagnostic GET = %s", diagnosticGet.Body.String())
+	}
+	assertStatus(t, handler, http.MethodPatch, diagnosticPath, `{"properties":{"sampling":null}}`, http.StatusOK)
 	assertStatus(t, handler, http.MethodPatch, diagnosticPath, `{"properties":{"alwaysLog":"","logClientIp":false,"verbosity":"verbose","sampling":{"samplingType":"fixed","percentage":100}}}`, http.StatusOK)
 	list = request(t, handler, http.MethodGet, basePath+"/diagnostics"+apiQuery, "")
 	if !strings.Contains(list.Body.String(), `"count":1`) || !strings.Contains(list.Body.String(), `"verbosity":"verbose"`) {
