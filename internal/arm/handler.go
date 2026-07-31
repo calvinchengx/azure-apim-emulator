@@ -2030,11 +2030,16 @@ func (h *Handler) backend(w http.ResponseWriter, r *http.Request, rt route) {
 			return
 		}
 		if r.Method == http.MethodPatch {
+			if value.Document == nil {
+				value.Document = backendWire(value)
+			}
 			mergeObject(value.Document, document)
 		} else {
 			value.Document = document
 		}
+		cleanResourceDocument(value.Document)
 		applyBackendPayload(&value, body)
+		clearNullBackendProperties(&value, document)
 		parsedURL, urlErr := url.ParseRequestURI(value.URL)
 		if value.URL == "" || urlErr != nil || parsedURL.Scheme == "" || parsedURL.Host == "" || (value.Protocol != "http" && value.Protocol != "soap") {
 			writeError(w, http.StatusBadRequest, "ValidationError", "properties.url and a valid properties.protocol are required.", "properties")
@@ -2084,6 +2089,25 @@ func applyBackendPayload(value *model.Backend, body backendPayload) {
 	}
 	if body.Properties.ResourceID != nil {
 		value.ResourceID = *body.Properties.ResourceID
+	}
+}
+
+func clearNullBackendProperties(value *model.Backend, patch map[string]any) {
+	properties, _ := patch["properties"].(map[string]any)
+	if field, present := properties["title"]; present && field == nil {
+		value.Title = ""
+	}
+	if field, present := properties["description"]; present && field == nil {
+		value.Description = ""
+	}
+	if field, present := properties["url"]; present && field == nil {
+		value.URL = ""
+	}
+	if field, present := properties["protocol"]; present && field == nil {
+		value.Protocol = ""
+	}
+	if field, present := properties["resourceId"]; present && field == nil {
+		value.ResourceID = ""
 	}
 }
 

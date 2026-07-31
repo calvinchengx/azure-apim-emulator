@@ -1543,7 +1543,7 @@ func TestBackendLifecycle(t *testing.T) {
 	assertStatus(t, handler, http.MethodGet, path, "", http.StatusNotFound)
 	assertStatus(t, handler, http.MethodPut, path, `{`, http.StatusBadRequest)
 	assertStatus(t, handler, http.MethodPut, path, `{"properties":{"url":"relative","protocol":"invalid"}}`, http.StatusBadRequest)
-	body := `{"properties":{"title":"Primary","description":"Backend","url":"https://backend.test/base","protocol":"http","resourceId":"/external","credentials":{"header":{"X-Key":["secret"]}},"tls":{"validateCertificateChain":false}}}`
+	body := `{"customRoot":{"retained":true},"properties":{"title":"Primary","description":"Backend","url":"https://backend.test/base","protocol":"http","resourceId":"/external","credentials":{"header":{"X-Key":["secret"]}},"tls":{"validateCertificateChain":false},"customMetadata":{"keep":"one","remove":"old"}}}`
 	assertStatus(t, handler, http.MethodPut, path, body, http.StatusCreated)
 	assertStatus(t, handler, http.MethodGet, collection, "", http.StatusOK)
 	got := request(t, handler, http.MethodGet, path, "")
@@ -1553,7 +1553,13 @@ func TestBackendLifecycle(t *testing.T) {
 	assertStatus(t, handler, http.MethodHead, path, "", http.StatusOK)
 	assertStatus(t, handler, http.MethodPatch, basePath+"/backends/missing"+apiQuery, `{}`, http.StatusNotFound)
 	assertStatus(t, handler, http.MethodPatch, path, `{`, http.StatusBadRequest)
-	assertStatus(t, handler, http.MethodPatch, path, `{"properties":{"title":"Updated","description":"Changed"}}`, http.StatusOK)
+	assertStatus(t, handler, http.MethodPatch, path, `{"properties":{"title":null,"description":null,"resourceId":null,"credentials":{"header":{"X-Key":null}},"tls":{"validateCertificateName":false},"customMetadata":{"add":"two","remove":null}}}`, http.StatusOK)
+	assertStatus(t, handler, http.MethodPatch, path, `{"properties":{"url":null}}`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPatch, path, `{"properties":{"protocol":null}}`, http.StatusBadRequest)
+	got = request(t, handler, http.MethodGet, path, "")
+	if !strings.Contains(got.Body.String(), `"title":""`) || !strings.Contains(got.Body.String(), `"description":""`) || !strings.Contains(got.Body.String(), `"resourceId":""`) || !strings.Contains(got.Body.String(), `"retained":true`) || !strings.Contains(got.Body.String(), `"keep":"one"`) || !strings.Contains(got.Body.String(), `"add":"two"`) || !strings.Contains(got.Body.String(), `"validateCertificateName":false`) || strings.Contains(got.Body.String(), `"X-Key"`) || strings.Contains(got.Body.String(), `"remove"`) {
+		t.Fatalf("patched backend = %s", got.Body.String())
+	}
 	assertStatus(t, handler, http.MethodPost, basePath+"/backends/primary/reconnect"+apiQuery, `{}`, http.StatusAccepted)
 	assertStatus(t, handler, http.MethodGet, basePath+"/backends/primary/reconnect"+apiQuery, "", http.StatusMethodNotAllowed)
 	assertStatus(t, handler, http.MethodPost, basePath+"/backends/missing/reconnect"+apiQuery, `{}`, http.StatusNotFound)
@@ -1568,6 +1574,24 @@ func TestBackendLifecycle(t *testing.T) {
 	assertStatus(t, handler, http.MethodDelete, path, "", http.StatusNoContent)
 	if properties := backendWire(model.Backend{})["properties"].(map[string]any); properties["url"] != "" {
 		t.Fatalf("empty backend wire = %v", properties)
+	}
+}
+
+func TestBackendDocumentFallbacks(t *testing.T) {
+	wire := backendWire(model.Backend{Name: "invalid", Document: map[string]any{"properties": "invalid"}})
+	if _, ok := wire["properties"].(map[string]any); !ok {
+		t.Fatalf("backend wire = %#v", wire)
+	}
+
+	handler, st := testHandler(t)
+	seedService(t, st)
+	backend := model.Backend{ServiceID: serviceModel().ID(), Name: "legacy", Title: "Legacy", URL: "https://backend.test", Protocol: "http"}
+	if _, err := st.UpsertBackend(backend); err != nil {
+		t.Fatal(err)
+	}
+	response := request(t, handler, http.MethodPatch, basePath+"/backends/legacy"+apiQuery, `{"properties":{"description":"hydrated"}}`)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"description":"hydrated"`) {
+		t.Fatalf("legacy backend PATCH = %d %s", response.Code, response.Body.String())
 	}
 }
 

@@ -935,8 +935,11 @@ func (s *Store) DeleteNamedValue(id string) error {
 // UpsertBackend creates or replaces a backend.
 func (s *Store) UpsertBackend(v model.Backend) (model.Backend, error) {
 	v.ETag = newETag()
-	document, _ := json.Marshal(v.Document)
-	_, err := s.db.Exec(`INSERT INTO backends
+	document, err := json.Marshal(v.Document)
+	if err != nil {
+		return v, err
+	}
+	_, err = s.db.Exec(`INSERT INTO backends
         (id, service_id, name, title, description, url, protocol, resource_id, document_json, etag)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET title=excluded.title,
           description=excluded.description, url=excluded.url, protocol=excluded.protocol,

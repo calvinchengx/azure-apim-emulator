@@ -1805,6 +1805,9 @@ func TestBackendLifecycle(t *testing.T) {
 	if err := st.DeleteBackend(backend.ID()); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("second delete = %v", err)
 	}
+	if _, err := st.UpsertBackend(model.Backend{Document: map[string]any{"bad": make(chan int)}}); err == nil {
+		t.Fatal("backend accepted an unsupported document")
+	}
 }
 
 func TestCertificateLifecycle(t *testing.T) {

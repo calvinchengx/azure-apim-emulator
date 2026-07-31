@@ -138,6 +138,14 @@ and non-secret Key Vault reference metadata with explicit null clearing. The
 official Go SDK witness verifies redacted GET, updated `listValue`, ETags, and
 gateway policy substitution.
 
+Backends retain canonical documents atomically in their primary resource row.
+PUT replacement and recursive PATCH preserve credential, TLS, proxy, circuit
+breaker, and extension structures consumed by gateway compilation; indexed
+title/description/URL/protocol/resource fields remain authoritative and honor
+explicit nulls. Legacy rows receive a canonical fallback before PATCH, malformed
+documents fail rather than being silently discarded, and the official Go SDK
+witness verifies credential IDs survive an update and subsequent GET.
+
 ## Common ARM semantics
 
 Implement centrally and test across resources:

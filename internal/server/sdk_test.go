@@ -264,6 +264,9 @@ func TestGoManagementSDKConfiguresProtectedGateway(t *testing.T) {
 	}, nil); err != nil {
 		t.Fatal(err)
 	}
+	if gotBackend, err := backendClient.Get(ctx, defaultResourceGroup, "emulator", "go-sdk-backend", nil); err != nil || gotBackend.Properties == nil || gotBackend.Properties.Description == nil || *gotBackend.Properties.Description != backendDescription || gotBackend.Properties.Credentials == nil || len(gotBackend.Properties.Credentials.CertificateIDs) != 1 {
+		t.Fatalf("updated backend GET = %+v, %v", gotBackend, err)
+	}
 	if _, err := backendClient.Reconnect(ctx, defaultResourceGroup, "emulator", "go-sdk-backend", nil); err != nil {
 		t.Fatal(err)
 	}
