@@ -65,11 +65,11 @@ func TestStoreResourceLifecycle(t *testing.T) {
 	if err := st.LinkProductAPI(product.ID(), api.ID()); err != nil {
 		t.Fatal(err)
 	}
-	subscription, err := st.UpsertSubscription(model.Subscription{ServiceID: service.ID(), Name: "sub", DisplayName: "Sub", Scope: product.ID()})
+	subscription, err := st.UpsertSubscription(model.Subscription{ServiceID: service.ID(), Name: "sub", DisplayName: "Sub", Scope: product.ID(), Document: map[string]any{"primaryKey": "root", "secondaryKey": "root-two", "custom": true, "properties": map[string]any{"primaryKey": "nested", "secondaryKey": "nested-two"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if subscription.PrimaryKey == "" || subscription.SecondaryKey == "" || subscription.State != "active" {
+	if subscription.PrimaryKey == "" || subscription.SecondaryKey == "" || subscription.State != "active" || subscription.Document["primaryKey"] != nil || subscription.Document["custom"] != true {
 		t.Fatalf("subscription = %+v", subscription)
 	}
 	policy, err := st.UpsertPolicy(model.Policy{ScopeID: api.ID(), Format: "rawxml", Value: "<policies/>"})
@@ -92,7 +92,7 @@ func TestStoreResourceLifecycle(t *testing.T) {
 		len(links[product.ID()]) != 1 || len(subscriptions) != 1 || len(policies) != 1 {
 		t.Fatalf("runtime sizes = %d %d %d %d %#v %d %d", len(services), len(apis), len(operations), len(products), links, len(subscriptions), len(policies))
 	}
-	if services[0].Document["tags"].(map[string]any)["environment"] != "test" {
+	if services[0].Document["tags"].(map[string]any)["environment"] != "test" || subscriptions[0].Document["custom"] != true || subscriptions[0].Document["properties"].(map[string]any)["primaryKey"] != nil {
 		t.Fatalf("listed document = %#v", services[0].Document)
 	}
 	if err := st.DeleteService(service.ID()); err != nil {
@@ -704,7 +704,8 @@ func TestScanFunctionsRejectMalformedRows(t *testing.T) {
 		},
 		{
 			"subscriptions",
-			`CREATE TABLE subscriptions (id, service_id, name, display_name, scope, state, primary_key, secondary_key, etag)`,
+			`CREATE TABLE subscriptions (id, service_id, name, display_name, scope, state, primary_key, secondary_key, etag);
+			 CREATE TABLE subscription_documents (subscription_id, document_json)`,
 			`INSERT INTO subscriptions VALUES ('id', NULL, '', '', '', '', '', '', '')`,
 			func(db *sql.DB) error { _, err := scanSubscriptions(db); return err },
 		},
@@ -733,6 +734,57 @@ func TestScanFunctionsRejectMalformedRows(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestUpsertSubscriptionTransactionErrors(t *testing.T) {
+	t.Run("document encoding", func(t *testing.T) {
+		st, err := Open("", clock.New())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer st.Close()
+		if _, err := st.UpsertSubscription(model.Subscription{Document: map[string]any{"bad": make(chan int)}}); err == nil {
+			t.Fatal("subscription accepted an unsupported document")
+		}
+	})
+	t.Run("begin", func(t *testing.T) {
+		st, err := Open("", clock.New())
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = st.Close()
+		if _, err := st.UpsertSubscription(model.Subscription{}); err == nil {
+			t.Fatal("closed store accepted a subscription")
+		}
+	})
+	t.Run("subscription row", func(t *testing.T) {
+		st, err := Open("", clock.New())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer st.Close()
+		if _, err := st.UpsertSubscription(model.Subscription{ServiceID: "/missing", Name: "subscription"}); err == nil {
+			t.Fatal("subscription with a missing service was accepted")
+		}
+	})
+	t.Run("document row", func(t *testing.T) {
+		st, err := Open("", clock.New())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer st.Close()
+		service, _ := st.UpsertService(model.Service{Name: "svc"})
+		if _, err := st.db.Exec(`CREATE TRIGGER reject_subscription_document BEFORE INSERT ON subscription_documents BEGIN SELECT RAISE(FAIL, 'rejected'); END`); err != nil {
+			t.Fatal(err)
+		}
+		subscription := model.Subscription{ServiceID: service.ID(), Name: "subscription"}
+		if _, err := st.UpsertSubscription(subscription); err == nil {
+			t.Fatal("rejected subscription document was accepted")
+		}
+		if _, err := st.GetSubscription(subscription.ID()); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("subscription transaction was not rolled back: %v", err)
+		}
+	})
 }
 
 func TestUpsertUserTransactionErrors(t *testing.T) {

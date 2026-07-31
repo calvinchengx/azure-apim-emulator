@@ -937,15 +937,30 @@ func TestProductAndSubscriptionBranches(t *testing.T) {
 	assertStatus(t, handler, http.MethodGet, basePath+"/subscriptions/s"+apiQuery, "", http.StatusNotFound)
 	assertStatus(t, handler, http.MethodPut, basePath+"/subscriptions/s"+apiQuery, `{`, http.StatusBadRequest)
 	assertStatus(t, handler, http.MethodPut, basePath+"/subscriptions/invalid"+apiQuery, `{"properties":{}}`, http.StatusBadRequest)
-	assertStatus(t, handler, http.MethodPut, basePath+"/subscriptions/s"+apiQuery, `{"properties":{"displayName":"S","scope":"`+serviceModel().ID()+`"}}`, http.StatusCreated)
+	assertStatus(t, handler, http.MethodPut, basePath+"/subscriptions/s"+apiQuery, `{"primaryKey":"root-primary","secondaryKey":"root-secondary","customRoot":{"retained":true},"properties":{"displayName":"S","scope":"`+serviceModel().ID()+`","primaryKey":"initial-primary","secondaryKey":"initial-secondary","customMetadata":{"keep":"one","remove":"old"}}}`, http.StatusCreated)
+	storedSubscription, err := st.GetSubscription(model.Subscription{ServiceID: serviceModel().ID(), Name: "s"}.ID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	storedSubscriptionProperties := storedSubscription.Document["properties"].(map[string]any)
+	if storedSubscription.Document["primaryKey"] != nil || storedSubscription.Document["secondaryKey"] != nil || storedSubscriptionProperties["primaryKey"] != nil || storedSubscriptionProperties["secondaryKey"] != nil || storedSubscriptionProperties["customMetadata"] == nil {
+		t.Fatalf("stored subscription document = %#v", storedSubscription.Document)
+	}
 	got := request(t, handler, http.MethodGet, basePath+"/subscriptions/s"+apiQuery, "")
 	if strings.Contains(got.Body.String(), "primaryKey") || got.Header().Get("ETag") == "" {
 		t.Fatalf("subscription GET leaked secrets or omitted ETag: %s", got.Body.String())
 	}
-	assertStatus(t, handler, http.MethodPut, basePath+"/subscriptions/s"+apiQuery, `{"properties":{"displayName":"S","scope":"`+serviceModel().ID()+`","state":"suspended","primaryKey":"primary","secondaryKey":"secondary"}}`, http.StatusOK)
+	assertStatus(t, handler, http.MethodPut, basePath+"/subscriptions/s"+apiQuery, `{"customRoot":{"retained":true},"properties":{"displayName":"S","scope":"`+serviceModel().ID()+`","state":"suspended","primaryKey":"primary","secondaryKey":"secondary","customMetadata":{"keep":"one","remove":"old"}}}`, http.StatusOK)
 	assertStatus(t, handler, http.MethodPatch, basePath+"/subscriptions/missing"+apiQuery, `{}`, http.StatusNotFound)
 	assertStatus(t, handler, http.MethodPatch, basePath+"/subscriptions/s"+apiQuery, `{`, http.StatusBadRequest)
-	assertStatus(t, handler, http.MethodPatch, basePath+"/subscriptions/s"+apiQuery, `{"properties":{"displayName":"Updated","scope":"`+serviceModel().ID()+`/apis/a","state":"active","primaryKey":"primary","secondaryKey":"secondary"}}`, http.StatusOK)
+	assertStatus(t, handler, http.MethodPatch, basePath+"/subscriptions/s"+apiQuery, `{"properties":{"displayName":"Updated","scope":"`+serviceModel().ID()+`/apis/a","state":null,"primaryKey":"primary","secondaryKey":"secondary","customMetadata":{"add":"two","remove":null}}}`, http.StatusOK)
+	for _, field := range []string{"displayName", "scope"} {
+		assertStatus(t, handler, http.MethodPatch, basePath+"/subscriptions/s"+apiQuery, `{"properties":{"`+field+`":null}}`, http.StatusBadRequest)
+	}
+	got = request(t, handler, http.MethodGet, basePath+"/subscriptions/s"+apiQuery, "")
+	if !strings.Contains(got.Body.String(), `"displayName":"Updated"`) || !strings.Contains(got.Body.String(), `"state":"active"`) || !strings.Contains(got.Body.String(), `"retained":true`) || !strings.Contains(got.Body.String(), `"keep":"one"`) || !strings.Contains(got.Body.String(), `"add":"two"`) || strings.Contains(got.Body.String(), "primaryKey") || strings.Contains(got.Body.String(), "secondaryKey") || strings.Contains(got.Body.String(), `"remove"`) {
+		t.Fatalf("canonical subscription GET = %s", got.Body.String())
+	}
 	list = request(t, handler, http.MethodGet, basePath+"/subscriptions"+apiQuery, "")
 	if strings.Count(list.Body.String(), `"type":"Microsoft.ApiManagement/service/subscriptions"`) != 1 || strings.Contains(list.Body.String(), "primaryKey") {
 		t.Fatalf("subscription list = %s", list.Body.String())
@@ -991,6 +1006,24 @@ func TestProductAndSubscriptionBranches(t *testing.T) {
 	properties := secrets["properties"].(map[string]any)
 	if properties["primaryKey"] != "one" || properties["secondaryKey"] != "two" {
 		t.Fatalf("subscription secrets = %v", properties)
+	}
+}
+
+func TestSubscriptionDocumentFallbacks(t *testing.T) {
+	wire := subscriptionWire(model.Subscription{Name: "invalid", Document: map[string]any{"properties": "invalid", "primaryKey": "secret"}}, false)
+	if _, ok := wire["properties"].(map[string]any); !ok || wire["primaryKey"] != nil {
+		t.Fatalf("subscription wire = %#v", wire)
+	}
+
+	handler, st := testHandler(t)
+	seedService(t, st)
+	subscription := model.Subscription{ServiceID: serviceModel().ID(), Name: "legacy", DisplayName: "Legacy", Scope: serviceModel().ID()}
+	if _, err := st.UpsertSubscription(subscription); err != nil {
+		t.Fatal(err)
+	}
+	response := request(t, handler, http.MethodPatch, basePath+"/subscriptions/legacy"+apiQuery, `{"properties":{"customMetadata":{"hydrated":true}}}`)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"hydrated":true`) {
+		t.Fatalf("legacy subscription PATCH = %d %s", response.Code, response.Body.String())
 	}
 }
 

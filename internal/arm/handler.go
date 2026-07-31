@@ -2980,11 +2980,23 @@ func (h *Handler) subscriptionResource(w http.ResponseWriter, r *http.Request, v
 			value = existing
 		}
 		var body subscriptionPayload
-		if err := decode(r, &body); err != nil {
+		var document map[string]any
+		if err := decodeDocument(r, &body, &document); err != nil {
 			writeError(w, http.StatusBadRequest, "InvalidRequestContent", err.Error(), "")
 			return
 		}
+		if r.Method == http.MethodPatch {
+			if value.Document == nil {
+				value.Document = subscriptionWire(value, false)
+			}
+			mergeObject(value.Document, document)
+		} else {
+			value.Document = document
+		}
+		cleanResourceDocument(value.Document)
+		sanitizeSubscriptionDocument(value.Document)
 		applySubscriptionPayload(&value, body)
+		clearNullSubscriptionProperties(&value, document)
 		if value.DisplayName == "" || value.Scope == "" {
 			writeError(w, http.StatusBadRequest, "ValidationError", "displayName and scope are required.", "properties")
 			return
@@ -3033,6 +3045,27 @@ func applySubscriptionPayload(value *model.Subscription, body subscriptionPayloa
 	}
 	if body.Properties.SecondaryKey != nil {
 		value.SecondaryKey = *body.Properties.SecondaryKey
+	}
+}
+
+func sanitizeSubscriptionDocument(document map[string]any) {
+	delete(document, "primaryKey")
+	delete(document, "secondaryKey")
+	properties, _ := document["properties"].(map[string]any)
+	delete(properties, "primaryKey")
+	delete(properties, "secondaryKey")
+}
+
+func clearNullSubscriptionProperties(value *model.Subscription, patch map[string]any) {
+	properties, _ := patch["properties"].(map[string]any)
+	if field, present := properties["displayName"]; present && field == nil {
+		value.DisplayName = ""
+	}
+	if field, present := properties["scope"]; present && field == nil {
+		value.Scope = ""
+	}
+	if field, present := properties["state"]; present && field == nil {
+		value.State = ""
 	}
 }
 
@@ -3331,11 +3364,22 @@ func productAPIWire(productID, apiName string) map[string]any {
 	return map[string]any{"id": productID + "/apis/" + apiName, "name": apiName, "type": "Microsoft.ApiManagement/service/products/apis"}
 }
 func subscriptionWire(v model.Subscription, secrets bool) map[string]any {
-	properties := map[string]any{"displayName": v.DisplayName, "scope": v.Scope, "state": v.State}
+	result := cloneObject(v.Document)
+	result["id"], result["name"], result["type"] = v.ID(), v.Name, "Microsoft.ApiManagement/service/subscriptions"
+	delete(result, "primaryKey")
+	delete(result, "secondaryKey")
+	properties, ok := result["properties"].(map[string]any)
+	if !ok {
+		properties = map[string]any{}
+		result["properties"] = properties
+	}
+	delete(properties, "primaryKey")
+	delete(properties, "secondaryKey")
+	properties["displayName"], properties["scope"], properties["state"] = v.DisplayName, v.Scope, v.State
 	if secrets {
 		properties["primaryKey"], properties["secondaryKey"] = v.PrimaryKey, v.SecondaryKey
 	}
-	return map[string]any{"id": v.ID(), "name": v.Name, "type": "Microsoft.ApiManagement/service/subscriptions", "properties": properties}
+	return result
 }
 func subscriptionSecretsWire(v model.Subscription) map[string]any {
 	return map[string]any{"primaryKey": v.PrimaryKey, "secondaryKey": v.SecondaryKey}

@@ -302,6 +302,7 @@ type Subscription struct {
 	PrimaryKey   string
 	SecondaryKey string
 	ETag         string
+	Document     map[string]any
 }
 
 // ID returns the subscription ARM resource ID.

@@ -875,6 +875,9 @@ func TestGoManagementSDKConfiguresProtectedGateway(t *testing.T) {
 	}, nil); err != nil {
 		t.Fatal(err)
 	}
+	if gotSubscription, err := subscriptionClient.Get(ctx, defaultResourceGroup, "emulator", "go-sdk-subscription", nil); err != nil || gotSubscription.Properties == nil || gotSubscription.Properties.DisplayName == nil || *gotSubscription.Properties.DisplayName != subscriptionName || gotSubscription.Properties.Scope == nil || *gotSubscription.Properties.Scope != scope || gotSubscription.Properties.State == nil || *gotSubscription.Properties.State != state {
+		t.Fatalf("subscription GET = %+v, %v", gotSubscription, err)
+	}
 	secrets, err := subscriptionClient.ListSecrets(ctx, defaultResourceGroup, "emulator", "go-sdk-subscription", nil)
 	if err != nil || secrets.PrimaryKey == nil || *secrets.PrimaryKey != primary || secrets.SecondaryKey == nil || *secrets.SecondaryKey != secondary {
 		t.Fatalf("subscription secrets = %+v, %v", secrets, err)

@@ -121,6 +121,15 @@ SSO and shared-access-token operations. The official Go SDK witness covers the
 modeled lifecycle and verifies updated notes and identities with a subsequent
 GET.
 
+Subscriptions retain canonical documents transactionally while primary and
+secondary gateway keys remain isolated in secret columns. PUT replacement and
+recursive PATCH preserve extension data across management and gateway-runtime
+scans; handler, store, and normal wire projections strip key fields. The
+explicit `listSecrets` action remains the only management projection that
+returns keys, and regeneration updates those indexed keys without altering the
+canonical document. Official Go SDK evidence covers normal GET, secret listing,
+rotation, and use of the rotated key at the gateway.
+
 ## Common ARM semantics
 
 Implement centrally and test across resources:

@@ -236,6 +236,10 @@ CREATE TABLE IF NOT EXISTS subscriptions (
   state TEXT NOT NULL, primary_key TEXT NOT NULL, secondary_key TEXT NOT NULL,
   etag TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS subscription_documents (
+  subscription_id TEXT PRIMARY KEY REFERENCES subscriptions(id) ON DELETE CASCADE,
+  document_json TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS policies (
   scope_id TEXT PRIMARY KEY, format TEXT NOT NULL, value TEXT NOT NULL, etag TEXT NOT NULL
 );
@@ -1699,6 +1703,11 @@ func (s *Store) ListProductAPIs(productID string) ([]string, error) {
 
 // UpsertSubscription creates or replaces a subscription, generating absent keys.
 func (s *Store) UpsertSubscription(v model.Subscription) (model.Subscription, error) {
+	sanitizeSubscriptionDocument(v.Document)
+	document, err := json.Marshal(v.Document)
+	if err != nil {
+		return v, err
+	}
 	if v.PrimaryKey == "" {
 		v.PrimaryKey = NewOpaqueID()
 	}
@@ -1709,24 +1718,49 @@ func (s *Store) UpsertSubscription(v model.Subscription) (model.Subscription, er
 		v.State = "active"
 	}
 	v.ETag = newETag()
-	_, err := s.db.Exec(`INSERT INTO subscriptions
+	tx, err := s.db.Begin()
+	if err != nil {
+		return v, err
+	}
+	defer tx.Rollback()
+	_, err = tx.Exec(`INSERT INTO subscriptions
     (id, service_id, name, display_name, scope, state, primary_key, secondary_key, etag)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET display_name=excluded.display_name, scope=excluded.scope,
       state=excluded.state, primary_key=excluded.primary_key, secondary_key=excluded.secondary_key,
       etag=excluded.etag`, v.ID(), v.ServiceID, v.Name, v.DisplayName, v.Scope, v.State,
 		v.PrimaryKey, v.SecondaryKey, v.ETag)
-	return v, err
+	if err != nil {
+		return v, err
+	}
+	if _, err := tx.Exec(`INSERT INTO subscription_documents (subscription_id, document_json) VALUES (?, ?)
+	    ON CONFLICT(subscription_id) DO UPDATE SET document_json=excluded.document_json`, v.ID(), document); err != nil {
+		return v, err
+	}
+	return v, tx.Commit()
+}
+
+func sanitizeSubscriptionDocument(document map[string]any) {
+	delete(document, "primaryKey")
+	delete(document, "secondaryKey")
+	properties, _ := document["properties"].(map[string]any)
+	delete(properties, "primaryKey")
+	delete(properties, "secondaryKey")
 }
 
 // GetSubscription finds one subscription by ARM ID.
 func (s *Store) GetSubscription(id string) (model.Subscription, error) {
 	var v model.Subscription
-	err := s.db.QueryRow(`SELECT service_id, name, display_name, scope, state, primary_key, secondary_key, etag
+	var document string
+	err := s.db.QueryRow(`SELECT service_id, name, display_name, scope, state, primary_key, secondary_key, etag,
+	    COALESCE((SELECT document_json FROM subscription_documents WHERE lower(subscription_id)=lower(subscriptions.id)), '{}')
 	    FROM subscriptions WHERE lower(id)=lower(?)`, id).
-		Scan(&v.ServiceID, &v.Name, &v.DisplayName, &v.Scope, &v.State, &v.PrimaryKey, &v.SecondaryKey, &v.ETag)
+		Scan(&v.ServiceID, &v.Name, &v.DisplayName, &v.Scope, &v.State, &v.PrimaryKey, &v.SecondaryKey, &v.ETag, &document)
 	if errors.Is(err, sql.ErrNoRows) {
 		return model.Subscription{}, ErrNotFound
+	}
+	if err == nil {
+		_ = json.Unmarshal([]byte(document), &v.Document)
 	}
 	return v, err
 }
@@ -2092,7 +2126,9 @@ func scanLinks(db *sql.DB) (map[string][]string, error) {
 }
 
 func scanSubscriptions(db *sql.DB) ([]model.Subscription, error) {
-	rows, err := db.Query(`SELECT service_id, name, display_name, scope, state, primary_key, secondary_key, etag FROM subscriptions ORDER BY id`)
+	rows, err := db.Query(`SELECT service_id, name, display_name, scope, state, primary_key, secondary_key, etag,
+	    COALESCE((SELECT document_json FROM subscription_documents WHERE subscription_id=subscriptions.id), '{}')
+	    FROM subscriptions ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
@@ -2100,9 +2136,11 @@ func scanSubscriptions(db *sql.DB) ([]model.Subscription, error) {
 	var values []model.Subscription
 	for rows.Next() {
 		var v model.Subscription
-		if err := rows.Scan(&v.ServiceID, &v.Name, &v.DisplayName, &v.Scope, &v.State, &v.PrimaryKey, &v.SecondaryKey, &v.ETag); err != nil {
+		var document string
+		if err := rows.Scan(&v.ServiceID, &v.Name, &v.DisplayName, &v.Scope, &v.State, &v.PrimaryKey, &v.SecondaryKey, &v.ETag, &document); err != nil {
 			return nil, err
 		}
+		_ = json.Unmarshal([]byte(document), &v.Document)
 		values = append(values, v)
 	}
 	return values, rows.Err()
