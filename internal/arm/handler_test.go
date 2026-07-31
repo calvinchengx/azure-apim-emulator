@@ -299,6 +299,7 @@ func TestCollectionOptionMatrixAndOrdering(t *testing.T) {
 		basePath + "/tags?api-version=2024-05-01&$orderby=name",
 		basePath + "/tags?api-version=2024-05-01&$select=name",
 		basePath + "/policyFragments?api-version=2024-05-01&$orderby=description",
+		"/subscriptions/sub/providers/Microsoft.ApiManagement/service?api-version=2024-05-01&$top=1",
 	} {
 		response := request(t, handler, http.MethodGet, path, "")
 		if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "InvalidQueryParameterValue") {
@@ -327,6 +328,70 @@ func TestCollectionOptionMatrixAndOrdering(t *testing.T) {
 	}
 	if _, err := parseCollectionOrder(url.Values{"$orderby": {"name"}}, route{}); err == nil {
 		t.Fatal("unsupported route accepted $orderby")
+	}
+}
+
+func TestCollectionFilterContracts(t *testing.T) {
+	for key, contract := range collectionFilterContracts {
+		parts := strings.Split(key, "/")
+		tail := []string{parts[0]}
+		if len(parts) >= 2 {
+			tail = append(tail, "resource", parts[1])
+		}
+		if len(parts) == 3 {
+			tail = append(tail, "child", parts[2])
+		}
+		if got := collectionFilterKey(tail); got != key {
+			t.Fatalf("collectionFilterKey(%v) = %q, want %q", tail, got, key)
+		}
+		if len(contract) == 0 {
+			if _, err := parseFilterForRoute("name eq 'value'", route{Tail: tail}); err == nil {
+				t.Fatalf("empty contract %q accepted a field", key)
+			}
+			continue
+		}
+		for field, rule := range contract {
+			if _, err := parseFilterForRoute(field+" "+rule.operators[0]+" 'value'", route{Tail: tail}); err != nil {
+				t.Fatalf("contract %q field %q: %v", key, field, err)
+			}
+			break
+		}
+	}
+	if got := collectionFilterKey([]string{"unexpected", "shape"}); got != "" {
+		t.Fatalf("unexpected collection key = %q", got)
+	}
+	if _, err := parseFilterForRoute("custom eq 'value'", route{Tail: []string{"unaudited"}}); err != nil {
+		t.Fatalf("unaudited route rejected generic filter: %v", err)
+	}
+
+	tests := []struct {
+		tail   []string
+		filter string
+		valid  bool
+	}{
+		{[]string{"apis"}, "isCurrent eq true", true},
+		{[]string{"apis"}, "isCurrent gt false", false},
+		{[]string{"apis"}, "contains(isCurrent, 't')", false},
+		{[]string{"products"}, "state eq 'published'", true},
+		{[]string{"products"}, "state ne 'published'", false},
+		{[]string{"groups"}, "externalId eq 'entra'", true},
+		{[]string{"groups"}, "externalId ne 'entra'", false},
+		{[]string{"certificates"}, "expirationDate gt '2026-01-01'", true},
+		{[]string{"certificates"}, "startswith(expirationDate, '2026')", false},
+		{[]string{"products", "p", "groups"}, "name gt 'a'", true},
+		{[]string{"products", "p", "groups"}, "contains(name, 'a')", false},
+		{[]string{"products", "p", "groups"}, "displayName ne 'a'", true},
+		{[]string{"products", "p", "groups"}, "displayName gt 'a'", false},
+		{[]string{"tags"}, "description eq 'hidden'", false},
+		{[]string{"tags"}, "name eq displayName", false},
+		{[]string{"tags"}, "contains(name, displayName)", false},
+		{[]string{"tags"}, "contains('a', 'b')", false},
+	}
+	for _, test := range tests {
+		_, err := parseFilterForRoute(test.filter, route{Tail: test.tail})
+		if (err == nil) != test.valid {
+			t.Errorf("filter %q on %v valid=%v: %v", test.filter, test.tail, test.valid, err)
+		}
 	}
 }
 

@@ -43,7 +43,7 @@ func writeCollectionResponse(w http.ResponseWriter, r *http.Request, response *h
 		return
 	}
 
-	filter, err := parseFilter(r.URL.Query().Get("$filter"))
+	filter, err := parseFilterForRoute(r.URL.Query().Get("$filter"), rt)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "InvalidQueryParameterValue", err.Error(), "$filter")
 		return
@@ -115,7 +115,13 @@ func writeCollectionResponse(w http.ResponseWriter, r *http.Request, response *h
 
 func unsupportedCollectionOption(query url.Values, rt route) string {
 	for name := range query {
-		if !strings.HasPrefix(name, "$") || oneOf(name, "$filter", "$top", "$skip") {
+		if !strings.HasPrefix(name, "$") {
+			continue
+		}
+		if len(rt.Tail) == 0 {
+			return name
+		}
+		if oneOf(name, "$filter", "$top", "$skip") {
 			continue
 		}
 		if name == "$orderby" && policyFragmentCollection(rt) {
@@ -167,9 +173,96 @@ func collectionInteger(query url.Values, name string, minimum, maximum int) (int
 }
 
 type filterPredicate func(map[string]any) (bool, error)
-type filterOperand func(map[string]any) (any, error)
+
+type filterOperand struct {
+	evaluate filterOperandEvaluator
+	field    string
+}
+
+type filterOperandEvaluator func(map[string]any) (any, error)
+
+type filterFieldRule struct {
+	operators []string
+	functions []string
+}
+
+type filterContract map[string]filterFieldRule
+
+var fullFilterRule = filterFieldRule{
+	operators: []string{"eq", "ne", "gt", "ge", "lt", "le"},
+	functions: []string{"contains", "startswith", "endswith", "substringof"},
+}
+
+var collectionFilterContracts = map[string]filterContract{
+	"apis":                 makeFilterContract([]string{"name", "displayName", "description", "serviceUrl", "path"}, map[string]filterFieldRule{"isCurrent": comparisonRule("eq", "ne")}),
+	"apis/diagnostics":     makeFilterContract([]string{"name"}, nil),
+	"apis/operations":      makeFilterContract([]string{"name", "displayName", "method", "description", "urlTemplate"}, nil),
+	"apis/releases":        makeFilterContract([]string{"notes"}, nil),
+	"apis/revisions":       makeFilterContract([]string{"apiRevision"}, nil),
+	"apis/schemas":         makeFilterContract([]string{"contentType"}, nil),
+	"apis/tags":            makeFilterContract([]string{"name", "displayName"}, nil),
+	"apis/operations/tags": makeFilterContract([]string{"name", "displayName"}, nil),
+	"apiVersionSets":       {},
+	"backends":             makeFilterContract([]string{"name", "title", "url"}, nil),
+	"certificates":         makeFilterContract([]string{"name", "subject", "thumbprint"}, map[string]filterFieldRule{"expirationDate": comparisonRule("eq", "ne", "gt", "ge", "lt", "le")}),
+	"diagnostics":          makeFilterContract([]string{"name"}, nil),
+	"groups":               makeFilterContract([]string{"name", "displayName", "description"}, map[string]filterFieldRule{"externalId": comparisonRule("eq")}),
+	"groups/users":         makeFilterContract([]string{"name", "firstName", "lastName", "email", "note"}, map[string]filterFieldRule{"registrationDate": comparisonRule("eq", "ne", "gt", "ge", "lt", "le")}),
+	"loggers":              makeFilterContract([]string{"name", "description", "resourceId"}, map[string]filterFieldRule{"loggerType": comparisonRule("eq")}),
+	"namedValues":          makeFilterContract([]string{"displayName"}, nil),
+	"policyFragments":      makeFilterContract([]string{"name", "description", "value"}, nil),
+	"products":             makeFilterContract([]string{"name", "displayName", "description", "terms"}, map[string]filterFieldRule{"state": comparisonRule("eq")}),
+	"products/apis":        makeFilterContract([]string{"name", "displayName", "description", "serviceUrl", "path"}, nil),
+	"products/groups":      makeFilterContract(nil, map[string]filterFieldRule{"name": comparisonRule("eq", "ne", "gt", "ge", "lt", "le"), "displayName": comparisonRule("eq", "ne"), "description": comparisonRule("eq", "ne")}),
+	"products/tags":        makeFilterContract([]string{"name", "displayName"}, nil),
+	"subscriptions":        makeFilterContract([]string{"name", "displayName", "stateComment", "ownerId", "scope", "userId", "productId"}, map[string]filterFieldRule{"state": comparisonRule("eq")}),
+	"tags":                 makeFilterContract([]string{"name", "displayName"}, nil),
+	"users":                makeFilterContract([]string{"name", "firstName", "lastName", "email", "note"}, map[string]filterFieldRule{"state": comparisonRule("eq"), "registrationDate": comparisonRule("eq", "ne", "gt", "ge", "lt", "le")}),
+	"users/groups":         makeFilterContract([]string{"name", "displayName", "description"}, nil),
+}
+
+func comparisonRule(operators ...string) filterFieldRule {
+	return filterFieldRule{operators: operators}
+}
+
+func makeFilterContract(fields []string, restricted map[string]filterFieldRule) filterContract {
+	contract := filterContract{}
+	for _, field := range fields {
+		contract[strings.ToLower(field)] = fullFilterRule
+	}
+	for field, rule := range restricted {
+		contract[strings.ToLower(field)] = rule
+	}
+	return contract
+}
+
+func parseFilterForRoute(source string, rt route) (filterPredicate, error) {
+	key := collectionFilterKey(rt.Tail)
+	contract, audited := collectionFilterContracts[key]
+	if !audited {
+		return parseFilter(source)
+	}
+	return parseFilterWithContract(source, contract)
+}
+
+func collectionFilterKey(tail []string) string {
+	if len(tail) == 1 {
+		return tail[0]
+	}
+	if len(tail) == 3 {
+		return tail[0] + "/" + tail[2]
+	}
+	if len(tail) == 5 {
+		return tail[0] + "/" + tail[2] + "/" + tail[4]
+	}
+	return ""
+}
 
 func parseFilter(source string) (filterPredicate, error) {
+	return parseFilterWithContract(source, nil)
+}
+
+func parseFilterWithContract(source string, contract filterContract) (filterPredicate, error) {
 	if strings.TrimSpace(source) == "" {
 		return func(map[string]any) (bool, error) { return true, nil }, nil
 	}
@@ -177,6 +270,7 @@ func parseFilter(source string) (filterPredicate, error) {
 	if err != nil {
 		return nil, err
 	}
+	parser.contract = contract
 	result, err := parser.parseOr()
 	if err != nil {
 		return nil, err
@@ -205,9 +299,10 @@ type filterToken struct {
 }
 
 type filterParser struct {
-	tokens  []filterToken
-	index   int
-	current filterToken
+	tokens   []filterToken
+	index    int
+	current  filterToken
+	contract filterContract
 }
 
 func newFilterParser(source string) (*filterParser, error) {
@@ -353,13 +448,19 @@ func (p *filterParser) parsePrimary() (filterPredicate, error) {
 	if err != nil {
 		return nil, err
 	}
+	if p.contract != nil && right.field != "" {
+		return nil, fmt.Errorf("filter comparisons require a literal right operand")
+	}
+	if err := p.validateField(name, operator, ""); err != nil {
+		return nil, err
+	}
 	left := fieldOperand(name)
 	return func(resource map[string]any) (bool, error) {
-		leftValue, err := left(resource)
+		leftValue, err := left.evaluate(resource)
 		if err != nil {
 			return false, err
 		}
-		rightValue, err := right(resource)
+		rightValue, err := right.evaluate(resource)
 		if err != nil {
 			return false, err
 		}
@@ -383,12 +484,26 @@ func (p *filterParser) parseFunction(name string) (filterPredicate, error) {
 		return nil, fmt.Errorf("%s requires two arguments", name)
 	}
 	p.advance()
+	if p.contract != nil {
+		field := first.field
+		if field == "" {
+			field = second.field
+		} else if second.field != "" {
+			return nil, fmt.Errorf("%s requires one field and one literal", name)
+		}
+		if field == "" {
+			return nil, fmt.Errorf("%s requires one field and one literal", name)
+		}
+		if err := p.validateField(field, "", name); err != nil {
+			return nil, err
+		}
+	}
 	return func(resource map[string]any) (bool, error) {
-		left, err := first(resource)
+		left, err := first.evaluate(resource)
 		if err != nil {
 			return false, err
 		}
-		right, err := second(resource)
+		right, err := second.evaluate(resource)
 		if err != nil {
 			return false, err
 		}
@@ -433,16 +548,16 @@ func (p *filterParser) parseOperand() (filterOperand, error) {
 			return fieldOperand(token.text), nil
 		}
 	default:
-		return nil, fmt.Errorf("expected a filter value, got %q", token.text)
+		return filterOperand{}, fmt.Errorf("expected a filter value, got %q", token.text)
 	}
 }
 
 func literalOperand(value any) filterOperand {
-	return func(map[string]any) (any, error) { return value, nil }
+	return filterOperand{evaluate: func(map[string]any) (any, error) { return value, nil }}
 }
 
 func fieldOperand(name string) filterOperand {
-	return func(resource map[string]any) (any, error) {
+	return filterOperand{field: name, evaluate: func(resource map[string]any) (any, error) {
 		current := any(resource)
 		parts := strings.Split(name, "/")
 		for index, part := range parts {
@@ -462,7 +577,24 @@ func fieldOperand(name string) filterOperand {
 			current = value
 		}
 		return current, nil
+	}}
+}
+
+func (p *filterParser) validateField(field, operator, function string) error {
+	if p.contract == nil {
+		return nil
 	}
+	rule, found := p.contract[strings.ToLower(field)]
+	if !found {
+		return fmt.Errorf("filter field %q is not supported for this operation", field)
+	}
+	if operator != "" && !oneOf(operator, rule.operators...) {
+		return fmt.Errorf("operator %s is not supported for filter field %q", operator, field)
+	}
+	if function != "" && !oneOf(function, rule.functions...) {
+		return fmt.Errorf("function %s is not supported for filter field %q", function, field)
+	}
+	return nil
 }
 
 func caseInsensitiveValue(object map[string]any, name string) (any, bool) {

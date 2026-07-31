@@ -18,7 +18,7 @@ of runtime semantics. Passing them is necessary but not sufficient.
 | Language | Package | Version at repository creation | Initial purpose |
 |---|---|---:|---|
 | Python | `azure-mgmt-apimanagement` | `5.0.0` | primary `2024-05-01` management witness |
-| JavaScript | `@azure/arm-apimanagement` | `10.0.0` | portal/tooling ecosystem, policy-fragment lifecycle, and ordered collection witness |
+| JavaScript | `@azure/arm-apimanagement` | `10.0.0` | portal/tooling ecosystem, policy-fragment lifecycle, and filtered/ordered collection witness |
 | .NET | `Azure.ResourceManager.ApiManagement` | `1.3.1` | ARM client and policy-tooling ecosystem witness |
 | Go | `armapimanagement` | `v1.1.1` | older `2021-08-01` compatibility witness |
 

@@ -72,7 +72,10 @@ await client.policyFragment.beginCreateOrUpdateAndWait(
   },
 );
 const fragments = [];
-for await (const item of client.policyFragment.listByService(resourceGroup, serviceName, { orderby: "name desc" })) {
+for await (const item of client.policyFragment.listByService(resourceGroup, serviceName, {
+  filter: "contains(name, 'javascript-sdk-fragment')",
+  orderby: "name desc",
+})) {
   fragments.push(item);
 }
 if (fragments.length !== 2 || fragments[0].name !== "javascript-sdk-fragment" || fragments[1].name !== "aaa-javascript-sdk-fragment") {
