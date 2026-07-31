@@ -452,6 +452,102 @@ func TestCollectionSelectors(t *testing.T) {
 	_ = st
 }
 
+func TestCollectionSelectorExpansion(t *testing.T) {
+	handler, st := testHandler(t)
+	seedService(t, st)
+	serviceID := serviceModel().ID()
+	versionSet, err := st.UpsertAPIVersionSet(model.APIVersionSet{ServiceID: serviceID, Name: "versions", DisplayName: "Versions", VersioningScheme: "Segment"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	api, err := st.UpsertAPI(model.API{ServiceID: serviceID, Name: "expanded-api", DisplayName: "Expanded API", VersionSetID: versionSet.ID()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	product, err := st.UpsertProduct(model.Product{ServiceID: serviceID, Name: "expanded-product", DisplayName: "Expanded Product"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	group, err := st.UpsertGroup(model.Group{ServiceID: serviceID, Name: "expanded-group", DisplayName: "Expanded Group", Type: "custom"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	user, err := st.UpsertUser(model.User{ServiceID: serviceID, Name: "expanded-user", FirstName: "Expanded", State: "active"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tag, err := st.UpsertTag(model.Tag{ServiceID: serviceID, Name: "expanded-tag", DisplayName: "Expanded Tag"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, link := range []error{st.AssignTag(api.ID(), tag.ID()), st.LinkProductGroup(product.ID(), group.ID()), st.LinkGroupUser(group.ID(), user.ID())} {
+		if link != nil {
+			t.Fatal(link)
+		}
+	}
+
+	apiValues, err := handler.applyCollectionSelectors([]any{apiWire(api)}, url.Values{"expandApiVersionSet": {"true"}, "tags": {"include"}}, route{Tail: []string{"apis"}})
+	if err != nil || len(apiValues) != 1 {
+		t.Fatalf("expanded API = %#v, %v", apiValues, err)
+	}
+	apiProperties := apiValues[0].(map[string]any)["properties"].(map[string]any)
+	if apiProperties["apiVersionSet"] == nil || len(apiProperties["tags"].([]any)) != 1 {
+		t.Fatalf("expanded API properties = %#v", apiProperties)
+	}
+	operation := model.Operation{APIID: api.ID(), Name: "get"}
+	if _, err := st.UpsertOperation(operation); err != nil {
+		t.Fatal(err)
+	}
+	operationValues, err := handler.applyCollectionSelectors([]any{operationWire(operation)}, url.Values{"tags": {"include"}}, route{Tail: []string{"apis", "expanded-api", "operations"}})
+	if err != nil || len(operationValues[0].(map[string]any)["properties"].(map[string]any)["tags"].([]any)) != 0 {
+		t.Fatalf("expanded operation = %#v, %v", operationValues, err)
+	}
+	productValues, err := handler.applyCollectionSelectors([]any{productWire(product)}, url.Values{"expandGroups": {"true"}}, route{Tail: []string{"products"}})
+	if err != nil || len(productValues[0].(map[string]any)["properties"].(map[string]any)["groups"].([]any)) != 1 {
+		t.Fatalf("expanded product = %#v, %v", productValues, err)
+	}
+	userValues, err := handler.applyCollectionSelectors([]any{userWire(user)}, url.Values{"expandGroups": {"true"}}, route{Tail: []string{"users"}})
+	if err != nil || len(userValues[0].(map[string]any)["properties"].(map[string]any)["groups"].([]any)) != 1 {
+		t.Fatalf("expanded user = %#v, %v", userValues, err)
+	}
+	if properties := resourceProperties(map[string]any{}); properties == nil {
+		t.Fatal("resourceProperties returned nil")
+	}
+
+	for _, test := range []struct {
+		query url.Values
+		route route
+	}{
+		{url.Values{"expandApiVersionSet": {"true"}}, route{Tail: []string{"apis"}}},
+		{url.Values{"tags": {"include"}}, route{Tail: []string{"apis"}}},
+		{url.Values{"tags": {"include"}}, route{Tail: []string{"apis", "expanded-api", "operations"}}},
+		{url.Values{"expandGroups": {"true"}}, route{Tail: []string{"products"}}},
+		{url.Values{"expandGroups": {"true"}}, route{Tail: []string{"users"}}},
+	} {
+		if _, err := handler.applyCollectionSelectors([]any{"scalar"}, test.query, test.route); err == nil {
+			t.Fatalf("scalar expansion accepted for %v", test.route.Tail)
+		}
+	}
+	brokenHandler, brokenStore := testHandler(t)
+	if err := brokenStore.Close(); err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		query url.Values
+		route route
+	}{
+		{url.Values{"expandApiVersionSet": {"true"}}, route{Tail: []string{"apis"}}},
+		{url.Values{"tags": {"include"}}, route{Tail: []string{"apis"}}},
+		{url.Values{"tags": {"include"}}, route{Tail: []string{"apis", "expanded-api", "operations"}}},
+		{url.Values{"expandGroups": {"true"}}, route{Tail: []string{"products"}}},
+		{url.Values{"expandGroups": {"true"}}, route{Tail: []string{"users"}}},
+	} {
+		if _, err := brokenHandler.applyCollectionSelectors([]any{map[string]any{"id": "missing"}}, test.query, test.route); err == nil {
+			t.Fatalf("closed store expansion accepted for %v", test.route.Tail)
+		}
+	}
+}
+
 func TestFilterGrammar(t *testing.T) {
 	resource := map[string]any{
 		"name":       "o'brien",

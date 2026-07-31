@@ -223,7 +223,8 @@ The stable selector matrix is validated centrally: `tags` is accepted on API,
 operation, and product collections, `scope` on tag collections, and the
 documented expansion/Key Vault refresh booleans only on their declared
 operations. Product `tags` performs association-backed filtering; expansion
-projection and the remaining selector response semantics are pending.
+projection now includes API version sets, API/operation tags, and product/user
+groups. Tag `scope` and Key Vault refresh-failure projection remain pending.
 
 All current ARM failures include the canonical JSON error envelope and mirror
 its code in `x-ms-error-code`, alongside the per-request request and correlation

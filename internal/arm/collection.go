@@ -168,10 +168,57 @@ func validateCollectionSelectors(query url.Values, rt route) *collectionSelector
 }
 
 func (h *Handler) applyCollectionSelectors(values []any, query url.Values, rt route) ([]any, error) {
-	if collectionFilterKey(rt.Tail) != "products" || query.Get("tags") == "" {
-		return values, nil
+	key := collectionFilterKey(rt.Tail)
+	if key == "products" && query.Get("tags") != "" {
+		var err error
+		values, err = h.filterProductsByTag(values, query.Get("tags"))
+		if err != nil {
+			return nil, err
+		}
 	}
-	want := query.Get("tags")
+	if key == "apis" && query.Get("expandApiVersionSet") == "true" {
+		for _, value := range values {
+			resource, ok := value.(map[string]any)
+			if !ok {
+				return nil, errors.New("the collection cannot be expanded")
+			}
+			api, err := h.Store.GetAPI(resourceID(resource))
+			if err != nil {
+				return nil, err
+			}
+			if api.VersionSetID != "" {
+				versionSet, err := h.Store.GetAPIVersionSet(api.VersionSetID)
+				if err == nil {
+					properties := resourceProperties(resource)
+					properties["apiVersionSet"] = apiVersionSetWire(versionSet)
+				}
+			}
+		}
+	}
+	if key == "apis" && query.Get("tags") != "" {
+		if err := h.expandResourceTags(values); err != nil {
+			return nil, err
+		}
+	}
+	if key == "apis/operations" && query.Get("tags") != "" {
+		if err := h.expandResourceTags(values); err != nil {
+			return nil, err
+		}
+	}
+	if key == "products" && query.Get("expandGroups") == "true" {
+		if err := h.expandProductGroups(values); err != nil {
+			return nil, err
+		}
+	}
+	if key == "users" && query.Get("expandGroups") == "true" {
+		if err := h.expandUserGroups(values); err != nil {
+			return nil, err
+		}
+	}
+	return values, nil
+}
+
+func (h *Handler) filterProductsByTag(values []any, want string) ([]any, error) {
 	filtered := make([]any, 0, len(values))
 	for _, value := range values {
 		resource, ok := value.(map[string]any)
@@ -191,6 +238,77 @@ func (h *Handler) applyCollectionSelectors(values []any, query url.Values, rt ro
 		}
 	}
 	return filtered, nil
+}
+
+func resourceID(resource map[string]any) string {
+	id, _ := resource["id"].(string)
+	return id
+}
+
+func resourceProperties(resource map[string]any) map[string]any {
+	properties, ok := resource["properties"].(map[string]any)
+	if !ok {
+		properties = map[string]any{}
+		resource["properties"] = properties
+	}
+	return properties
+}
+
+func (h *Handler) expandResourceTags(values []any) error {
+	for _, value := range values {
+		resource, ok := value.(map[string]any)
+		if !ok {
+			return errors.New("the collection cannot be expanded")
+		}
+		tags, err := h.Store.ListResourceTags(resourceID(resource))
+		if err != nil {
+			return err
+		}
+		wire := make([]any, 0, len(tags))
+		for _, tag := range tags {
+			wire = append(wire, tagWire(tag))
+		}
+		resourceProperties(resource)["tags"] = wire
+	}
+	return nil
+}
+
+func (h *Handler) expandProductGroups(values []any) error {
+	for _, value := range values {
+		resource, ok := value.(map[string]any)
+		if !ok {
+			return errors.New("the collection cannot be expanded")
+		}
+		groups, err := h.Store.ListProductGroups(resourceID(resource))
+		if err != nil {
+			return err
+		}
+		wire := make([]any, 0, len(groups))
+		for _, group := range groups {
+			wire = append(wire, groupWire(group))
+		}
+		resourceProperties(resource)["groups"] = wire
+	}
+	return nil
+}
+
+func (h *Handler) expandUserGroups(values []any) error {
+	for _, value := range values {
+		resource, ok := value.(map[string]any)
+		if !ok {
+			return errors.New("the collection cannot be expanded")
+		}
+		groups, err := h.Store.ListUserGroups(resourceID(resource))
+		if err != nil {
+			return err
+		}
+		wire := make([]any, 0, len(groups))
+		for _, group := range groups {
+			wire = append(wire, groupWire(group))
+		}
+		resourceProperties(resource)["groups"] = wire
+	}
+	return nil
 }
 
 func unsupportedCollectionOption(query url.Values, rt route) string {
