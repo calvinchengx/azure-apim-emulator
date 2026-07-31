@@ -877,11 +877,14 @@ func TestProductAndSubscriptionBranches(t *testing.T) {
 	assertStatus(t, handler, http.MethodPut, basePath+"/products/p"+apiQuery, `{`, http.StatusBadRequest)
 	assertStatus(t, handler, http.MethodPut, basePath+"/products/invalid"+apiQuery, `{"properties":{}}`, http.StatusBadRequest)
 	assertStatus(t, handler, http.MethodPut, basePath+"/products/p"+apiQuery, `{"properties":{"displayName":"P"}}`, http.StatusCreated)
-	assertStatus(t, handler, http.MethodPut, basePath+"/products/p"+apiQuery, `{"properties":{"displayName":"P","state":"notPublished","approvalRequired":true}}`, http.StatusOK)
+	assertStatus(t, handler, http.MethodPut, basePath+"/products/p"+apiQuery, `{"properties":{"displayName":"P","state":"notPublished","approvalRequired":true,"description":"Original","terms":"Accept these terms","subscriptionRequired":false,"subscriptionsLimit":2}}`, http.StatusOK)
 	assertStatus(t, handler, http.MethodPatch, basePath+"/products/missing"+apiQuery, `{}`, http.StatusNotFound)
 	assertStatus(t, handler, http.MethodPatch, basePath+"/products/p"+apiQuery, `{`, http.StatusBadRequest)
-	assertStatus(t, handler, http.MethodPatch, basePath+"/products/p"+apiQuery, `{"properties":{"displayName":"Updated","state":"published","approvalRequired":false}}`, http.StatusOK)
-	assertStatus(t, handler, http.MethodGet, basePath+"/products/p"+apiQuery, "", http.StatusOK)
+	assertStatus(t, handler, http.MethodPatch, basePath+"/products/p"+apiQuery, `{"properties":{"displayName":"Updated","state":"published","approvalRequired":false,"description":null,"terms":"Updated terms"}}`, http.StatusOK)
+	productGet := request(t, handler, http.MethodGet, basePath+"/products/p"+apiQuery, "")
+	if !strings.Contains(productGet.Body.String(), `"terms":"Updated terms"`) || !strings.Contains(productGet.Body.String(), `"subscriptionsLimit":2`) || !strings.Contains(productGet.Body.String(), `"subscriptionRequired":false`) || strings.Contains(productGet.Body.String(), `"description"`) {
+		t.Fatalf("lossless product patch = %s", productGet.Body.String())
+	}
 	list := request(t, handler, http.MethodGet, basePath+"/products"+apiQuery, "")
 	if strings.Count(list.Body.String(), `"type":"Microsoft.ApiManagement/service/products"`) != 1 || !strings.Contains(list.Body.String(), `"displayName":"Updated"`) {
 		t.Fatalf("product list = %s", list.Body.String())
@@ -956,6 +959,24 @@ func TestProductAndSubscriptionBranches(t *testing.T) {
 	properties := secrets["properties"].(map[string]any)
 	if properties["primaryKey"] != "one" || properties["secondaryKey"] != "two" {
 		t.Fatalf("subscription secrets = %v", properties)
+	}
+}
+
+func TestProductDocumentFallbacks(t *testing.T) {
+	wired := productWire(model.Product{ServiceID: "/service", Name: "product", Document: map[string]any{"properties": "invalid"}})
+	properties, ok := wired["properties"].(map[string]any)
+	if !ok || properties["subscriptionRequired"] != true {
+		t.Fatalf("product wire = %#v", wired)
+	}
+	handler, st := testHandler(t)
+	seedService(t, st)
+	product, err := st.UpsertProduct(model.Product{ServiceID: serviceModel().ID(), Name: "legacy", DisplayName: "Legacy"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := request(t, handler, http.MethodPatch, basePath+"/products/legacy"+apiQuery, `{"properties":{"description":"retained"}}`)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"description":"retained"`) {
+		t.Fatalf("legacy product patch = %d: %s (%+v)", response.Code, response.Body.String(), product)
 	}
 }
 

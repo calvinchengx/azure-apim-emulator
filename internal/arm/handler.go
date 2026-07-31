@@ -2752,13 +2752,23 @@ func (h *Handler) productResource(w http.ResponseWriter, r *http.Request, produc
 			}
 			product = existing
 		} else {
-			product.State = "published"
+			product.State = "notPublished"
 		}
 		var body productPayload
-		if err := decode(r, &body); err != nil {
+		var document map[string]any
+		if err := decodeDocument(r, &body, &document); err != nil {
 			writeError(w, http.StatusBadRequest, "InvalidRequestContent", err.Error(), "")
 			return
 		}
+		if r.Method == http.MethodPatch {
+			if product.Document == nil {
+				product.Document = productWire(product)
+			}
+			mergeObject(product.Document, document)
+		} else {
+			product.Document = document
+		}
+		cleanResourceDocument(product.Document)
 		applyProductPayload(&product, body)
 		if product.DisplayName == "" {
 			writeError(w, http.StatusBadRequest, "ValidationError", "displayName is required.", "properties.displayName")
@@ -3138,7 +3148,18 @@ func nullableString(value string) any {
 	return value
 }
 func productWire(v model.Product) map[string]any {
-	return map[string]any{"id": v.ID(), "name": v.Name, "type": "Microsoft.ApiManagement/service/products", "properties": map[string]any{"displayName": v.DisplayName, "state": v.State, "approvalRequired": v.ApprovalRequired, "subscriptionRequired": true}}
+	result := cloneObject(v.Document)
+	result["id"], result["name"], result["type"] = v.ID(), v.Name, "Microsoft.ApiManagement/service/products"
+	properties, ok := result["properties"].(map[string]any)
+	if !ok {
+		properties = map[string]any{}
+		result["properties"] = properties
+	}
+	properties["displayName"], properties["state"], properties["approvalRequired"] = v.DisplayName, v.State, v.ApprovalRequired
+	if _, present := properties["subscriptionRequired"]; !present {
+		properties["subscriptionRequired"] = true
+	}
+	return result
 }
 func productAPIWire(productID, apiName string) map[string]any {
 	return map[string]any{"id": productID + "/apis/" + apiName, "name": apiName, "type": "Microsoft.ApiManagement/service/products/apis"}

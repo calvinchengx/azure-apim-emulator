@@ -192,6 +192,10 @@ CREATE TABLE IF NOT EXISTS products (
   name TEXT NOT NULL, display_name TEXT NOT NULL, state TEXT NOT NULL,
   approval_required INTEGER NOT NULL, etag TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS product_documents (
+  product_id TEXT PRIMARY KEY REFERENCES products(id) ON DELETE CASCADE,
+  document_json TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS product_apis (
   product_id TEXT NOT NULL REFERENCES products(id) ON DELETE CASCADE,
   api_id TEXT NOT NULL REFERENCES apis(id) ON DELETE CASCADE,
@@ -1431,22 +1435,43 @@ func (s *Store) DeleteOperation(id string) error {
 // UpsertProduct creates or replaces a product.
 func (s *Store) UpsertProduct(v model.Product) (model.Product, error) {
 	v.ETag = newETag()
-	_, err := s.db.Exec(`INSERT INTO products
+	document, err := json.Marshal(v.Document)
+	if err != nil {
+		return v, err
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return v, err
+	}
+	defer tx.Rollback()
+	_, err = tx.Exec(`INSERT INTO products
     (id, service_id, name, display_name, state, approval_required, etag) VALUES (?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET display_name=excluded.display_name, state=excluded.state,
       approval_required=excluded.approval_required, etag=excluded.etag`, v.ID(), v.ServiceID,
 		v.Name, v.DisplayName, v.State, v.ApprovalRequired, v.ETag)
-	return v, err
+	if err != nil {
+		return v, err
+	}
+	if _, err := tx.Exec(`INSERT INTO product_documents (product_id, document_json) VALUES (?, ?)
+	    ON CONFLICT(product_id) DO UPDATE SET document_json=excluded.document_json`, v.ID(), document); err != nil {
+		return v, err
+	}
+	return v, tx.Commit()
 }
 
 // GetProduct finds one product by ARM ID.
 func (s *Store) GetProduct(id string) (model.Product, error) {
 	var v model.Product
-	err := s.db.QueryRow(`SELECT service_id, name, display_name, state, approval_required, etag
+	var document string
+	err := s.db.QueryRow(`SELECT service_id, name, display_name, state, approval_required, etag,
+	    COALESCE((SELECT document_json FROM product_documents WHERE lower(product_id)=lower(products.id)), '{}')
 	    FROM products WHERE lower(id)=lower(?)`, id).
-		Scan(&v.ServiceID, &v.Name, &v.DisplayName, &v.State, &v.ApprovalRequired, &v.ETag)
+		Scan(&v.ServiceID, &v.Name, &v.DisplayName, &v.State, &v.ApprovalRequired, &v.ETag, &document)
 	if errors.Is(err, sql.ErrNoRows) {
 		return model.Product{}, ErrNotFound
+	}
+	if err == nil {
+		_ = json.Unmarshal([]byte(document), &v.Document)
 	}
 	return v, err
 }
@@ -1861,7 +1886,9 @@ func scanOperations(db *sql.DB) ([]model.Operation, error) {
 }
 
 func scanProducts(db *sql.DB) ([]model.Product, error) {
-	rows, err := db.Query(`SELECT service_id, name, display_name, state, approval_required, etag FROM products ORDER BY id`)
+	rows, err := db.Query(`SELECT service_id, name, display_name, state, approval_required, etag,
+	    COALESCE((SELECT document_json FROM product_documents WHERE product_id=products.id), '{}')
+	    FROM products ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
@@ -1869,9 +1896,11 @@ func scanProducts(db *sql.DB) ([]model.Product, error) {
 	var values []model.Product
 	for rows.Next() {
 		var v model.Product
-		if err := rows.Scan(&v.ServiceID, &v.Name, &v.DisplayName, &v.State, &v.ApprovalRequired, &v.ETag); err != nil {
+		var document string
+		if err := rows.Scan(&v.ServiceID, &v.Name, &v.DisplayName, &v.State, &v.ApprovalRequired, &v.ETag, &document); err != nil {
 			return nil, err
 		}
+		_ = json.Unmarshal([]byte(document), &v.Document)
 		values = append(values, v)
 	}
 	return values, rows.Err()

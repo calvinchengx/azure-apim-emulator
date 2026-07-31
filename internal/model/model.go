@@ -280,6 +280,7 @@ type Product struct {
 	State            string
 	ApprovalRequired bool
 	ETag             string
+	Document         map[string]any
 }
 
 // ID returns the product ARM resource ID.

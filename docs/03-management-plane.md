@@ -77,6 +77,12 @@ template parameters, descriptions, and other non-routing properties therefore
 survive GET and list projections while method and URL template remain indexed
 for gateway compilation.
 
+Products also retain canonical documents, including description, terms,
+subscription requirements, and subscription limits. New products default to
+the stable contract's `notPublished` state. Indexed display/state/approval
+fields remain authoritative while PUT/PATCH preserve the complete SDK-visible
+contract.
+
 ## Common ARM semantics
 
 Implement centrally and test across resources:

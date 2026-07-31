@@ -429,11 +429,18 @@ func TestGoManagementSDKConfiguresProtectedGateway(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	productDisplayName := "Go SDK product"
-	if _, err := productClient.CreateOrUpdate(ctx, defaultResourceGroup, "emulator", "go-sdk-product", armapimanagement.ProductContract{
-		Properties: &armapimanagement.ProductContractProperties{DisplayName: &productDisplayName},
-	}, nil); err != nil {
-		t.Fatal(err)
+	productDisplayName, productDescription, productTerms := "Go SDK product", "SDK product description", "SDK product terms"
+	productSubscriptionRequired := false
+	productLimit := int32(2)
+	createdProduct, err := productClient.CreateOrUpdate(ctx, defaultResourceGroup, "emulator", "go-sdk-product", armapimanagement.ProductContract{
+		Properties: &armapimanagement.ProductContractProperties{DisplayName: &productDisplayName, Description: &productDescription, Terms: &productTerms, SubscriptionRequired: &productSubscriptionRequired, SubscriptionsLimit: &productLimit},
+	}, nil)
+	if err != nil || createdProduct.Properties == nil || createdProduct.Properties.State == nil || *createdProduct.Properties.State != armapimanagement.ProductStateNotPublished {
+		t.Fatalf("product create/default state = %+v, %v", createdProduct, err)
+	}
+	gotProduct, err := productClient.Get(ctx, defaultResourceGroup, "emulator", "go-sdk-product", nil)
+	if err != nil || gotProduct.Properties == nil || gotProduct.Properties.Description == nil || *gotProduct.Properties.Description != productDescription || gotProduct.Properties.Terms == nil || *gotProduct.Properties.Terms != productTerms || gotProduct.Properties.SubscriptionsLimit == nil || *gotProduct.Properties.SubscriptionsLimit != productLimit {
+		t.Fatalf("lossless product GET = %+v, %v", gotProduct, err)
 	}
 	groupClient, err := armapimanagement.NewGroupClient(defaultSubscription, credential, options)
 	if err != nil {
