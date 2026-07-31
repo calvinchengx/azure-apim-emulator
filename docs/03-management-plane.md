@@ -75,6 +75,15 @@ Implement centrally and test across resources:
 - import/export content formats, linked content retrieval, size limits, and validation
 - secret-list operations that intentionally differ from ordinary GET
 
+Conditional entity-tag handling is implemented centrally for every current
+resource route. `GET` and `HEAD` honor strong `If-Match` and weak
+`If-None-Match` comparisons, including comma-separated validators and `*`.
+`PUT`, `PATCH`, and `DELETE` evaluate their preconditions while management
+mutations are serialized, return `412 PreconditionFailed` on stale state, and
+return `400 InvalidHeaderValue` for malformed entity tags. Endpoint-specific
+rules that require `If-Match` even when the header is omitted remain part of
+the generated operation-contract audit.
+
 ## API import and export
 
 Support OpenAPI 2/3/3.1 as documented, WSDL/SOAP, GraphQL schema, WADL where

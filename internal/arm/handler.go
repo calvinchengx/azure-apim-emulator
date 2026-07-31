@@ -15,6 +15,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/calvinchengx/azure-apim-emulator/internal/auth"
@@ -36,6 +37,7 @@ type Handler struct {
 	ValidatePolicy func(string) error
 	ImportClient   *http.Client
 	ExportKey      []byte
+	mutationMu     sync.Mutex
 }
 
 // ServeHTTP routes APIM provider requests.
@@ -61,6 +63,17 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "ResourceNotFound", "The requested resource was not found.", r.URL.Path)
 		return
 	}
+	if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions {
+		h.mutationMu.Lock()
+		defer h.mutationMu.Unlock()
+	}
+	if h.handleConditionalRequest(w, r, parsed) {
+		return
+	}
+	h.dispatch(w, r, parsed)
+}
+
+func (h *Handler) dispatch(w http.ResponseWriter, r *http.Request, parsed route) {
 	if len(parsed.Tail) == 0 {
 		h.service(w, r, parsed)
 		return

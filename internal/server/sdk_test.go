@@ -9,6 +9,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/base64"
+	"errors"
 	"io"
 	"math/big"
 	"net/http"
@@ -147,9 +148,11 @@ func TestGoManagementSDKConfiguresProtectedGateway(t *testing.T) {
 	if err != nil || gotNamedValue.Properties == nil || gotNamedValue.Properties.Value != nil || gotNamedValue.Properties.Secret == nil || !*gotNamedValue.Properties.Secret {
 		t.Fatalf("named value GET = %+v, %v", gotNamedValue, err)
 	}
-	if entityTag, err := namedValueClient.GetEntityTag(ctx, defaultResourceGroup, "emulator", "gateway-header", nil); err != nil || entityTag.ETag == nil {
+	entityTag, err := namedValueClient.GetEntityTag(ctx, defaultResourceGroup, "emulator", "gateway-header", nil)
+	if err != nil || entityTag.ETag == nil {
 		t.Fatalf("named value ETag = %+v, %v", entityTag, err)
 	}
+	staleNamedValueETag := *entityTag.ETag
 	namedValuePage, err := namedValueClient.NewListByServicePager(defaultResourceGroup, "emulator", nil).NextPage(ctx)
 	if err != nil || len(namedValuePage.Value) != 1 {
 		t.Fatalf("named value page = %+v, %v", namedValuePage, err)
@@ -167,6 +170,13 @@ func TestGoManagementSDKConfiguresProtectedGateway(t *testing.T) {
 	}
 	if _, err := updatePoller.PollUntilDone(ctx, nil); err != nil {
 		t.Fatal(err)
+	}
+	_, err = namedValueClient.BeginUpdate(ctx, defaultResourceGroup, "emulator", "gateway-header", staleNamedValueETag, armapimanagement.NamedValueUpdateParameters{
+		Properties: &armapimanagement.NamedValueUpdateParameterProperties{Value: &namedValueContent},
+	}, nil)
+	var responseError *azcore.ResponseError
+	if !errors.As(err, &responseError) || responseError.StatusCode != http.StatusPreconditionFailed || responseError.ErrorCode != "PreconditionFailed" {
+		t.Fatalf("stale named value update error = %#v", err)
 	}
 	temporaryDisplayName, temporaryValue := "Temporary", "temporary"
 	temporaryPoller, err := namedValueClient.BeginCreateOrUpdate(ctx, defaultResourceGroup, "emulator", "temporary", armapimanagement.NamedValueCreateContract{

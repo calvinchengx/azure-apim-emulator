@@ -45,6 +45,8 @@ behavior and failed compiles leave the previous snapshot active.
 Each SDK provisions a logical service, imports APIs, creates products and
 subscriptions, uploads policies, calls the gateway, rotates keys, pages lists,
 handles LROs, and tears resources down without emulator-specific request code.
+The Go witness also reads APIM entity tags, performs wildcard updates, and
+asserts the structured `412 PreconditionFailed` response for a stale update.
 
 ### Protocol end-to-end
 

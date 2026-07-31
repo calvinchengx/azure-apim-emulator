@@ -78,6 +78,83 @@ func TestTopLevelRoutingErrors(t *testing.T) {
 	}
 }
 
+func TestConditionalRequests(t *testing.T) {
+	handler, st := testHandler(t)
+	seedService(t, st)
+	path := basePath + "/tags/concurrency" + apiQuery
+	body := `{"properties":{"displayName":"Concurrency"}}`
+	created := conditionalRequest(t, handler, http.MethodPut, path, body, "If-None-Match", "*")
+	if created.Code != http.StatusCreated {
+		t.Fatalf("conditional create = %d: %s", created.Code, created.Body.String())
+	}
+	etag := created.Header().Get("ETag")
+	if etag == "" {
+		t.Fatal("conditional create omitted ETag")
+	}
+
+	tests := []struct {
+		name, method, header, value string
+		want                        int
+	}{
+		{"not modified", http.MethodGet, "If-None-Match", etag, http.StatusNotModified},
+		{"weak not modified", http.MethodGet, "If-None-Match", "W/" + etag, http.StatusNotModified},
+		{"changed", http.MethodGet, "If-None-Match", `"stale"`, http.StatusOK},
+		{"matching read", http.MethodGet, "If-Match", `"other", ` + etag, http.StatusOK},
+		{"weak strong comparison", http.MethodGet, "If-Match", "W/" + etag, http.StatusPreconditionFailed},
+		{"existing create", http.MethodPut, "If-None-Match", "*", http.StatusPreconditionFailed},
+		{"stale update", http.MethodPatch, "If-Match", `"stale"`, http.StatusPreconditionFailed},
+		{"malformed", http.MethodGet, "If-None-Match", "stale", http.StatusBadRequest},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			response := conditionalRequest(t, handler, test.method, path, body, test.header, test.value)
+			if response.Code != test.want {
+				t.Fatalf("status = %d, want %d: %s", response.Code, test.want, response.Body.String())
+			}
+			if response.Code == http.StatusNotModified && response.Body.Len() != 0 {
+				t.Fatalf("304 body = %q", response.Body.String())
+			}
+		})
+	}
+
+	updated := conditionalRequest(t, handler, http.MethodPatch, path, `{"properties":{"displayName":"Updated"}}`, "If-Match", etag)
+	if updated.Code != http.StatusOK || updated.Header().Get("ETag") == etag {
+		t.Fatalf("matching update = %d, ETag %q: %s", updated.Code, updated.Header().Get("ETag"), updated.Body.String())
+	}
+	missing := conditionalRequest(t, handler, http.MethodDelete, basePath+"/tags/missing"+apiQuery, "", "If-Match", "*")
+	if missing.Code != http.StatusPreconditionFailed {
+		t.Fatalf("missing conditional delete = %d: %s", missing.Code, missing.Body.String())
+	}
+	readMissing := conditionalRequest(t, handler, http.MethodGet, basePath+"/tags/missing"+apiQuery, "", "If-Match", "*")
+	if readMissing.Code != http.StatusPreconditionFailed {
+		t.Fatalf("missing conditional read = %d: %s", readMissing.Code, readMissing.Body.String())
+	}
+	deleted := conditionalRequest(t, handler, http.MethodDelete, path, "", "If-Match", "*")
+	if deleted.Code != http.StatusNoContent {
+		t.Fatalf("wildcard delete = %d: %s", deleted.Code, deleted.Body.String())
+	}
+}
+
+func TestConditionalEntityTagParsing(t *testing.T) {
+	if tags, present, valid := entityTags(nil); tags != nil || present || !valid {
+		t.Fatalf("absent tags = %v, %v, %v", tags, present, valid)
+	}
+	for _, value := range []string{"", `"unterminated`, `"has space"`, "W/*", "\"bad\x7f\""} {
+		if _, present, valid := entityTags([]string{value}); !present || valid {
+			t.Fatalf("entityTags(%q) accepted", value)
+		}
+	}
+	if tags, present, valid := entityTags([]string{`W/"one", "two"`, "*"}); !present || !valid || len(tags) != 3 {
+		t.Fatalf("valid tags = %v, %v, %v", tags, present, valid)
+	}
+	if strongTagMatch([]string{`"different"`}, `"current"`, true) || strongTagMatch([]string{"*"}, `"current"`, false) {
+		t.Fatal("strong non-match accepted")
+	}
+	if weakTagMatch([]string{`"different"`}, `"current"`, true) || weakTagMatch([]string{"*"}, `"current"`, false) {
+		t.Fatal("weak non-match accepted")
+	}
+}
+
 func TestServiceBranches(t *testing.T) {
 	handler, st := testHandler(t)
 	validService := `{"location":"local","sku":{},"tags":{"environment":"test"},"zones":["1"],"identity":{"type":"SystemAssigned"},"properties":{"publisherName":"Local","publisherEmail":"local@example.test","customProperties":{"one":"1","remove":"x"},"publicNetworkAccess":"Enabled","hostnameConfigurations":[{"type":"Proxy","hostName":"api.example.test"}]}}`
@@ -1517,6 +1594,16 @@ func request(t *testing.T, handler http.Handler, method, path, body string) *htt
 	req := httptest.NewRequest(method, path, strings.NewReader(body))
 	req.Header.Set("Authorization", "Bearer token")
 	handler.ServeHTTP(recorder, req)
+	return recorder
+}
+
+func conditionalRequest(t *testing.T, handler http.Handler, method, path, body, header, value string) *httptest.ResponseRecorder {
+	t.Helper()
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(method, path, strings.NewReader(body))
+	request.Header.Set("Authorization", "Bearer token")
+	request.Header.Set(header, value)
+	handler.ServeHTTP(recorder, request)
 	return recorder
 }
 
