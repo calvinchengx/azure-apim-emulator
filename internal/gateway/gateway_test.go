@@ -474,6 +474,68 @@ func TestActivateNamedValueStoreFailure(t *testing.T) {
 	}
 }
 
+func TestActivateBackendReferences(t *testing.T) {
+	st, err := store.Open("", clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	service, err := st.UpsertService(model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "emulator"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	api, err := st.UpsertAPI(model.API{ServiceID: service.ID(), Name: "api", Path: "api", ServiceURL: "https://default", IsCurrent: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	backend, err := st.UpsertBackend(model.Backend{ServiceID: service.ID(), Name: "primary", URL: "https://selected", Protocol: "http", Document: map[string]any{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.UpsertPolicy(model.Policy{ScopeID: api.ID(), Value: `<policies><inbound><set-backend-service backend-id="primary"/></inbound></policies>`}); err != nil {
+		t.Fatal(err)
+	}
+	runtime := New("emulator", nil)
+	if err := runtime.Activate(st, false); err != nil {
+		t.Fatal(err)
+	}
+	action := runtime.current.Load().Services["emulator"].Routes[0].Plan.Inbound[0]
+	if action.Value != backend.URL || action.BackendID != backend.Name {
+		t.Fatalf("resolved backend = %+v", action)
+	}
+	if _, err := st.UpsertPolicy(model.Policy{ScopeID: api.ID(), Value: `<policies><inbound><set-backend-service backend-id="missing"/></inbound></policies>`}); err != nil {
+		t.Fatal(err)
+	}
+	if err := runtime.Activate(st, false); err == nil {
+		t.Fatal("missing backend should reject activation")
+	}
+}
+
+func TestActivateBackendStoreFailure(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(dir, clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if _, err := st.UpsertService(model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "emulator"}); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", filepath.Join(dir, "azure-apim-emulator.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`DROP TABLE backends`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := New("emulator", nil).Activate(st, false); err == nil {
+		t.Fatal("activation should fail when backends cannot be read")
+	}
+}
+
 func TestWritePolicyResponseDefaultStatus(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	writePolicyResponse(recorder, &policy.State{Body: "ok", Headers: http.Header{"X": {"y"}}})

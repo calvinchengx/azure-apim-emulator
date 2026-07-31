@@ -110,7 +110,8 @@ func TestCompileAllP0Actions(t *testing.T) {
 
 func TestUnsupportedActionForms(t *testing.T) {
 	values := []string{
-		`<policies><inbound><set-backend-service backend-id="named"/></inbound></policies>`,
+		`<policies><inbound><set-backend-service/> </inbound></policies>`,
+		`<policies><inbound><set-backend-service base-url="https://backend" backend-id="named"/></inbound></policies>`,
 		`<policies><inbound><set-backend-service base-url="@(context.Request.Url)"/></inbound></policies>`,
 		`<policies><inbound><rewrite-uri template="@(context.Request.Url.Path)"/></inbound></policies>`,
 		`<policies><inbound><return-response><set-header name="X"><value>@(1)</value></set-header></return-response></inbound></policies>`,
@@ -125,6 +126,13 @@ func TestUnsupportedActionForms(t *testing.T) {
 		if err := Execute(plan.Inbound, &State{Request: httptest.NewRequest(http.MethodGet, "/", nil)}); err == nil {
 			t.Fatalf("expected unsupported runtime error for %s", value)
 		}
+	}
+}
+
+func TestCompileBackendReference(t *testing.T) {
+	plan, err := Compile(`<policies><inbound><set-backend-service backend-id="named"/></inbound></policies>`, true)
+	if err != nil || len(plan.Inbound) != 1 || plan.Inbound[0].BackendID != "named" {
+		t.Fatalf("backend reference = %+v, %v", plan, err)
 	}
 }
 

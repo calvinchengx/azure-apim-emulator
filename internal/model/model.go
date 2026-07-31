@@ -89,6 +89,22 @@ type NamedValue struct {
 // ID returns the named value ARM resource ID.
 func (v NamedValue) ID() string { return v.ServiceID + "/namedValues/" + v.Name }
 
+// Backend is a reusable gateway destination and its lossless ARM document.
+type Backend struct {
+	ServiceID   string
+	Name        string
+	Title       string
+	Description string
+	URL         string
+	Protocol    string
+	ResourceID  string
+	ETag        string
+	Document    map[string]any
+}
+
+// ID returns the backend ARM resource ID.
+func (v Backend) ID() string { return v.ServiceID + "/backends/" + v.Name }
+
 // Operation is an HTTP operation belonging to an API.
 type Operation struct {
 	APIID       string

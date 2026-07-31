@@ -159,6 +159,48 @@ func TestGoManagementSDKConfiguresProtectedGateway(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	backendClient, err := armapimanagement.NewBackendClient(defaultSubscription, credential, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	backendTitle, backendDescription := "Go SDK backend", "Created by the Go SDK"
+	backendProtocol := armapimanagement.BackendProtocolHTTP
+	createdBackend, err := backendClient.CreateOrUpdate(ctx, defaultResourceGroup, "emulator", "go-sdk-backend", armapimanagement.BackendContract{
+		Properties: &armapimanagement.BackendContractProperties{Title: &backendTitle, Description: &backendDescription, URL: &backend.URL, Protocol: &backendProtocol},
+	}, nil)
+	if err != nil || createdBackend.ID == nil {
+		t.Fatalf("backend create = %+v, %v", createdBackend, err)
+	}
+	gotBackend, err := backendClient.Get(ctx, defaultResourceGroup, "emulator", "go-sdk-backend", nil)
+	if err != nil || gotBackend.Properties == nil || gotBackend.Properties.URL == nil || *gotBackend.Properties.URL != backend.URL {
+		t.Fatalf("backend GET = %+v, %v", gotBackend, err)
+	}
+	if entityTag, err := backendClient.GetEntityTag(ctx, defaultResourceGroup, "emulator", "go-sdk-backend", nil); err != nil || entityTag.ETag == nil {
+		t.Fatalf("backend ETag = %+v, %v", entityTag, err)
+	}
+	backendPage, err := backendClient.NewListByServicePager(defaultResourceGroup, "emulator", nil).NextPage(ctx)
+	if err != nil || len(backendPage.Value) != 1 {
+		t.Fatalf("backend page = %+v, %v", backendPage, err)
+	}
+	backendDescription = "Updated by the Go SDK"
+	if _, err := backendClient.Update(ctx, defaultResourceGroup, "emulator", "go-sdk-backend", "*", armapimanagement.BackendUpdateParameters{
+		Properties: &armapimanagement.BackendUpdateParameterProperties{Description: &backendDescription},
+	}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := backendClient.Reconnect(ctx, defaultResourceGroup, "emulator", "go-sdk-backend", nil); err != nil {
+		t.Fatal(err)
+	}
+	temporaryBackendTitle := "Temporary"
+	if _, err := backendClient.CreateOrUpdate(ctx, defaultResourceGroup, "emulator", "temporary", armapimanagement.BackendContract{
+		Properties: &armapimanagement.BackendContractProperties{Title: &temporaryBackendTitle, URL: &backend.URL, Protocol: &backendProtocol},
+	}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := backendClient.Delete(ctx, defaultResourceGroup, "emulator", "temporary", "*", nil); err != nil {
+		t.Fatal(err)
+	}
+
 	apiClient, err := armapimanagement.NewAPIClient(defaultSubscription, credential, options)
 	if err != nil {
 		t.Fatal(err)
@@ -241,7 +283,7 @@ func TestGoManagementSDKConfiguresProtectedGateway(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	policyValue := `<policies><inbound><set-header name="X-Named" exists-action="override"><value>{{GatewayHeader}}</value></set-header></inbound><backend><base /></backend><outbound /><on-error /></policies>`
+	policyValue := `<policies><inbound><set-header name="X-Named" exists-action="override"><value>{{GatewayHeader}}</value></set-header><set-backend-service backend-id="go-sdk-backend" /></inbound><backend><base /></backend><outbound /><on-error /></policies>`
 	policyFormat := armapimanagement.PolicyContentFormatRawxml
 	if _, err := apiPolicyClient.CreateOrUpdate(ctx, defaultResourceGroup, "emulator", "go-sdk-full", armapimanagement.PolicyIDNamePolicy, armapimanagement.PolicyContract{
 		Properties: &armapimanagement.PolicyContractProperties{Value: &policyValue, Format: &policyFormat},

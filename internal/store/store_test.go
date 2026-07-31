@@ -277,6 +277,10 @@ func TestClosedStoreErrors(t *testing.T) {
 			return err
 		},
 		"delete named value": func() error { return st.DeleteNamedValue("named") },
+		"upsert backend":     func() error { _, err := st.UpsertBackend(model.Backend{}); return err },
+		"get backend":        func() error { _, err := st.GetBackend("backend"); return err },
+		"list backends":      func() error { _, err := st.ListBackends("service"); return err },
+		"delete backend":     func() error { return st.DeleteBackend("backend") },
 		"runtime": func() error {
 			_, _, _, _, _, _, _, err := st.RuntimeData()
 			return err
@@ -343,6 +347,12 @@ func TestScanFunctionsRejectMalformedRows(t *testing.T) {
 			`CREATE TABLE named_values (id, service_id, name, display_name, value, tags_json, secret, key_vault_secret_id, key_vault_identity_id, etag)`,
 			`INSERT INTO named_values VALUES ('id', 'service', NULL, '', '', '[]', 0, '', '', '')`,
 			func(db *sql.DB) error { _, err := (&Store{db: db}).ListNamedValues("service"); return err },
+		},
+		{
+			"backends",
+			`CREATE TABLE backends (id, service_id, name, title, description, url, protocol, resource_id, document_json, etag)`,
+			`INSERT INTO backends VALUES ('id', 'service', NULL, '', '', '', '', '', '{}', '')`,
+			func(db *sql.DB) error { _, err := (&Store{db: db}).ListBackends("service"); return err },
 		},
 		{
 			"releases",
@@ -709,6 +719,39 @@ func TestNamedValueLifecycle(t *testing.T) {
 	}
 	if err := st.DeleteNamedValue(value.ID()); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("second delete error = %v", err)
+	}
+}
+
+func TestBackendLifecycle(t *testing.T) {
+	st, err := Open("", clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	service, err := st.UpsertService(model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "backends"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	backend, err := st.UpsertBackend(model.Backend{ServiceID: service.ID(), Name: "primary", Title: "Primary", URL: "https://backend", Protocol: "http", Document: map[string]any{"properties": map[string]any{"credentials": map[string]any{"header": map[string]any{"X-Key": []any{"secret"}}}}}})
+	if err != nil || backend.ID() != service.ID()+"/backends/primary" || backend.ETag == "" {
+		t.Fatalf("backend = %+v, %v", backend, err)
+	}
+	got, err := st.GetBackend(strings.ToUpper(backend.ID()))
+	if err != nil || got.Title != "Primary" || got.Document["properties"] == nil {
+		t.Fatalf("get backend = %+v, %v", got, err)
+	}
+	values, err := st.ListBackends(service.ID())
+	if err != nil || len(values) != 1 {
+		t.Fatalf("list backends = %+v, %v", values, err)
+	}
+	if err := st.DeleteBackend(backend.ID()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.GetBackend(backend.ID()); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing backend = %v", err)
+	}
+	if err := st.DeleteBackend(backend.ID()); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("second delete = %v", err)
 	}
 }
 

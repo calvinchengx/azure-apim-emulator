@@ -99,6 +99,11 @@ CREATE TABLE IF NOT EXISTS named_values (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS ux_named_values_service_display_name
   ON named_values(service_id, display_name COLLATE NOCASE);
+CREATE TABLE IF NOT EXISTS backends (
+  id TEXT PRIMARY KEY, service_id TEXT NOT NULL REFERENCES services(id) ON DELETE CASCADE,
+  name TEXT NOT NULL, title TEXT NOT NULL, description TEXT NOT NULL, url TEXT NOT NULL,
+  protocol TEXT NOT NULL, resource_id TEXT NOT NULL, document_json TEXT NOT NULL, etag TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS api_releases (
   id TEXT PRIMARY KEY, api_id TEXT NOT NULL REFERENCES apis(id) ON DELETE CASCADE,
   name TEXT NOT NULL, target_api_id TEXT NOT NULL REFERENCES apis(id) ON DELETE CASCADE,
@@ -581,6 +586,60 @@ func (s *Store) ListNamedValues(serviceID string) ([]model.NamedValue, error) {
 func (s *Store) DeleteNamedValue(id string) error {
 	return deleteScopedResource(s.db, "named_values", id)
 }
+
+// UpsertBackend creates or replaces a backend.
+func (s *Store) UpsertBackend(v model.Backend) (model.Backend, error) {
+	v.ETag = newETag()
+	document, _ := json.Marshal(v.Document)
+	_, err := s.db.Exec(`INSERT INTO backends
+        (id, service_id, name, title, description, url, protocol, resource_id, document_json, etag)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET title=excluded.title,
+          description=excluded.description, url=excluded.url, protocol=excluded.protocol,
+          resource_id=excluded.resource_id, document_json=excluded.document_json, etag=excluded.etag`,
+		v.ID(), v.ServiceID, v.Name, v.Title, v.Description, v.URL, v.Protocol, v.ResourceID, string(document), v.ETag)
+	return v, err
+}
+
+// GetBackend finds one backend.
+func (s *Store) GetBackend(id string) (model.Backend, error) {
+	var v model.Backend
+	var document string
+	err := s.db.QueryRow(`SELECT service_id, name, title, description, url, protocol, resource_id,
+        document_json, etag FROM backends WHERE lower(id)=lower(?)`, id).
+		Scan(&v.ServiceID, &v.Name, &v.Title, &v.Description, &v.URL, &v.Protocol, &v.ResourceID, &document, &v.ETag)
+	if errors.Is(err, sql.ErrNoRows) {
+		return model.Backend{}, ErrNotFound
+	}
+	if err == nil {
+		_ = json.Unmarshal([]byte(document), &v.Document)
+	}
+	return v, err
+}
+
+// ListBackends returns backends for a service in stable ID order.
+func (s *Store) ListBackends(serviceID string) ([]model.Backend, error) {
+	rows, err := s.db.Query(`SELECT service_id, name, title, description, url, protocol, resource_id,
+        document_json, etag FROM backends WHERE lower(service_id)=lower(?) ORDER BY id`, serviceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	values := make([]model.Backend, 0)
+	for rows.Next() {
+		var v model.Backend
+		var document string
+		if err := rows.Scan(&v.ServiceID, &v.Name, &v.Title, &v.Description, &v.URL, &v.Protocol,
+			&v.ResourceID, &document, &v.ETag); err != nil {
+			return nil, err
+		}
+		_ = json.Unmarshal([]byte(document), &v.Document)
+		values = append(values, v)
+	}
+	return values, rows.Err()
+}
+
+// DeleteBackend removes a backend.
+func (s *Store) DeleteBackend(id string) error { return deleteScopedResource(s.db, "backends", id) }
 
 func (s *Store) validateAPIVersionSet(v model.API) error {
 	if v.VersionSetID == "" {

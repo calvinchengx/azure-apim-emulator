@@ -29,6 +29,7 @@ type Action struct {
 	Kind       ActionKind
 	Name       string
 	Value      string
+	BackendID  string
 	Action     string
 	StatusCode int
 	Reason     string
@@ -165,11 +166,11 @@ func compileNode(item node) (Action, bool, error) {
 		}
 		return Action{Kind: ActionSetHeader, Name: item.Attrs["name"], Value: value, Action: item.Attrs["exists-action"]}, true, nil
 	case "set-backend-service":
-		value := item.Attrs["base-url"]
-		if value == "" || expression(value) {
+		value, backendID := item.Attrs["base-url"], item.Attrs["backend-id"]
+		if (value == "") == (backendID == "") || expression(value) || expression(backendID) {
 			return unsupported(item.Name), true, nil
 		}
-		return Action{Kind: ActionSetBackend, Value: value}, true, nil
+		return Action{Kind: ActionSetBackend, Value: value, BackendID: backendID}, true, nil
 	case "rewrite-uri":
 		value := item.Attrs["template"]
 		if value == "" || expression(value) {

@@ -85,6 +85,7 @@ func (r *Runtime) Activate(st *store.Store, strict bool) error {
 	}
 	versionSets := map[string]*model.APIVersionSet{}
 	namedValues := map[string]map[string]string{}
+	backends := map[string]map[string]model.Backend{}
 	for _, service := range services {
 		values, err := st.ListAPIVersionSets(service.ID())
 		if err != nil {
@@ -102,6 +103,14 @@ func (r *Runtime) Activate(st *store.Store, strict bool) error {
 		for _, value := range serviceValues {
 			namedValues[strings.ToLower(service.ID())][strings.ToLower(value.DisplayName)] = value.Value
 		}
+		serviceBackends, err := st.ListBackends(service.ID())
+		if err != nil {
+			return err
+		}
+		backends[strings.ToLower(service.ID())] = map[string]model.Backend{}
+		for _, value := range serviceBackends {
+			backends[strings.ToLower(service.ID())][strings.ToLower(value.Name)] = value
+		}
 	}
 	policyByScope := map[string]policy.Plan{}
 	for _, item := range policies {
@@ -111,6 +120,9 @@ func (r *Runtime) Activate(st *store.Store, strict bool) error {
 		}
 		plan, err := policy.Compile(resolved, strict)
 		if err != nil {
+			return fmt.Errorf("compile policy %s: %w", item.ScopeID, err)
+		}
+		if err := resolveBackendReferences(&plan, backends[strings.ToLower(serviceIDFromScope(item.ScopeID))]); err != nil {
 			return fmt.Errorf("compile policy %s: %w", item.ScopeID, err)
 		}
 		policyByScope[strings.ToLower(item.ScopeID)] = plan
@@ -169,6 +181,24 @@ func (r *Runtime) Activate(st *store.Store, strict bool) error {
 		sort.SliceStable(service.Routes, func(i, j int) bool { return len(service.Routes[i].API.Path) > len(service.Routes[j].API.Path) })
 	}
 	r.current.Store(snapshot)
+	return nil
+}
+
+func resolveBackendReferences(plan *policy.Plan, backends map[string]model.Backend) error {
+	sections := []*[]policy.Action{&plan.Inbound, &plan.Backend, &plan.Outbound, &plan.OnError}
+	for _, section := range sections {
+		for index := range *section {
+			action := &(*section)[index]
+			if action.Kind != policy.ActionSetBackend || action.BackendID == "" {
+				continue
+			}
+			backend, ok := backends[strings.ToLower(action.BackendID)]
+			if !ok {
+				return fmt.Errorf("backend %q was not found", action.BackendID)
+			}
+			action.Value = backend.URL
+		}
+	}
 	return nil
 }
 

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 	"time"
@@ -56,6 +57,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.apiVersionSet(w, r, parsed)
 	case "namedValues":
 		h.namedValue(w, r, parsed)
+	case "backends":
+		h.backend(w, r, parsed)
 	case "products":
 		h.product(w, r, parsed)
 	case "subscriptions":
@@ -789,6 +792,148 @@ func applyNamedValuePayload(value *model.NamedValue, body namedValuePayload) {
 	}
 }
 
+type backendPayload struct {
+	Properties struct {
+		Title       *string `json:"title"`
+		Description *string `json:"description"`
+		URL         *string `json:"url"`
+		Protocol    *string `json:"protocol"`
+		ResourceID  *string `json:"resourceId"`
+	} `json:"properties"`
+}
+
+func (h *Handler) backend(w http.ResponseWriter, r *http.Request, rt route) {
+	service := model.Service{SubscriptionID: rt.SubscriptionID, ResourceGroup: rt.ResourceGroup, Name: rt.ServiceName}
+	if len(rt.Tail) == 1 {
+		if r.Method != http.MethodGet {
+			methodNotAllowed(w)
+			return
+		}
+		values, err := h.Store.ListBackends(service.ID())
+		if err != nil {
+			h.storeError(w, err, service.ID())
+			return
+		}
+		resources := make([]map[string]any, 0, len(values))
+		for _, value := range values {
+			resources = append(resources, backendWire(value))
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"value": resources, "count": len(resources)})
+		return
+	}
+	if len(rt.Tail) < 2 || len(rt.Tail) > 3 {
+		writeError(w, http.StatusNotFound, "ResourceNotFound", "The requested backend resource was not found.", r.URL.Path)
+		return
+	}
+	value := model.Backend{ServiceID: service.ID(), Name: rt.Tail[1]}
+	if len(rt.Tail) == 3 {
+		if rt.Tail[2] != "reconnect" {
+			writeError(w, http.StatusNotFound, "ResourceNotFound", "The requested backend action was not found.", r.URL.Path)
+			return
+		}
+		if r.Method != http.MethodPost {
+			methodNotAllowed(w)
+			return
+		}
+		got, err := h.Store.GetBackend(value.ID())
+		if err != nil {
+			h.storeError(w, err, value.ID())
+			return
+		}
+		w.Header().Set("ETag", got.ETag)
+		w.WriteHeader(http.StatusAccepted)
+		return
+	}
+	switch r.Method {
+	case http.MethodGet, http.MethodHead:
+		got, err := h.Store.GetBackend(value.ID())
+		if err != nil {
+			h.storeError(w, err, value.ID())
+			return
+		}
+		if r.Method == http.MethodHead {
+			w.Header().Set("ETag", got.ETag)
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		writeResource(w, http.StatusOK, backendWire(got), got.ETag)
+	case http.MethodPut, http.MethodPatch:
+		existing, existingErr := h.Store.GetBackend(value.ID())
+		if existingErr != nil && !errors.Is(existingErr, store.ErrNotFound) {
+			h.storeError(w, existingErr, value.ID())
+			return
+		}
+		if r.Method == http.MethodPatch {
+			if existingErr != nil {
+				h.storeError(w, existingErr, value.ID())
+				return
+			}
+			value = existing
+		}
+		var body backendPayload
+		var document map[string]any
+		if err := decodeDocument(r, &body, &document); err != nil {
+			writeError(w, http.StatusBadRequest, "InvalidRequestContent", err.Error(), "")
+			return
+		}
+		if r.Method == http.MethodPatch {
+			mergeObject(value.Document, document)
+		} else {
+			value.Document = document
+		}
+		applyBackendPayload(&value, body)
+		parsedURL, urlErr := url.ParseRequestURI(value.URL)
+		if value.URL == "" || urlErr != nil || parsedURL.Scheme == "" || parsedURL.Host == "" || (value.Protocol != "http" && value.Protocol != "soap") {
+			writeError(w, http.StatusBadRequest, "ValidationError", "properties.url and a valid properties.protocol are required.", "properties")
+			return
+		}
+		got, err := h.Store.UpsertBackend(value)
+		if err != nil {
+			h.storeError(w, err, value.ID())
+			return
+		}
+		if err := h.activate(); err != nil {
+			writeError(w, http.StatusBadRequest, "ConfigurationInvalid", err.Error(), value.ID())
+			return
+		}
+		status := http.StatusOK
+		if r.Method == http.MethodPut && errors.Is(existingErr, store.ErrNotFound) {
+			status = http.StatusCreated
+		}
+		writeResource(w, status, backendWire(got), got.ETag)
+	case http.MethodDelete:
+		if err := h.Store.DeleteBackend(value.ID()); err != nil && !errors.Is(err, store.ErrNotFound) {
+			h.storeError(w, err, value.ID())
+			return
+		}
+		if err := h.activate(); err != nil {
+			writeError(w, http.StatusInternalServerError, "ConfigurationInvalid", err.Error(), value.ID())
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	default:
+		methodNotAllowed(w)
+	}
+}
+
+func applyBackendPayload(value *model.Backend, body backendPayload) {
+	if body.Properties.Title != nil {
+		value.Title = *body.Properties.Title
+	}
+	if body.Properties.Description != nil {
+		value.Description = *body.Properties.Description
+	}
+	if body.Properties.URL != nil {
+		value.URL = *body.Properties.URL
+	}
+	if body.Properties.Protocol != nil {
+		value.Protocol = *body.Properties.Protocol
+	}
+	if body.Properties.ResourceID != nil {
+		value.ResourceID = *body.Properties.ResourceID
+	}
+}
+
 type apiReleasePayload struct {
 	Properties struct {
 		APIID *string `json:"apiId"`
@@ -1316,6 +1461,18 @@ func namedValueWire(v model.NamedValue) map[string]any {
 		properties["keyVault"] = map[string]any{"secretIdentifier": v.KeyVaultSecretID, "identityClientId": v.KeyVaultIdentityID}
 	}
 	return map[string]any{"id": v.ID(), "name": v.Name, "type": "Microsoft.ApiManagement/service/namedValues", "properties": properties}
+}
+func backendWire(v model.Backend) map[string]any {
+	result := cloneObject(v.Document)
+	result["id"], result["name"], result["type"] = v.ID(), v.Name, "Microsoft.ApiManagement/service/backends"
+	properties, ok := result["properties"].(map[string]any)
+	if !ok {
+		properties = map[string]any{}
+		result["properties"] = properties
+	}
+	properties["title"], properties["description"], properties["url"] = v.Title, v.Description, v.URL
+	properties["protocol"], properties["resourceId"] = v.Protocol, v.ResourceID
+	return result
 }
 func apiRevisionWire(v model.API) map[string]any {
 	base, _ := splitAPIRevision(v.Name)
