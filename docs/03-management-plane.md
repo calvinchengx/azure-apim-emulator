@@ -83,6 +83,12 @@ the stable contract's `notPublished` state. Indexed display/state/approval
 fields remain authoritative while PUT/PATCH preserve the complete SDK-visible
 contract.
 
+Groups retain canonical documents across direct GET/list and product/user
+association projections. PUT replaces unknown metadata, PATCH recursively
+merges it with explicit nullable-field clearing, and the indexed identity,
+display, type, external-directory, and built-in fields remain authoritative.
+Companion-document writes are transactional with the group row.
+
 ## Common ARM semantics
 
 Implement centrally and test across resources:

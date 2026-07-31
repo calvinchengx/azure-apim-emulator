@@ -1074,12 +1074,19 @@ func TestGroupAndProductAssociationBranches(t *testing.T) {
 	assertStatus(t, handler, http.MethodPut, groupPath, `{"properties":{"displayName":"Partners","type":"system"}}`, http.StatusBadRequest)
 	assertStatus(t, handler, http.MethodPut, groupPath, `{"properties":{"displayName":"Partners","type":"external"}}`, http.StatusBadRequest)
 	assertStatus(t, handler, http.MethodPut, groupPath, `{"properties":{"displayName":"Partners","description":"Initial","type":"custom"}}`, http.StatusCreated)
-	assertStatus(t, handler, http.MethodPut, groupPath, `{"properties":{"displayName":"Partners","description":"Updated","type":"external","externalId":"aad://partners"}}`, http.StatusOK)
+	assertStatus(t, handler, http.MethodPut, groupPath, `{"customRoot":{"retained":true},"properties":{"displayName":"Partners","description":"Updated","type":"external","externalId":"aad://partners","customMetadata":{"keep":"one","remove":"old"}}}`, http.StatusOK)
 	assertStatus(t, handler, http.MethodPatch, basePath+"/groups/missing"+apiQuery, `{}`, http.StatusNotFound)
 	assertStatus(t, handler, http.MethodPatch, groupPath, `{`, http.StatusBadRequest)
-	assertStatus(t, handler, http.MethodPatch, groupPath, `{"properties":{"displayName":"Updated Partners"}}`, http.StatusOK)
+	assertStatus(t, handler, http.MethodPatch, groupPath, `{"properties":{"displayName":"Updated Partners","description":null,"type":"custom","externalId":null,"customMetadata":{"add":"two","remove":null}}}`, http.StatusOK)
 	got := request(t, handler, http.MethodGet, groupPath, "")
-	if !strings.Contains(got.Body.String(), `"displayName":"Updated Partners"`) || !strings.Contains(got.Body.String(), `"externalId":"aad://partners"`) || got.Header().Get("ETag") == "" {
+	var group map[string]any
+	if err := json.Unmarshal(got.Body.Bytes(), &group); err != nil {
+		t.Fatal(err)
+	}
+	properties := group["properties"].(map[string]any)
+	metadata := properties["customMetadata"].(map[string]any)
+	if properties["displayName"] != "Updated Partners" || properties["description"] != "" || properties["type"] != "custom" || properties["externalId"] != nil ||
+		group["customRoot"].(map[string]any)["retained"] != true || metadata["keep"] != "one" || metadata["add"] != "two" || metadata["remove"] != nil || got.Header().Get("ETag") == "" {
 		t.Fatalf("group GET = %d %s", got.Code, got.Body.String())
 	}
 	assertStatus(t, handler, http.MethodHead, groupPath, "", http.StatusOK)
@@ -1108,6 +1115,25 @@ func TestGroupAndProductAssociationBranches(t *testing.T) {
 	assertStatus(t, handler, http.MethodDelete, productGroup, "", http.StatusNoContent)
 	assertStatus(t, handler, http.MethodDelete, groupPath, "", http.StatusNoContent)
 	assertStatus(t, handler, http.MethodDelete, groupPath, "", http.StatusNoContent)
+}
+
+func TestGroupDocumentFallbacks(t *testing.T) {
+	handler, st := testHandler(t)
+	seedService(t, st)
+	group := model.Group{ServiceID: serviceModel().ID(), Name: "legacy", DisplayName: "Legacy", Type: "custom"}
+	if _, err := st.UpsertGroup(group); err != nil {
+		t.Fatal(err)
+	}
+	path := basePath + "/groups/legacy" + apiQuery
+	response := request(t, handler, http.MethodPatch, path, `{"properties":{"description":"hydrated"}}`)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"description":"hydrated"`) {
+		t.Fatalf("legacy group PATCH = %d %s", response.Code, response.Body.String())
+	}
+
+	wire := groupWire(model.Group{Name: "invalid", Document: map[string]any{"properties": "invalid"}})
+	if _, ok := wire["properties"].(map[string]any); !ok {
+		t.Fatalf("group wire properties = %#v", wire["properties"])
+	}
 }
 
 func TestUserAndGroupMembershipBranches(t *testing.T) {

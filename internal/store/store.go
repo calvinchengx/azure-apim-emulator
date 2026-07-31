@@ -150,6 +150,10 @@ CREATE TABLE IF NOT EXISTS groups (
   name TEXT NOT NULL, display_name TEXT NOT NULL, description TEXT NOT NULL, type TEXT NOT NULL,
   external_id TEXT NOT NULL, built_in INTEGER NOT NULL, etag TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS group_documents (
+  group_id TEXT PRIMARY KEY REFERENCES groups(id) ON DELETE CASCADE,
+  document_json TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS users (
   id TEXT PRIMARY KEY, service_id TEXT NOT NULL REFERENCES services(id) ON DELETE CASCADE,
   name TEXT NOT NULL, first_name TEXT NOT NULL, last_name TEXT NOT NULL,
@@ -1016,18 +1020,35 @@ func scanTags(rows *sql.Rows, err error) ([]model.Tag, error) {
 // UpsertGroup creates or replaces a service group.
 func (s *Store) UpsertGroup(v model.Group) (model.Group, error) {
 	v.ETag = newETag()
-	_, err := s.db.Exec(`INSERT INTO groups
+	document, err := json.Marshal(v.Document)
+	if err != nil {
+		return v, err
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return v, err
+	}
+	defer tx.Rollback()
+	_, err = tx.Exec(`INSERT INTO groups
         (id, service_id, name, display_name, description, type, external_id, built_in, etag)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET
           display_name=excluded.display_name, description=excluded.description, type=excluded.type,
           external_id=excluded.external_id, built_in=excluded.built_in, etag=excluded.etag`,
 		v.ID(), v.ServiceID, v.Name, v.DisplayName, v.Description, v.Type, v.ExternalID, v.BuiltIn, v.ETag)
-	return v, err
+	if err != nil {
+		return v, err
+	}
+	if _, err := tx.Exec(`INSERT INTO group_documents (group_id, document_json) VALUES (?, ?)
+	    ON CONFLICT(group_id) DO UPDATE SET document_json=excluded.document_json`, v.ID(), document); err != nil {
+		return v, err
+	}
+	return v, tx.Commit()
 }
 
 // GetGroup finds one service group.
 func (s *Store) GetGroup(id string) (model.Group, error) {
-	values, err := scanGroups(s.db.Query(`SELECT service_id, name, display_name, description, type, external_id, built_in, etag
+	values, err := scanGroups(s.db.Query(`SELECT service_id, name, display_name, description, type, external_id, built_in, etag,
+	    COALESCE((SELECT document_json FROM group_documents WHERE lower(group_id)=lower(groups.id)), '{}')
         FROM groups WHERE lower(id)=lower(?)`, id))
 	if err != nil {
 		return model.Group{}, err
@@ -1040,7 +1061,8 @@ func (s *Store) GetGroup(id string) (model.Group, error) {
 
 // ListGroups returns groups for a service in stable ID order.
 func (s *Store) ListGroups(serviceID string) ([]model.Group, error) {
-	return scanGroups(s.db.Query(`SELECT service_id, name, display_name, description, type, external_id, built_in, etag
+	return scanGroups(s.db.Query(`SELECT service_id, name, display_name, description, type, external_id, built_in, etag,
+	    COALESCE((SELECT document_json FROM group_documents WHERE lower(group_id)=lower(groups.id)), '{}')
         FROM groups WHERE lower(service_id)=lower(?) ORDER BY id`, serviceID))
 }
 
@@ -1073,7 +1095,8 @@ func (s *Store) HasProductGroup(productID, groupID string) (bool, error) {
 // ListProductGroups returns groups associated with a product.
 func (s *Store) ListProductGroups(productID string) ([]model.Group, error) {
 	return scanGroups(s.db.Query(`SELECT groups.service_id, groups.name, groups.display_name, groups.description,
-        groups.type, groups.external_id, groups.built_in, groups.etag FROM groups
+	    groups.type, groups.external_id, groups.built_in, groups.etag,
+	    COALESCE((SELECT document_json FROM group_documents WHERE lower(group_id)=lower(groups.id)), '{}') FROM groups
         JOIN product_groups ON lower(product_groups.group_id)=lower(groups.id)
         WHERE lower(product_groups.product_id)=lower(?) ORDER BY groups.id`, productID))
 }
@@ -1086,9 +1109,11 @@ func scanGroups(rows *sql.Rows, err error) ([]model.Group, error) {
 	values := make([]model.Group, 0)
 	for rows.Next() {
 		var v model.Group
-		if err := rows.Scan(&v.ServiceID, &v.Name, &v.DisplayName, &v.Description, &v.Type, &v.ExternalID, &v.BuiltIn, &v.ETag); err != nil {
+		var document string
+		if err := rows.Scan(&v.ServiceID, &v.Name, &v.DisplayName, &v.Description, &v.Type, &v.ExternalID, &v.BuiltIn, &v.ETag, &document); err != nil {
 			return nil, err
 		}
+		_ = json.Unmarshal([]byte(document), &v.Document)
 		values = append(values, v)
 	}
 	return values, rows.Err()
@@ -1180,7 +1205,8 @@ func (s *Store) ListGroupUsers(groupID string) ([]model.User, error) {
 // ListUserGroups returns groups associated with a user.
 func (s *Store) ListUserGroups(userID string) ([]model.Group, error) {
 	return scanGroups(s.db.Query(`SELECT groups.service_id, groups.name, groups.display_name, groups.description,
-        groups.type, groups.external_id, groups.built_in, groups.etag FROM groups
+	    groups.type, groups.external_id, groups.built_in, groups.etag,
+	    COALESCE((SELECT document_json FROM group_documents WHERE lower(group_id)=lower(groups.id)), '{}') FROM groups
         JOIN group_users ON lower(group_users.group_id)=lower(groups.id)
         WHERE lower(group_users.user_id)=lower(?) ORDER BY groups.id`, userID))
 }

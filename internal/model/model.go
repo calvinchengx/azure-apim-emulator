@@ -167,6 +167,7 @@ type Group struct {
 	ExternalID  string
 	BuiltIn     bool
 	ETag        string
+	Document    map[string]any
 }
 
 // ID returns the group ARM resource ID.

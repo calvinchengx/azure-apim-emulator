@@ -621,13 +621,15 @@ func TestScanFunctionsRejectMalformedRows(t *testing.T) {
 		},
 		{
 			"groups",
-			`CREATE TABLE groups (service_id, name, display_name, description, type, external_id, built_in, etag)`,
-			`INSERT INTO groups VALUES ('service', NULL, '', '', '', '', 0, '')`,
+			`CREATE TABLE groups (id, service_id, name, display_name, description, type, external_id, built_in, etag);
+			 CREATE TABLE group_documents (group_id, document_json)`,
+			`INSERT INTO groups VALUES ('group', 'service', NULL, '', '', '', '', 0, '')`,
 			func(db *sql.DB) error { _, err := (&Store{db: db}).ListGroups("service"); return err },
 		},
 		{
 			"product groups",
 			`CREATE TABLE groups (id, service_id, name, display_name, description, type, external_id, built_in, etag);
+			 CREATE TABLE group_documents (group_id, document_json);
 			 CREATE TABLE product_groups (product_id, group_id)`,
 			`INSERT INTO groups VALUES ('group', 'service', NULL, '', '', '', '', 0, '');
 			 INSERT INTO product_groups VALUES ('product', 'group')`,
@@ -724,6 +726,57 @@ func TestScanFunctionsRejectMalformedRows(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestUpsertGroupTransactionErrors(t *testing.T) {
+	t.Run("document encoding", func(t *testing.T) {
+		st, err := Open("", clock.New())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer st.Close()
+		if _, err := st.UpsertGroup(model.Group{Document: map[string]any{"bad": make(chan int)}}); err == nil {
+			t.Fatal("group accepted an unsupported document")
+		}
+	})
+	t.Run("begin", func(t *testing.T) {
+		st, err := Open("", clock.New())
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = st.Close()
+		if _, err := st.UpsertGroup(model.Group{}); err == nil {
+			t.Fatal("closed store accepted a group")
+		}
+	})
+	t.Run("group row", func(t *testing.T) {
+		st, err := Open("", clock.New())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer st.Close()
+		if _, err := st.UpsertGroup(model.Group{ServiceID: "/missing", Name: "group"}); err == nil {
+			t.Fatal("group with a missing service was accepted")
+		}
+	})
+	t.Run("document row", func(t *testing.T) {
+		st, err := Open("", clock.New())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer st.Close()
+		service, _ := st.UpsertService(model.Service{Name: "svc"})
+		if _, err := st.db.Exec(`CREATE TRIGGER reject_group_document BEFORE INSERT ON group_documents BEGIN SELECT RAISE(FAIL, 'rejected'); END`); err != nil {
+			t.Fatal(err)
+		}
+		group := model.Group{ServiceID: service.ID(), Name: "group"}
+		if _, err := st.UpsertGroup(group); err == nil {
+			t.Fatal("rejected group document was accepted")
+		}
+		if _, err := st.GetGroup(group.ID()); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("group transaction was not rolled back: %v", err)
+		}
+	})
 }
 
 func TestTagAssociations(t *testing.T) {

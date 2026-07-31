@@ -704,10 +704,20 @@ func (h *Handler) group(w http.ResponseWriter, r *http.Request, rt route) {
 				ExternalID  *string `json:"externalId"`
 			} `json:"properties"`
 		}
-		if err := decode(r, &body); err != nil {
+		var document map[string]any
+		if err := decodeDocument(r, &body, &document); err != nil {
 			writeError(w, http.StatusBadRequest, "InvalidRequestContent", err.Error(), "")
 			return
 		}
+		if r.Method == http.MethodPatch {
+			if value.Document == nil {
+				value.Document = groupWire(value)
+			}
+			mergeObject(value.Document, document)
+		} else {
+			value.Document = document
+		}
+		cleanResourceDocument(value.Document)
 		if body.Properties.DisplayName != nil {
 			value.DisplayName = *body.Properties.DisplayName
 		}
@@ -719,6 +729,13 @@ func (h *Handler) group(w http.ResponseWriter, r *http.Request, rt route) {
 		}
 		if body.Properties.ExternalID != nil {
 			value.ExternalID = *body.Properties.ExternalID
+		}
+		properties, _ := document["properties"].(map[string]any)
+		if field, present := properties["description"]; present && field == nil {
+			value.Description = ""
+		}
+		if field, present := properties["externalId"]; present && field == nil {
+			value.ExternalID = ""
 		}
 		if strings.TrimSpace(value.DisplayName) == "" {
 			writeError(w, http.StatusBadRequest, "ValidationError", "displayName is required.", "properties.displayName")
@@ -3097,7 +3114,16 @@ func tagWire(v model.Tag) map[string]any {
 	return map[string]any{"id": v.ID(), "name": v.Name, "type": "Microsoft.ApiManagement/service/tags", "properties": map[string]any{"displayName": v.DisplayName}}
 }
 func groupWire(v model.Group) map[string]any {
-	return map[string]any{"id": v.ID(), "name": v.Name, "type": "Microsoft.ApiManagement/service/groups", "properties": map[string]any{"displayName": v.DisplayName, "description": v.Description, "type": v.Type, "externalId": nullableString(v.ExternalID), "builtIn": v.BuiltIn}}
+	result := cloneObject(v.Document)
+	result["id"], result["name"], result["type"] = v.ID(), v.Name, "Microsoft.ApiManagement/service/groups"
+	properties, ok := result["properties"].(map[string]any)
+	if !ok {
+		properties = map[string]any{}
+		result["properties"] = properties
+	}
+	properties["displayName"], properties["description"], properties["type"] = v.DisplayName, v.Description, v.Type
+	properties["externalId"], properties["builtIn"] = nullableString(v.ExternalID), v.BuiltIn
+	return result
 }
 func userWire(v model.User) map[string]any {
 	identities := make([]map[string]any, 0, len(v.Identities))
