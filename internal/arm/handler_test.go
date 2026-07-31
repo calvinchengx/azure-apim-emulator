@@ -548,6 +548,29 @@ func TestCollectionSelectorExpansion(t *testing.T) {
 	}
 }
 
+func TestValidationErrorDetails(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	writeError(recorder, http.StatusBadRequest, "ValidationError", "displayName is required.", "properties.displayName")
+	var document map[string]any
+	if err := json.Unmarshal(recorder.Body.Bytes(), &document); err != nil {
+		t.Fatal(err)
+	}
+	errorValue := document["error"].(map[string]any)
+	details := errorValue["details"].([]any)
+	if len(details) != 1 || details[0].(map[string]any)["target"] != "properties.displayName" || recorder.Header().Get("x-ms-error-code") != "ValidationError" {
+		t.Fatalf("validation error details = %#v", document)
+	}
+	recorder = httptest.NewRecorder()
+	writeError(recorder, http.StatusNotFound, "ResourceNotFound", "missing", "resource")
+	var plain map[string]any
+	if err := json.Unmarshal(recorder.Body.Bytes(), &plain); err != nil {
+		t.Fatal(err)
+	}
+	if _, present := plain["error"].(map[string]any)["details"]; present {
+		t.Fatalf("non-validation error unexpectedly has details: %#v", plain)
+	}
+}
+
 func TestFilterGrammar(t *testing.T) {
 	resource := map[string]any{
 		"name":       "o'brien",

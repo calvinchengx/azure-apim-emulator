@@ -228,8 +228,10 @@ groups. Tag `scope` and Key Vault refresh-failure projection remain pending.
 
 All current ARM failures include the canonical JSON error envelope and mirror
 its code in `x-ms-error-code`, alongside the per-request request and correlation
-IDs. Endpoint-specific nested `details` and `additionalInfo` payloads remain in
-the generated error-contract audit.
+IDs. `ValidationError` responses additionally emit the stable APIM
+`error.details` field-level `{code,message,target}` entry; `additionalInfo` is
+not part of the stable APIM error schema. Exact Azure wording remains in the
+differential audit.
 
 ## API import and export
 

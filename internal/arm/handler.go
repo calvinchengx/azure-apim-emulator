@@ -3611,6 +3611,9 @@ func writeError(w http.ResponseWriter, status int, code, message, target string)
 	if target != "" {
 		errorValue["target"] = target
 	}
+	if code == "ValidationError" && target != "" {
+		errorValue["details"] = []map[string]any{{"code": code, "message": message, "target": target}}
+	}
 	writeJSON(w, status, map[string]any{"error": errorValue})
 }
 func methodNotAllowed(w http.ResponseWriter) {
