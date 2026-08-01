@@ -48,6 +48,7 @@ const (
 	ActionAuthenticationCertificate
 	ActionFindReplace
 	ActionJSONToXML
+	ActionXMLToJSON
 	ActionSetBackend
 	ActionRewriteURI
 	ActionForward
@@ -707,6 +708,11 @@ func compileNode(item node, strict bool) (Action, bool, error) {
 			return unsupported(item.Name), true, nil
 		}
 		return Action{Kind: ActionJSONToXML, TransformRoot: root}, true, nil
+	case "xml-to-json":
+		if len(item.Children) > 0 {
+			return unsupported(item.Name), true, nil
+		}
+		return Action{Kind: ActionXMLToJSON}, true, nil
 	case "set-backend-service":
 		value, backendID := item.Attrs["base-url"], item.Attrs["backend-id"]
 		if (value == "") == (backendID == "") || expression(value) || expression(backendID) {
@@ -1237,6 +1243,23 @@ func Execute(actions []Action, state *State) error {
 				return err
 			}
 			state.Response.Body = io.NopCloser(strings.NewReader(xmlValue))
+		case ActionXMLToJSON:
+			if state.Response == nil {
+				return fmt.Errorf("xml-to-json requires a response")
+			}
+			value, err := io.ReadAll(state.Response.Body)
+			if err != nil {
+				return err
+			}
+			var document node
+			if err := xml.Unmarshal(value, &document); err != nil {
+				return err
+			}
+			jsonValue, err := json.Marshal(map[string]any{document.Name: xmlNodeJSON(document)})
+			if err != nil {
+				return err
+			}
+			state.Response.Body = io.NopCloser(strings.NewReader(string(jsonValue)))
 		case ActionSetBackend:
 			state.BackendURL = action.Value
 			state.BackendID = action.BackendID
@@ -1325,6 +1348,26 @@ func jsonValueXML(name string, value any) (string, error) {
 		return "", err
 	}
 	return builder.String(), nil
+}
+
+func xmlNodeJSON(value node) any {
+	if len(value.Children) == 0 {
+		return strings.TrimSpace(value.Text)
+	}
+	result := map[string]any{}
+	for _, child := range value.Children {
+		item := xmlNodeJSON(child)
+		if existing, ok := result[child.Name]; ok {
+			if items, ok := existing.([]any); ok {
+				result[child.Name] = append(items, item)
+			} else {
+				result[child.Name] = []any{existing, item}
+			}
+		} else {
+			result[child.Name] = item
+		}
+	}
+	return result
 }
 
 func setHeader(headers http.Header, header Header) {

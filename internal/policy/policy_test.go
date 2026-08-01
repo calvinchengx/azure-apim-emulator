@@ -4,6 +4,7 @@ import (
 	"crypto/sha1"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -977,6 +978,48 @@ func TestJSONToXMLPolicy(t *testing.T) {
 	} {
 		if _, err := Compile(value, true); err == nil {
 			t.Fatalf("invalid json-to-xml accepted: %s", value)
+		}
+	}
+}
+
+func TestXMLToJSONPolicy(t *testing.T) {
+	plan, err := Compile(`<policies><outbound><xml-to-json/></outbound></policies>`, true)
+	if err != nil || len(plan.Outbound) != 1 || plan.Outbound[0].Kind != ActionXMLToJSON {
+		t.Fatalf("xml-to-json plan = %+v, %v", plan, err)
+	}
+	response := &http.Response{Body: io.NopCloser(strings.NewReader(`<root><name>Ada</name><item>one</item><item>two</item><nested><ok>true</ok></nested></root>`))}
+	state := &State{Response: response}
+	if err := Execute(plan.Outbound, state); err != nil {
+		t.Fatal(err)
+	}
+	body, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document map[string]any
+	if err := json.Unmarshal(body, &document); err != nil || document["root"] == nil {
+		t.Fatalf("xml-to-json body = %q, %v", body, err)
+	}
+	root := document["root"].(map[string]any)
+	if root["name"] != "Ada" || len(root["item"].([]any)) != 2 || root["nested"].(map[string]any)["ok"] != "true" {
+		t.Fatalf("xml-to-json document = %#v", document)
+	}
+	if err := Execute(plan.Outbound, &State{Request: httptest.NewRequest(http.MethodGet, "/", nil)}); err == nil {
+		t.Fatal("xml-to-json without response accepted")
+	}
+	bad := &State{Response: &http.Response{Body: io.NopCloser(strings.NewReader("<root>"))}}
+	if err := Execute(plan.Outbound, bad); err == nil {
+		t.Fatal("invalid XML accepted")
+	}
+	readError := &State{Response: &http.Response{Body: errorBody{}}}
+	if err := Execute(plan.Outbound, readError); err == nil {
+		t.Fatal("XML body read error lost")
+	}
+	for _, value := range []string{
+		`<policies><outbound><xml-to-json><unknown/></xml-to-json></outbound></policies>`,
+	} {
+		if _, err := Compile(value, true); err == nil {
+			t.Fatalf("invalid xml-to-json accepted: %s", value)
 		}
 	}
 }
