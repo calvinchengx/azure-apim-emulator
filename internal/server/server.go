@@ -38,6 +38,7 @@ type Server struct {
 	portalUpsertTag          func(model.Tag) (model.Tag, error)
 	portalUpsertGroup        func(model.Group) (model.Group, error)
 	portalUpsertSubscription func(model.Subscription) (model.Subscription, error)
+	portalUpsertUser         func(model.User) (model.User, error)
 }
 
 // New wires a server. Overrides are intended for in-process tests.
@@ -58,7 +59,7 @@ func New(cfg *config.Config, validator auth.RequestValidator, backendClient, jwk
 	if tokenValidator, ok := validator.(*auth.Validator); ok {
 		runtime.SetPolicyTokenValidator(tokenValidator.ValidateToken)
 	}
-	s := &Server{Cfg: cfg, Clock: ck, Store: st, Gateway: runtime, mux: http.NewServeMux(), portalUpsertAPI: st.UpsertAPI, portalUpsertProduct: st.UpsertProduct, portalUpsertBackend: st.UpsertBackend, portalUpsertNamedValue: st.UpsertNamedValue, portalUpsertCertificate: st.UpsertCertificate, portalUpsertTag: st.UpsertTag, portalUpsertGroup: st.UpsertGroup, portalUpsertSubscription: st.UpsertSubscription}
+	s := &Server{Cfg: cfg, Clock: ck, Store: st, Gateway: runtime, mux: http.NewServeMux(), portalUpsertAPI: st.UpsertAPI, portalUpsertProduct: st.UpsertProduct, portalUpsertBackend: st.UpsertBackend, portalUpsertNamedValue: st.UpsertNamedValue, portalUpsertCertificate: st.UpsertCertificate, portalUpsertTag: st.UpsertTag, portalUpsertGroup: st.UpsertGroup, portalUpsertSubscription: st.UpsertSubscription, portalUpsertUser: st.UpsertUser}
 	s.ARM = &arm.Handler{
 		Store: st, Auth: validator,
 		Activate:       func() error { return runtime.Activate(st, cfg.StrictPolicies) },
@@ -134,6 +135,8 @@ func (s *Server) register() {
 	s.mux.HandleFunc("PUT /_emulator/portal/api/group", s.portalGroup)
 	s.mux.HandleFunc("GET /_emulator/portal/api/subscription", s.portalSubscription)
 	s.mux.HandleFunc("PUT /_emulator/portal/api/subscription", s.portalSubscription)
+	s.mux.HandleFunc("GET /_emulator/portal/api/user", s.portalUser)
+	s.mux.HandleFunc("PUT /_emulator/portal/api/user", s.portalUser)
 	s.mux.HandleFunc("POST /_emulator/portal/api/faults", s.updateFault)
 	s.mux.HandleFunc("GET /_emulator/portal/api/policy", s.portalPolicy)
 	s.mux.HandleFunc("PUT /_emulator/portal/api/policy", s.portalPolicy)
@@ -626,6 +629,65 @@ func (s *Server) portalSubscription(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"id": subscription.ID(), "name": subscription.Name, "displayName": subscription.DisplayName, "scope": subscription.Scope, "state": subscription.State, "etag": subscription.ETag})
+}
+
+func (s *Server) portalUser(w http.ResponseWriter, r *http.Request) {
+	resourceID := strings.TrimSpace(r.URL.Query().Get("resourceId"))
+	if resourceID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "resourceId is required"})
+		return
+	}
+	user, err := s.Store.GetUser(resourceID)
+	if errors.Is(err, store.ErrNotFound) {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": "user not found"})
+		return
+	}
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	if r.Method == http.MethodPut {
+		var body struct {
+			FirstName *string `json:"firstName"`
+			LastName  *string `json:"lastName"`
+			Email     *string `json:"email"`
+			State     *string `json:"state"`
+			Note      *string `json:"note"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "malformed JSON"})
+			return
+		}
+		if body.FirstName != nil {
+			user.FirstName = strings.TrimSpace(*body.FirstName)
+		}
+		if body.LastName != nil {
+			user.LastName = strings.TrimSpace(*body.LastName)
+		}
+		if body.Email != nil {
+			user.Email = strings.TrimSpace(*body.Email)
+		}
+		if body.State != nil {
+			user.State = strings.TrimSpace(*body.State)
+		}
+		if body.Note != nil {
+			user.Note = *body.Note
+		}
+		if user.Email == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "email cannot be empty"})
+			return
+		}
+		user, err = s.portalUpsertUser(user)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+			return
+		}
+		if err := s.Gateway.Activate(s.Store, s.Cfg.StrictPolicies); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"id": user.ID(), "name": user.Name, "firstName": user.FirstName, "lastName": user.LastName, "email": user.Email, "state": user.State, "note": user.Note, "identities": user.Identities, "etag": user.ETag})
 }
 
 func countAPIVersionSets(st *store.Store, id string) int {

@@ -310,6 +310,42 @@ func TestControlAndDispatchEndpoints(t *testing.T) {
 	if subscriptionUpdate.Code != http.StatusOK || !strings.Contains(subscriptionUpdate.Body.String(), "suspended") {
 		t.Fatalf("portal subscription update = %d %s", subscriptionUpdate.Code, subscriptionUpdate.Body.String())
 	}
+	portalUser := model.User{ServiceID: portalAPI.ServiceID, Name: "portal-user", FirstName: "Portal", LastName: "User", Email: "portal@example.test", State: "active", Password: "private-password", PrimaryKey: "private-primary", SecondaryKey: "private-secondary"}
+	if _, err := srv.Store.UpsertUser(portalUser); err != nil {
+		t.Fatal(err)
+	}
+	userURL := "/_emulator/portal/api/user?resourceId=" + url.QueryEscape(portalUser.ID())
+	userRead := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(userRead, httptest.NewRequest(http.MethodGet, userURL, nil))
+	if userRead.Code != http.StatusOK || strings.Contains(userRead.Body.String(), "private-password") || strings.Contains(userRead.Body.String(), "private-primary") {
+		t.Fatalf("portal user redaction = %d %s", userRead.Code, userRead.Body.String())
+	}
+	userUpdate := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(userUpdate, httptest.NewRequest(http.MethodPut, userURL, strings.NewReader(`{"firstName":"Updated","email":"updated@example.test","state":"blocked","note":"review"}`)))
+	if userUpdate.Code != http.StatusOK || !strings.Contains(userUpdate.Body.String(), "updated@example.test") {
+		t.Fatalf("portal user update = %d %s", userUpdate.Code, userUpdate.Body.String())
+	}
+	for _, request := range []*http.Request{
+		httptest.NewRequest(http.MethodGet, "/_emulator/portal/api/user", nil),
+		httptest.NewRequest(http.MethodGet, "/_emulator/portal/api/user?resourceId=/missing", nil),
+		httptest.NewRequest(http.MethodPut, userURL, strings.NewReader("{")),
+		httptest.NewRequest(http.MethodPut, userURL, strings.NewReader(`{"email":" "}`)),
+	} {
+		recorder := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(recorder, request)
+		if recorder.Code != http.StatusBadRequest && recorder.Code != http.StatusNotFound {
+			t.Fatalf("portal user invalid = %d %s", recorder.Code, recorder.Body.String())
+		}
+	}
+	srv.portalUpsertUser = func(model.User) (model.User, error) {
+		return model.User{}, errors.New("injected user persistence failure")
+	}
+	userStoreFailure := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(userStoreFailure, httptest.NewRequest(http.MethodPut, userURL, strings.NewReader(`{"state":"active"}`)))
+	if userStoreFailure.Code != http.StatusBadRequest {
+		t.Fatalf("portal user persistence failure = %d %s", userStoreFailure.Code, userStoreFailure.Body.String())
+	}
+	srv.portalUpsertUser = srv.Store.UpsertUser
 	for _, request := range []*http.Request{
 		httptest.NewRequest(http.MethodGet, "/_emulator/portal/api/subscription", nil),
 		httptest.NewRequest(http.MethodGet, "/_emulator/portal/api/subscription?resourceId=/missing", nil),
@@ -467,6 +503,11 @@ func TestControlAndDispatchEndpoints(t *testing.T) {
 	srv.Handler().ServeHTTP(productActivationFailure, httptest.NewRequest(http.MethodPut, productURL, strings.NewReader(`{"state":"published"}`)))
 	if productActivationFailure.Code != http.StatusBadRequest {
 		t.Fatalf("portal product activation failure = %d %s", productActivationFailure.Code, productActivationFailure.Body.String())
+	}
+	userActivationFailure := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(userActivationFailure, httptest.NewRequest(http.MethodPut, userURL, strings.NewReader(`{"state":"blocked"}`)))
+	if userActivationFailure.Code != http.StatusBadRequest {
+		t.Fatalf("portal user activation failure = %d %s", userActivationFailure.Code, userActivationFailure.Body.String())
 	}
 	subscriptionActivationFailure := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(subscriptionActivationFailure, httptest.NewRequest(http.MethodPut, subscriptionURL, strings.NewReader(`{"state":"active"}`)))
@@ -646,6 +687,11 @@ func TestControlAndDispatchEndpoints(t *testing.T) {
 	srv.Handler().ServeHTTP(subscriptionFailure, httptest.NewRequest(http.MethodGet, subscriptionURL, nil))
 	if subscriptionFailure.Code != http.StatusInternalServerError {
 		t.Fatalf("subscription store failure = %d %s", subscriptionFailure.Code, subscriptionFailure.Body.String())
+	}
+	userFailure := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(userFailure, httptest.NewRequest(http.MethodGet, userURL, nil))
+	if userFailure.Code != http.StatusInternalServerError {
+		t.Fatalf("user store failure = %d %s", userFailure.Code, userFailure.Body.String())
 	}
 	diagnosticFailure := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(diagnosticFailure, httptest.NewRequest(http.MethodGet, "/_emulator/portal/api/diagnostics", nil))
