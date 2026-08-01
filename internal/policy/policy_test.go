@@ -771,6 +771,40 @@ func TestAuthenticationBasicPolicy(t *testing.T) {
 	}
 }
 
+func TestAuthenticationManagedIdentityPolicy(t *testing.T) {
+	plan, err := Compile(`<policies><backend><authentication-managed-identity resource="https://backend.test"/></backend></policies>`, true)
+	if err != nil || len(plan.Backend) != 1 || plan.Backend[0].Kind != ActionAuthenticationManagedIdentity {
+		t.Fatalf("managed identity plan = %+v, %v", plan, err)
+	}
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	state := &State{Request: request, AcquireToken: func(resource string) (string, error) {
+		if resource != "https://backend.test" {
+			t.Fatalf("resource = %q", resource)
+		}
+		return "token", nil
+	}}
+	if err := Execute(plan.Backend, state); err != nil || request.Header.Get("Authorization") != "Bearer token" {
+		t.Fatalf("managed identity header = %q, %v", request.Header.Get("Authorization"), err)
+	}
+	if err := Execute(plan.Backend, &State{Request: httptest.NewRequest(http.MethodGet, "/", nil)}); err == nil {
+		t.Fatal("managed identity without provider accepted")
+	}
+	providerErr := errors.New("token unavailable")
+	state = &State{Request: httptest.NewRequest(http.MethodGet, "/", nil), AcquireToken: func(string) (string, error) { return "", providerErr }}
+	if err := Execute(plan.Backend, state); !errors.Is(err, providerErr) {
+		t.Fatalf("provider error = %v", err)
+	}
+	for _, value := range []string{
+		`<policies><backend><authentication-managed-identity resource=""/></backend></policies>`,
+		`<policies><backend><authentication-managed-identity resource="@(context.Request.Url)"/></backend></policies>`,
+		`<policies><backend><authentication-managed-identity resource="https://backend.test"><unknown/></authentication-managed-identity></backend></policies>`,
+	} {
+		if _, err := Compile(value, true); err == nil {
+			t.Fatalf("invalid managed identity policy accepted: %s", value)
+		}
+	}
+}
+
 type errorBody struct{}
 
 func (errorBody) Read([]byte) (int, error) { return 0, errors.New("body read failed") }

@@ -42,6 +42,7 @@ const (
 	ActionChoose
 	ActionTrace
 	ActionAuthenticationBasic
+	ActionAuthenticationManagedIdentity
 	ActionSetBackend
 	ActionRewriteURI
 	ActionForward
@@ -95,6 +96,7 @@ type Action struct {
 	TraceMessage            string
 	AuthUsername            string
 	AuthPassword            string
+	AuthResource            string
 	Children                []Action
 	RetryCount              int
 	RetryInterval           time.Duration
@@ -154,6 +156,7 @@ type State struct {
 	ValidateToken func(string) error
 	SendRequest   func(*http.Request) (*http.Response, error)
 	Trace         func(string, string)
+	AcquireToken  func(string) (string, error)
 	RateLimit     func(string, int, time.Duration) bool
 	CacheGet      func(string) (int, http.Header, string, bool)
 	CacheSet      func(string, int, http.Header, string, time.Duration)
@@ -645,6 +648,15 @@ func compileNode(item node, strict bool) (Action, bool, error) {
 			return unsupported(item.Name + "/" + item.Children[0].Name), true, nil
 		}
 		return Action{Kind: ActionAuthenticationBasic, AuthUsername: username, AuthPassword: password}, true, nil
+	case "authentication-managed-identity":
+		resource := item.Attrs["resource"]
+		if resource == "" || expression(resource) {
+			return unsupported(item.Name), true, nil
+		}
+		if len(item.Children) > 0 {
+			return unsupported(item.Name + "/" + item.Children[0].Name), true, nil
+		}
+		return Action{Kind: ActionAuthenticationManagedIdentity, AuthResource: resource}, true, nil
 	case "set-backend-service":
 		value, backendID := item.Attrs["base-url"], item.Attrs["backend-id"]
 		if (value == "") == (backendID == "") || expression(value) || expression(backendID) {
@@ -1103,6 +1115,18 @@ func Execute(actions []Action, state *State) error {
 				return fmt.Errorf("authentication-basic requires a request")
 			}
 			state.Request.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte(action.AuthUsername+":"+action.AuthPassword)))
+		case ActionAuthenticationManagedIdentity:
+			if state.Request == nil {
+				return fmt.Errorf("authentication-managed-identity requires a request")
+			}
+			if state.AcquireToken == nil {
+				return fmt.Errorf("authentication-managed-identity requires a token provider")
+			}
+			token, err := state.AcquireToken(action.AuthResource)
+			if err != nil {
+				return err
+			}
+			state.Request.Header.Set("Authorization", "Bearer "+token)
 		case ActionSetBackend:
 			state.BackendURL = action.Value
 			state.BackendID = action.BackendID
