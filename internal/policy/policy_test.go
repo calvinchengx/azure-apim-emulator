@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestCompileAndExecute(t *testing.T) {
@@ -327,6 +328,43 @@ func TestSendRequestPolicy(t *testing.T) {
 		if err := Execute(compiled.Inbound, &State{}); err == nil {
 			t.Fatalf("expected send-request failure for %s", value)
 		}
+	}
+}
+
+func TestRateLimitPolicies(t *testing.T) {
+	plan, err := Compile(`<policies><inbound><rate-limit-by-key calls="2" renewal-period="60" counter-key="client" retry-after-header-name="Retry-After"/></inbound></policies>`, true)
+	if err != nil || len(plan.Inbound) != 1 || plan.Inbound[0].Kind != ActionRateLimit {
+		t.Fatalf("rate-limit action = %+v, %v", plan, err)
+	}
+	state := &State{Request: httptest.NewRequest(http.MethodGet, "/", nil)}
+	count := 0
+	state.RateLimit = func(key string, calls int, period time.Duration) bool {
+		if key != "client" || calls != 2 || period != time.Minute {
+			t.Fatalf("limiter args = %q %d %s", key, calls, period)
+		}
+		count++
+		return count > 2
+	}
+	if err := Execute(plan.Inbound, state); err != nil || state.Returned {
+		t.Fatalf("first limit = %+v, %v", state, err)
+	}
+	if err := Execute(plan.Inbound, state); err != nil || state.Returned {
+		t.Fatalf("second limit = %+v, %v", state, err)
+	}
+	if err := Execute(plan.Inbound, state); err != nil || !state.Returned || state.StatusCode != http.StatusTooManyRequests || state.Headers.Get("Retry-After") != "true" {
+		t.Fatalf("limited request = %+v, %v", state, err)
+	}
+	for _, value := range []string{
+		`<policies><inbound><rate-limit-by-key calls="0" renewal-period="1"/></inbound></policies>`,
+		`<policies><inbound><quota-by-key calls="1" renewal-period="bad"/></inbound></policies>`,
+		`<policies><inbound><quota-by-key calls="1" renewal-period="1" counter-key="@(1)"/></inbound></policies>`,
+	} {
+		if _, err := Compile(value, true); err == nil {
+			t.Fatalf("invalid limit accepted: %s", value)
+		}
+	}
+	if err := Execute(plan.Inbound, &State{}); err == nil {
+		t.Fatal("rate-limit without limiter accepted")
 	}
 }
 

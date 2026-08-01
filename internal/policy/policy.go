@@ -29,6 +29,7 @@ const (
 	ActionSetMethod
 	ActionCORS
 	ActionSendRequest
+	ActionRateLimit
 	ActionSetBackend
 	ActionRewriteURI
 	ActionForward
@@ -62,6 +63,8 @@ type Action struct {
 	SendURL       string
 	SendMethod    string
 	ResponseVar   string
+	LimitCalls    int
+	LimitPeriod   time.Duration
 	Children      []Action
 	RetryCount    int
 	RetryInterval time.Duration
@@ -100,6 +103,7 @@ type State struct {
 	Variables     map[string]string
 	ValidateToken func(string) error
 	SendRequest   func(*http.Request) (*http.Response, error)
+	RateLimit     func(string, int, time.Duration) bool
 }
 
 type node struct {
@@ -374,6 +378,24 @@ func compileNode(item node, strict bool) (Action, bool, error) {
 			return unsupported(item.Name), true, nil
 		}
 		return action, true, nil
+	case "rate-limit-by-key", "quota-by-key":
+		calls, period := 0, time.Duration(0)
+		if value := item.Attrs["calls"]; value != "" {
+			if _, err := fmt.Sscanf(value, "%d", &calls); err != nil || calls <= 0 {
+				return Action{}, false, fmt.Errorf("invalid %s calls", item.Name)
+			}
+		}
+		if value := item.Attrs["renewal-period"]; value != "" {
+			seconds, err := time.ParseDuration(value + "s")
+			if err != nil || seconds <= 0 {
+				return Action{}, false, fmt.Errorf("invalid %s renewal period", item.Name)
+			}
+			period = seconds
+		}
+		if calls == 0 || period == 0 || expression(item.Attrs["counter-key"]) {
+			return unsupported(item.Name), true, nil
+		}
+		return Action{Kind: ActionRateLimit, Value: item.Attrs["counter-key"], LimitCalls: calls, LimitPeriod: period, StatusCode: http.StatusTooManyRequests, Body: item.Attrs["retry-after-header-name"]}, true, nil
 	case "set-backend-service":
 		value, backendID := item.Attrs["base-url"], item.Attrs["backend-id"]
 		if (value == "") == (backendID == "") || expression(value) || expression(backendID) {
@@ -611,6 +633,21 @@ func Execute(actions []Action, state *State) error {
 					}
 					state.Variables[action.ResponseVar] = fmt.Sprintf("%d", response.StatusCode)
 				}
+			}
+		case ActionRateLimit:
+			if state.RateLimit == nil {
+				return fmt.Errorf("rate-limit requires a configured limiter")
+			}
+			key := action.Value
+			if key == "" && state.Request != nil {
+				key = state.Request.RemoteAddr
+			}
+			if state.RateLimit(key, action.LimitCalls, action.LimitPeriod) {
+				state.Returned, state.StatusCode = true, action.StatusCode
+				if action.Body != "" {
+					state.Headers.Set(action.Body, "true")
+				}
+				return nil
 			}
 		case ActionSetBackend:
 			state.BackendURL = action.Value

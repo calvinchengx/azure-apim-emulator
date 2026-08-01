@@ -392,6 +392,12 @@ func TestGatewayFaultControls(t *testing.T) {
 	if hosts := customHostnames(map[string]any{"properties": map[string]any{"hostnameConfigurations": []any{"invalid", map[string]any{"hostName": "portal.example"}}}}); !hosts["portal.example"] {
 		t.Fatalf("custom host extraction = %#v", hosts)
 	}
+	if runtime.rateLimit("client", 2, time.Minute) || runtime.rateLimit("client", 2, time.Minute) || !runtime.rateLimit("client", 2, time.Minute) {
+		t.Fatal("rate limiter did not enforce calls")
+	}
+	if runtime.rateLimit("other", 1, time.Minute) {
+		t.Fatal("separate rate key was limited")
+	}
 }
 
 func TestGatewayOperationAndSubscriptionRejections(t *testing.T) {

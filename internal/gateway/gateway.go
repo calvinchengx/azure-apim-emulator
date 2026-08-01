@@ -83,6 +83,8 @@ type Runtime struct {
 	policySendRequest    func(*http.Request) (*http.Response, error)
 	faultMu              sync.Mutex
 	faults               map[string]Fault
+	rateMu               sync.Mutex
+	rateWindows          map[string][]time.Time
 }
 
 // Fault is a deterministic operator-injected backend outcome.
@@ -129,7 +131,7 @@ func New(defaultService string, client *http.Client) *Runtime {
 	if client == nil {
 		client = http.DefaultClient
 	}
-	r := &Runtime{defaultService: defaultService, client: client, policySendRequest: client.Do, traces: map[string]Trace{}, breakers: map[string]circuitState{}, faults: map[string]Fault{}}
+	r := &Runtime{defaultService: defaultService, client: client, policySendRequest: client.Do, traces: map[string]Trace{}, breakers: map[string]circuitState{}, faults: map[string]Fault{}, rateWindows: map[string][]time.Time{}}
 	r.current.Store(&Snapshot{Services: map[string]*Service{}})
 	return r
 }
@@ -137,6 +139,26 @@ func New(defaultService string, client *http.Client) *Runtime {
 // SetPolicyTokenValidator configures the validator used by gateway JWT policies.
 func (r *Runtime) SetPolicyTokenValidator(validate func(string) error) {
 	r.policyTokenValidator = validate
+}
+
+func (r *Runtime) rateLimit(key string, calls int, period time.Duration) bool {
+	now := time.Now()
+	r.rateMu.Lock()
+	defer r.rateMu.Unlock()
+	window := r.rateWindows[key]
+	cutoff := now.Add(-period)
+	kept := window[:0]
+	for _, stamp := range window {
+		if stamp.After(cutoff) {
+			kept = append(kept, stamp)
+		}
+	}
+	if len(kept) >= calls {
+		r.rateWindows[key] = kept
+		return true
+	}
+	r.rateWindows[key] = append(kept, now)
+	return false
 }
 
 func faultKey(service, backend string) string {
@@ -428,7 +450,7 @@ func (r *Runtime) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		gatewayError(w, http.StatusUnauthorized, "SubscriptionKeyInvalid", message)
 		return
 	}
-	state := &policy.State{Request: req, BackendURL: route.API.ServiceURL, Path: relative, Headers: make(http.Header), ValidateToken: r.policyTokenValidator, SendRequest: r.policySendRequest}
+	state := &policy.State{Request: req, BackendURL: route.API.ServiceURL, Path: relative, Headers: make(http.Header), ValidateToken: r.policyTokenValidator, SendRequest: r.policySendRequest, RateLimit: r.rateLimit}
 	traceEvent(trace, "inbound", "")
 	if err := policy.Execute(route.Plan.Inbound, state); err != nil {
 		r.policyFailure(w, req, route.Plan, state, err)
