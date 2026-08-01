@@ -410,6 +410,18 @@ func TestGatewayFaultControls(t *testing.T) {
 	if _, _, _, ok := runtime.cacheGet("missing"); ok {
 		t.Fatal("missing cache entry returned")
 	}
+	runtime.valueCacheSet("value", "cached", time.Minute)
+	if value, ok := runtime.valueCacheGet("value"); !ok || value != "cached" {
+		t.Fatalf("value cache get = %q %v", value, ok)
+	}
+	runtime.valueCacheSet("expired-value", "old", -time.Second)
+	if _, ok := runtime.valueCacheGet("expired-value"); ok {
+		t.Fatal("expired value cache returned")
+	}
+	runtime.valueCacheRemove("value")
+	if _, ok := runtime.valueCacheGet("value"); ok {
+		t.Fatal("removed value cache returned")
+	}
 }
 
 func TestGatewayOperationAndSubscriptionRejections(t *testing.T) {

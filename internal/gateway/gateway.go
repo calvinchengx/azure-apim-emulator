@@ -87,12 +87,18 @@ type Runtime struct {
 	rateWindows          map[string][]time.Time
 	cacheMu              sync.Mutex
 	cache                map[string]cacheEntry
+	valueCache           map[string]valueCacheEntry
 }
 
 type cacheEntry struct {
 	status  int
 	headers http.Header
 	body    string
+	expires time.Time
+}
+
+type valueCacheEntry struct {
+	value   string
 	expires time.Time
 }
 
@@ -140,7 +146,7 @@ func New(defaultService string, client *http.Client) *Runtime {
 	if client == nil {
 		client = http.DefaultClient
 	}
-	r := &Runtime{defaultService: defaultService, client: client, policySendRequest: client.Do, traces: map[string]Trace{}, breakers: map[string]circuitState{}, faults: map[string]Fault{}, rateWindows: map[string][]time.Time{}, cache: map[string]cacheEntry{}}
+	r := &Runtime{defaultService: defaultService, client: client, policySendRequest: client.Do, traces: map[string]Trace{}, breakers: map[string]circuitState{}, faults: map[string]Fault{}, rateWindows: map[string][]time.Time{}, cache: map[string]cacheEntry{}, valueCache: map[string]valueCacheEntry{}}
 	r.current.Store(&Snapshot{Services: map[string]*Service{}})
 	return r
 }
@@ -188,6 +194,31 @@ func (r *Runtime) cacheSet(key string, status int, headers http.Header, body str
 	r.cacheMu.Lock()
 	defer r.cacheMu.Unlock()
 	r.cache[key] = cacheEntry{status: status, headers: headers.Clone(), body: body, expires: time.Now().Add(duration)}
+}
+
+func (r *Runtime) valueCacheGet(key string) (string, bool) {
+	r.cacheMu.Lock()
+	defer r.cacheMu.Unlock()
+	entry, ok := r.valueCache[key]
+	if !ok || !entry.expires.After(time.Now()) {
+		if ok {
+			delete(r.valueCache, key)
+		}
+		return "", false
+	}
+	return entry.value, true
+}
+
+func (r *Runtime) valueCacheSet(key, value string, duration time.Duration) {
+	r.cacheMu.Lock()
+	defer r.cacheMu.Unlock()
+	r.valueCache[key] = valueCacheEntry{value: value, expires: time.Now().Add(duration)}
+}
+
+func (r *Runtime) valueCacheRemove(key string) {
+	r.cacheMu.Lock()
+	defer r.cacheMu.Unlock()
+	delete(r.valueCache, key)
 }
 
 func faultKey(service, backend string) string {
@@ -480,7 +511,7 @@ func (r *Runtime) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	cacheKey := service.Name + ":" + route.API.ID() + ":" + req.Method + ":" + req.URL.RequestURI()
-	state := &policy.State{Request: req, BackendURL: route.API.ServiceURL, Path: relative, Headers: make(http.Header), ValidateToken: r.policyTokenValidator, SendRequest: r.policySendRequest, Trace: func(phase, detail string) { traceEvent(trace, phase, detail) }, RateLimit: r.rateLimit, CacheGet: r.cacheGet, CacheSet: r.cacheSet, CacheKey: cacheKey}
+	state := &policy.State{Request: req, BackendURL: route.API.ServiceURL, Path: relative, Headers: make(http.Header), ValidateToken: r.policyTokenValidator, SendRequest: r.policySendRequest, Trace: func(phase, detail string) { traceEvent(trace, phase, detail) }, RateLimit: r.rateLimit, CacheGet: r.cacheGet, CacheSet: r.cacheSet, ValueCacheGet: r.valueCacheGet, ValueCacheSet: r.valueCacheSet, ValueCacheRemove: r.valueCacheRemove, CacheKey: cacheKey}
 	traceEvent(trace, "inbound", "")
 	if err := policy.Execute(route.Plan.Inbound, state); err != nil {
 		r.policyFailure(w, req, route.Plan, state, err)
