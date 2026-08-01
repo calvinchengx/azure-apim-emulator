@@ -85,6 +85,15 @@ type Runtime struct {
 	faults               map[string]Fault
 	rateMu               sync.Mutex
 	rateWindows          map[string][]time.Time
+	cacheMu              sync.Mutex
+	cache                map[string]cacheEntry
+}
+
+type cacheEntry struct {
+	status  int
+	headers http.Header
+	body    string
+	expires time.Time
 }
 
 // Fault is a deterministic operator-injected backend outcome.
@@ -131,7 +140,7 @@ func New(defaultService string, client *http.Client) *Runtime {
 	if client == nil {
 		client = http.DefaultClient
 	}
-	r := &Runtime{defaultService: defaultService, client: client, policySendRequest: client.Do, traces: map[string]Trace{}, breakers: map[string]circuitState{}, faults: map[string]Fault{}, rateWindows: map[string][]time.Time{}}
+	r := &Runtime{defaultService: defaultService, client: client, policySendRequest: client.Do, traces: map[string]Trace{}, breakers: map[string]circuitState{}, faults: map[string]Fault{}, rateWindows: map[string][]time.Time{}, cache: map[string]cacheEntry{}}
 	r.current.Store(&Snapshot{Services: map[string]*Service{}})
 	return r
 }
@@ -159,6 +168,26 @@ func (r *Runtime) rateLimit(key string, calls int, period time.Duration) bool {
 	}
 	r.rateWindows[key] = append(kept, now)
 	return false
+}
+
+func (r *Runtime) cacheGet(key string) (int, http.Header, string, bool) {
+	r.cacheMu.Lock()
+	defer r.cacheMu.Unlock()
+	entry, ok := r.cache[key]
+	if !ok {
+		return 0, nil, "", false
+	}
+	if !entry.expires.After(time.Now()) {
+		delete(r.cache, key)
+		return 0, nil, "", false
+	}
+	return entry.status, entry.headers.Clone(), entry.body, true
+}
+
+func (r *Runtime) cacheSet(key string, status int, headers http.Header, body string, duration time.Duration) {
+	r.cacheMu.Lock()
+	defer r.cacheMu.Unlock()
+	r.cache[key] = cacheEntry{status: status, headers: headers.Clone(), body: body, expires: time.Now().Add(duration)}
 }
 
 func faultKey(service, backend string) string {
@@ -450,7 +479,8 @@ func (r *Runtime) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		gatewayError(w, http.StatusUnauthorized, "SubscriptionKeyInvalid", message)
 		return
 	}
-	state := &policy.State{Request: req, BackendURL: route.API.ServiceURL, Path: relative, Headers: make(http.Header), ValidateToken: r.policyTokenValidator, SendRequest: r.policySendRequest, RateLimit: r.rateLimit}
+	cacheKey := service.Name + ":" + route.API.ID() + ":" + req.Method + ":" + req.URL.RequestURI()
+	state := &policy.State{Request: req, BackendURL: route.API.ServiceURL, Path: relative, Headers: make(http.Header), ValidateToken: r.policyTokenValidator, SendRequest: r.policySendRequest, RateLimit: r.rateLimit, CacheGet: r.cacheGet, CacheSet: r.cacheSet, CacheKey: cacheKey}
 	traceEvent(trace, "inbound", "")
 	if err := policy.Execute(route.Plan.Inbound, state); err != nil {
 		r.policyFailure(w, req, route.Plan, state, err)

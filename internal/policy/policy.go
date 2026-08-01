@@ -30,6 +30,8 @@ const (
 	ActionCORS
 	ActionSendRequest
 	ActionRateLimit
+	ActionCacheLookup
+	ActionCacheStore
 	ActionSetBackend
 	ActionRewriteURI
 	ActionForward
@@ -65,6 +67,7 @@ type Action struct {
 	ResponseVar   string
 	LimitCalls    int
 	LimitPeriod   time.Duration
+	CacheDuration time.Duration
 	Children      []Action
 	RetryCount    int
 	RetryInterval time.Duration
@@ -104,6 +107,9 @@ type State struct {
 	ValidateToken func(string) error
 	SendRequest   func(*http.Request) (*http.Response, error)
 	RateLimit     func(string, int, time.Duration) bool
+	CacheGet      func(string) (int, http.Header, string, bool)
+	CacheSet      func(string, int, http.Header, string, time.Duration)
+	CacheKey      string
 }
 
 type node struct {
@@ -396,6 +402,21 @@ func compileNode(item node, strict bool) (Action, bool, error) {
 			return unsupported(item.Name), true, nil
 		}
 		return Action{Kind: ActionRateLimit, Value: item.Attrs["counter-key"], LimitCalls: calls, LimitPeriod: period, StatusCode: http.StatusTooManyRequests, Body: item.Attrs["retry-after-header-name"]}, true, nil
+	case "cache-lookup":
+		return Action{Kind: ActionCacheLookup}, true, nil
+	case "cache-store":
+		duration := time.Duration(0)
+		if value := item.Attrs["duration"]; value != "" {
+			seconds, err := time.ParseDuration(value + "s")
+			if err != nil || seconds <= 0 {
+				return Action{}, false, fmt.Errorf("invalid cache-store duration")
+			}
+			duration = seconds
+		}
+		if duration == 0 {
+			return unsupported(item.Name), true, nil
+		}
+		return Action{Kind: ActionCacheStore, CacheDuration: duration}, true, nil
 	case "set-backend-service":
 		value, backendID := item.Attrs["base-url"], item.Attrs["backend-id"]
 		if (value == "") == (backendID == "") || expression(value) || expression(backendID) {
@@ -649,6 +670,29 @@ func Execute(actions []Action, state *State) error {
 				}
 				return nil
 			}
+		case ActionCacheLookup:
+			if state.CacheGet == nil {
+				return fmt.Errorf("cache-lookup requires a configured cache")
+			}
+			if status, headers, body, ok := state.CacheGet(state.CacheKey); ok {
+				state.Headers = headers
+				state.Returned, state.StatusCode, state.Body = true, status, body
+				return nil
+			}
+		case ActionCacheStore:
+			if state.CacheSet == nil || state.Response == nil {
+				return fmt.Errorf("cache-store requires a response and configured cache")
+			}
+			body := state.Body
+			if !state.BodySet {
+				value, err := io.ReadAll(state.Response.Body)
+				if err != nil {
+					return err
+				}
+				body = string(value)
+				state.Response.Body = io.NopCloser(strings.NewReader(body))
+			}
+			state.CacheSet(state.CacheKey, state.Response.StatusCode, state.Response.Header.Clone(), body, action.CacheDuration)
 		case ActionSetBackend:
 			state.BackendURL = action.Value
 			state.BackendID = action.BackendID

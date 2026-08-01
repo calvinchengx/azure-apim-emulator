@@ -366,7 +366,65 @@ func TestRateLimitPolicies(t *testing.T) {
 	if err := Execute(plan.Inbound, &State{}); err == nil {
 		t.Fatal("rate-limit without limiter accepted")
 	}
+	emptyKey := &State{Request: httptest.NewRequest(http.MethodGet, "/", nil), RateLimit: func(key string, _ int, _ time.Duration) bool { return key == "127.0.0.1:0" }}
+	emptyKey.Request.RemoteAddr = "127.0.0.1:0"
+	if err := Execute([]Action{{Kind: ActionRateLimit, LimitCalls: 1, LimitPeriod: time.Minute, StatusCode: http.StatusTooManyRequests}}, emptyKey); err != nil || !emptyKey.Returned {
+		t.Fatalf("empty counter key = %+v, %v", emptyKey, err)
+	}
 }
+
+func TestCachePolicies(t *testing.T) {
+	plan, err := Compile(`<policies><inbound><cache-lookup/></inbound><outbound><cache-store duration="60"/></outbound></policies>`, true)
+	if err != nil || len(plan.Inbound) != 1 || len(plan.Outbound) != 1 {
+		t.Fatalf("cache plan = %+v, %v", plan, err)
+	}
+	cache := map[string]struct {
+		status  int
+		headers http.Header
+		body    string
+	}{}
+	state := &State{Request: httptest.NewRequest(http.MethodGet, "/", nil), CacheKey: "key", CacheGet: func(key string) (int, http.Header, string, bool) {
+		value, ok := cache[key]
+		return value.status, value.headers, value.body, ok
+	}, CacheSet: func(key string, status int, headers http.Header, body string, _ time.Duration) {
+		cache[key] = struct {
+			status  int
+			headers http.Header
+			body    string
+		}{status, headers, body}
+	}}
+	state.Response = &http.Response{StatusCode: http.StatusOK, Header: http.Header{"X-Cache": {"miss"}}, Body: io.NopCloser(strings.NewReader("body"))}
+	if err := Execute(plan.Inbound, state); err != nil || state.Returned {
+		t.Fatalf("cache miss = %+v, %v", state, err)
+	}
+	if err := Execute(plan.Outbound, state); err != nil || cache["key"].body != "body" {
+		t.Fatalf("cache store = %+v, %v", cache, err)
+	}
+	hit := &State{Request: httptest.NewRequest(http.MethodGet, "/", nil), CacheKey: "key", CacheGet: state.CacheGet}
+	if err := Execute(plan.Inbound, hit); err != nil || !hit.Returned || hit.StatusCode != http.StatusOK || hit.Body != "body" {
+		t.Fatalf("cache hit = %+v, %v", hit, err)
+	}
+	for _, value := range []string{`<policies><outbound><cache-store duration="bad"/></outbound></policies>`, `<policies><outbound><cache-store/></outbound></policies>`} {
+		if _, err := Compile(value, true); err == nil {
+			t.Fatalf("invalid cache policy accepted: %s", value)
+		}
+	}
+	if err := Execute(plan.Inbound, &State{}); err == nil {
+		t.Fatal("cache lookup without cache accepted")
+	}
+	if err := Execute(plan.Outbound, &State{}); err == nil {
+		t.Fatal("cache store without response accepted")
+	}
+	badBody := &State{Response: &http.Response{StatusCode: http.StatusOK, Body: errorBody{}}, CacheSet: func(string, int, http.Header, string, time.Duration) {}}
+	if err := Execute(plan.Outbound, badBody); err == nil {
+		t.Fatal("cache body read error lost")
+	}
+}
+
+type errorBody struct{}
+
+func (errorBody) Read([]byte) (int, error) { return 0, errors.New("body read failed") }
+func (errorBody) Close() error             { return nil }
 
 func TestUnsupportedExpressionModes(t *testing.T) {
 	xml := `<policies><inbound><set-header name="X"><value>@(context.Request.Method)</value></set-header></inbound><backend/><outbound/><on-error/></policies>`

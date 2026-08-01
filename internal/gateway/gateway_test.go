@@ -398,6 +398,18 @@ func TestGatewayFaultControls(t *testing.T) {
 	if runtime.rateLimit("other", 1, time.Minute) {
 		t.Fatal("separate rate key was limited")
 	}
+	runtime.cacheSet("cache", http.StatusOK, http.Header{"X-Test": {"yes"}}, "body", time.Minute)
+	status, headers, body, ok := runtime.cacheGet("cache")
+	if !ok || status != http.StatusOK || headers.Get("X-Test") != "yes" || body != "body" {
+		t.Fatalf("cache get = %d %v %q %v", status, headers, body, ok)
+	}
+	runtime.cacheSet("expired", http.StatusOK, nil, "old", -time.Second)
+	if _, _, _, ok := runtime.cacheGet("expired"); ok {
+		t.Fatal("expired cache entry returned")
+	}
+	if _, _, _, ok := runtime.cacheGet("missing"); ok {
+		t.Fatal("missing cache entry returned")
+	}
 }
 
 func TestGatewayOperationAndSubscriptionRejections(t *testing.T) {
