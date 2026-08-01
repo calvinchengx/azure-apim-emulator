@@ -60,12 +60,13 @@ type Service struct {
 
 // Route is a compiled API route.
 type Route struct {
-	API          model.API
-	VersionSet   *model.APIVersionSet
-	Operations   []model.Operation
-	Plan         policy.Plan
-	AcceptedKeys map[string]bool
-	Diagnostics  []model.Diagnostic
+	API            model.API
+	VersionSet     *model.APIVersionSet
+	Operations     []model.Operation
+	Plan           policy.Plan
+	OperationPlans map[string]policy.Plan
+	AcceptedKeys   map[string]bool
+	Diagnostics    []model.Diagnostic
 }
 
 // Runtime atomically publishes snapshots and serves gateway traffic.
@@ -405,7 +406,17 @@ func (r *Runtime) Activate(st *store.Store, strict bool) error {
 		} else if hasServicePlan {
 			plan = composeInheritedPlan(plan, servicePlan)
 		}
-		service.Routes = append(service.Routes, &Route{API: api, VersionSet: versionSet, Operations: operationsByAPI[strings.ToLower(api.ID())], Plan: plan, AcceptedKeys: keysByAPI[strings.ToLower(api.ID())], Diagnostics: diagnostics[strings.ToLower(api.ID())]})
+		operationList := operationsByAPI[strings.ToLower(api.ID())]
+		operationPlans := map[string]policy.Plan{}
+		for _, operation := range operationList {
+			operationPlan := plan
+			operationID := operation.APIID + "/operations/" + operation.Name
+			if operationPolicy, defined := policyByScope[strings.ToLower(operationID)]; defined {
+				operationPlan = composeInheritedPlan(operationPolicy, plan)
+			}
+			operationPlans[strings.ToLower(operationID)] = operationPlan
+		}
+		service.Routes = append(service.Routes, &Route{API: api, VersionSet: versionSet, Operations: operationList, OperationPlans: operationPlans, Plan: plan, AcceptedKeys: keysByAPI[strings.ToLower(api.ID())], Diagnostics: diagnostics[strings.ToLower(api.ID())]})
 	}
 	for _, service := range snapshot.Services {
 		sort.SliceStable(service.Routes, func(i, j int) bool { return len(service.Routes[i].API.Path) > len(service.Routes[j].API.Path) })
@@ -526,9 +537,15 @@ func (r *Runtime) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		trace.API = route.API.ID()
 	}
 	traceEvent(trace, "route", route.API.Path)
-	if !matchOperation(route.Operations, req.Method, relative) {
+	operation, matched := matchOperationValue(route.Operations, req.Method, relative)
+	if !matched {
 		gatewayError(w, http.StatusNotFound, "OperationNotFound", "Unable to match incoming request to an operation.")
 		return
+	}
+	activePlan := route.Plan
+	operationID := operation.APIID + "/operations/" + operation.Name
+	if operationPlan, ok := route.OperationPlans[strings.ToLower(operationID)]; ok {
+		activePlan = operationPlan
 	}
 	if route.API.SubscriptionRequired && !validSubscription(req, route.AcceptedKeys) {
 		message := "Access denied due to missing subscription key. Make sure to include subscription key when making requests to an API."
@@ -541,8 +558,8 @@ func (r *Runtime) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	cacheKey := service.Name + ":" + route.API.ID() + ":" + req.Method + ":" + req.URL.RequestURI()
 	state := &policy.State{Request: req, BackendURL: route.API.ServiceURL, Path: relative, Headers: make(http.Header), ValidateToken: r.policyTokenValidator, SendRequest: r.policySendRequest, Trace: func(phase, detail string) { traceEvent(trace, phase, detail) }, RateLimit: r.rateLimit, CacheGet: r.cacheGet, CacheSet: r.cacheSet, ValueCacheGet: r.valueCacheGet, ValueCacheSet: r.valueCacheSet, ValueCacheRemove: r.valueCacheRemove, CacheKey: cacheKey}
 	traceEvent(trace, "inbound", "")
-	if err := policy.Execute(route.Plan.Inbound, state); err != nil {
-		r.policyFailure(w, req, route.Plan, state, err)
+	if err := policy.Execute(activePlan.Inbound, state); err != nil {
+		r.policyFailure(w, req, activePlan, state, err)
 		return
 	}
 	if state.Returned {
@@ -550,8 +567,8 @@ func (r *Runtime) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	traceEvent(trace, "backend", state.BackendURL)
-	if err := policy.Execute(route.Plan.Backend, state); err != nil {
-		r.policyFailure(w, req, route.Plan, state, err)
+	if err := policy.Execute(activePlan.Backend, state); err != nil {
+		r.policyFailure(w, req, activePlan, state, err)
 		return
 	}
 	if state.Returned {
@@ -564,28 +581,28 @@ func (r *Runtime) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 	client, err := backendHTTPClient(r.client, service, state.BackendID)
 	if err != nil {
-		r.policyFailure(w, req, route.Plan, state, err)
+		r.policyFailure(w, req, activePlan, state, err)
 		return
 	}
 	if r.circuitOpen(service, state.BackendID, time.Now()) {
-		r.policyFailure(w, req, route.Plan, state, fmt.Errorf("backend circuit breaker is open"))
+		r.policyFailure(w, req, activePlan, state, fmt.Errorf("backend circuit breaker is open"))
 		return
 	}
 	if fault, ok := r.takeFault(service.Name, state.BackendID); ok {
-		r.serveInjectedFault(w, req, route.Plan, state, fault)
+		r.serveInjectedFault(w, req, activePlan, state, fault)
 		return
 	}
-	response, err := forwardWithRetry(client, req, state.BackendURL, state.Path, route.Plan.Backend)
+	response, err := forwardWithRetry(client, req, state.BackendURL, state.Path, activePlan.Backend)
 	r.recordCircuit(service, state.BackendID, response, err, time.Now())
 	if err != nil {
-		r.policyFailure(w, req, route.Plan, state, fmt.Errorf("backend request failed: %w", err))
+		r.policyFailure(w, req, activePlan, state, fmt.Errorf("backend request failed: %w", err))
 		return
 	}
 	defer response.Body.Close()
 	state.Response = response
 	traceEvent(trace, "outbound", "")
-	if err := policy.Execute(route.Plan.Outbound, state); err != nil {
-		r.policyFailure(w, req, route.Plan, state, err)
+	if err := policy.Execute(activePlan.Outbound, state); err != nil {
+		r.policyFailure(w, req, activePlan, state, err)
 		return
 	}
 	if state.Returned {
@@ -1282,12 +1299,17 @@ func matchRoute(routes []*Route, request *http.Request) (*Route, string) {
 }
 
 func matchOperation(operations []model.Operation, method, path string) bool {
+	_, matched := matchOperationValue(operations, method, path)
+	return matched
+}
+
+func matchOperationValue(operations []model.Operation, method, path string) (model.Operation, bool) {
 	for _, operation := range operations {
 		if strings.EqualFold(operation.Method, method) && templateMatches(operation.URLTemplate, path) {
-			return true
+			return operation, true
 		}
 	}
-	return false
+	return model.Operation{}, false
 }
 
 func templateMatches(template, path string) bool {

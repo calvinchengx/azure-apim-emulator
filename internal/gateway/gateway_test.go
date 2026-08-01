@@ -664,19 +664,24 @@ func TestActivateInheritsServicePolicyWhenAPIHasNone(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.UpsertOperation(model.Operation{APIID: api.ID(), Name: "get", Method: http.MethodGet, URLTemplate: "/"}); err != nil {
+	operation, err := st.UpsertOperation(model.Operation{APIID: api.ID(), Name: "get", Method: http.MethodGet, URLTemplate: "/"})
+	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := st.UpsertPolicy(model.Policy{ScopeID: service.ID(), Value: `<policies><inbound><set-header name="X-Service-Policy" exists-action="override"><value>inherited</value></set-header></inbound></policies>`}); err != nil {
 		t.Fatal(err)
 	}
 	apiComposed := false
+	operationComposed := false
 	runtime := New("emulator", &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
 		if request.Header.Get("X-Service-Policy") != "inherited" {
 			t.Errorf("inherited header = %q", request.Header.Get("X-Service-Policy"))
 		}
 		if apiComposed && request.Header.Get("X-API-Policy") != "composed" {
 			t.Errorf("composed API header = %q", request.Header.Get("X-API-Policy"))
+		}
+		if operationComposed && request.Header.Get("X-Operation-Policy") != "operation" {
+			t.Errorf("composed operation header = %q", request.Header.Get("X-Operation-Policy"))
 		}
 		return &http.Response{StatusCode: http.StatusNoContent, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(""))}, nil
 	})})
@@ -688,6 +693,14 @@ func TestActivateInheritsServicePolicyWhenAPIHasNone(t *testing.T) {
 		t.Fatal(err)
 	}
 	apiComposed = true
+	if err := runtime.Activate(st, false); err != nil {
+		t.Fatal(err)
+	}
+	assertGatewayStatus(t, runtime, httptest.NewRequest(http.MethodGet, "/inherited", nil), http.StatusNoContent)
+	if _, err := st.UpsertPolicy(model.Policy{ScopeID: operation.APIID + "/operations/" + operation.Name, Value: `<policies><inbound><base/><set-header name="X-Operation-Policy" exists-action="override"><value>operation</value></set-header></inbound></policies>`}); err != nil {
+		t.Fatal(err)
+	}
+	operationComposed = true
 	if err := runtime.Activate(st, false); err != nil {
 		t.Fatal(err)
 	}
