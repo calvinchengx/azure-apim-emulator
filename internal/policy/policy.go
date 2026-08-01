@@ -49,6 +49,7 @@ const (
 	ActionFindReplace
 	ActionJSONToXML
 	ActionXMLToJSON
+	ActionJSONP
 	ActionSetBackend
 	ActionRewriteURI
 	ActionForward
@@ -110,6 +111,7 @@ type Action struct {
 	ReplaceFrom             string
 	ReplaceTo               string
 	TransformRoot           string
+	JSONPParameter          string
 	Children                []Action
 	RetryCount              int
 	RetryInterval           time.Duration
@@ -713,6 +715,12 @@ func compileNode(item node, strict bool) (Action, bool, error) {
 			return unsupported(item.Name), true, nil
 		}
 		return Action{Kind: ActionXMLToJSON}, true, nil
+	case "jsonp":
+		parameter := item.Attrs["callback-parameter-name"]
+		if parameter == "" || expression(parameter) || len(item.Children) > 0 {
+			return unsupported(item.Name), true, nil
+		}
+		return Action{Kind: ActionJSONP, JSONPParameter: parameter}, true, nil
 	case "set-backend-service":
 		value, backendID := item.Attrs["base-url"], item.Attrs["backend-id"]
 		if (value == "") == (backendID == "") || expression(value) || expression(backendID) {
@@ -1260,6 +1268,19 @@ func Execute(actions []Action, state *State) error {
 				return err
 			}
 			state.Response.Body = io.NopCloser(strings.NewReader(string(jsonValue)))
+		case ActionJSONP:
+			if state.Response == nil || state.Request == nil || state.Request.URL == nil {
+				return fmt.Errorf("jsonp requires a request and response")
+			}
+			callback := state.Request.URL.Query().Get(action.JSONPParameter)
+			if callback == "" {
+				continue
+			}
+			value, err := io.ReadAll(state.Response.Body)
+			if err != nil {
+				return err
+			}
+			state.Response.Body = io.NopCloser(strings.NewReader(callback + "(" + string(value) + ");"))
 		case ActionSetBackend:
 			state.BackendURL = action.Value
 			state.BackendID = action.BackendID

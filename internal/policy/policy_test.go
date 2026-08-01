@@ -1024,6 +1024,48 @@ func TestXMLToJSONPolicy(t *testing.T) {
 	}
 }
 
+func TestJSONPPolicy(t *testing.T) {
+	plan, err := Compile(`<policies><outbound><jsonp callback-parameter-name="callback"/></outbound></policies>`, true)
+	if err != nil || len(plan.Outbound) != 1 || plan.Outbound[0].Kind != ActionJSONP {
+		t.Fatalf("jsonp plan = %+v, %v", plan, err)
+	}
+	request := httptest.NewRequest(http.MethodGet, "/?callback=handle", nil)
+	response := &http.Response{Body: io.NopCloser(strings.NewReader(`{"ok":true}`))}
+	state := &State{Request: request, Response: response}
+	if err := Execute(plan.Outbound, state); err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(response.Body)
+	if string(body) != "handle({\"ok\":true});" {
+		t.Fatalf("jsonp body = %q", body)
+	}
+	request = httptest.NewRequest(http.MethodGet, "/", nil)
+	response = &http.Response{Body: io.NopCloser(strings.NewReader(`{"ok":true}`))}
+	if err := Execute(plan.Outbound, &State{Request: request, Response: response}); err != nil {
+		t.Fatal(err)
+	}
+	body, _ = io.ReadAll(response.Body)
+	if string(body) != `{"ok":true}` {
+		t.Fatalf("jsonp absent callback = %q", body)
+	}
+	if err := Execute(plan.Outbound, &State{}); err == nil {
+		t.Fatal("jsonp without request and response accepted")
+	}
+	bad := &State{Request: httptest.NewRequest(http.MethodGet, "/?callback=handle", nil), Response: &http.Response{Body: errorBody{}}}
+	if err := Execute(plan.Outbound, bad); err == nil {
+		t.Fatal("jsonp body read error lost")
+	}
+	for _, value := range []string{
+		`<policies><outbound><jsonp callback-parameter-name=""/></outbound></policies>`,
+		`<policies><outbound><jsonp callback-parameter-name="@(context.Request.Url)"/></outbound></policies>`,
+		`<policies><outbound><jsonp callback-parameter-name="callback"><unknown/></jsonp></outbound></policies>`,
+	} {
+		if _, err := Compile(value, true); err == nil {
+			t.Fatalf("invalid jsonp accepted: %s", value)
+		}
+	}
+}
+
 type errorBody struct{}
 
 func (errorBody) Read([]byte) (int, error) { return 0, errors.New("body read failed") }
