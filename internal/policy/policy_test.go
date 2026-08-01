@@ -1,7 +1,11 @@
 package policy
 
 import (
+	"crypto/sha1"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -601,6 +605,41 @@ func TestValidateParametersPolicy(t *testing.T) {
 	}
 	if err := Execute(plan.Inbound, &State{}); err == nil {
 		t.Fatal("parameter validation without request accepted")
+	}
+}
+
+func TestValidateClientCertificatePolicy(t *testing.T) {
+	certificate := &x509.Certificate{Raw: []byte("client-certificate")}
+	thumbprint := strings.ToUpper(fmt.Sprintf("%X", sha1.Sum(certificate.Raw)))
+	plan, err := Compile(`<policies><inbound><validate-client-certificate><identities><identity thumbprint="`+thumbprint+`"/></identities></validate-client-certificate></inbound></policies>`, true)
+	if err != nil || len(plan.Inbound) != 1 || plan.Inbound[0].Kind != ActionValidateClientCertificate {
+		t.Fatalf("client certificate plan = %+v, %v", plan, err)
+	}
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	request.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{certificate}}
+	state := &State{Request: request}
+	if err := Execute(plan.Inbound, state); err != nil || state.Returned {
+		t.Fatalf("valid client certificate = %+v, %v", state, err)
+	}
+	request.TLS.PeerCertificates = []*x509.Certificate{{Raw: []byte("other")}}
+	state = &State{Request: request}
+	if err := Execute(plan.Inbound, state); err != nil || !state.Returned || state.StatusCode != http.StatusForbidden {
+		t.Fatalf("invalid client certificate = %+v, %v", state, err)
+	}
+	state = &State{Request: httptest.NewRequest(http.MethodGet, "/", nil)}
+	if err := Execute(plan.Inbound, state); err != nil || !state.Returned {
+		t.Fatalf("missing client certificate = %+v, %v", state, err)
+	}
+	for _, value := range []string{
+		`<policies><inbound><validate-client-certificate><unknown/></validate-client-certificate></inbound></policies>`,
+		`<policies><inbound><validate-client-certificate><identities><identity/></identities></validate-client-certificate></inbound></policies>`,
+	} {
+		if _, err := Compile(value, true); err == nil {
+			t.Fatalf("invalid client certificate policy accepted: %s", value)
+		}
+	}
+	if err := Execute(plan.Inbound, &State{}); err != nil {
+		t.Fatalf("client certificate state error = %v", err)
 	}
 }
 

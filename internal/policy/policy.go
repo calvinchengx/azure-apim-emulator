@@ -2,6 +2,7 @@
 package policy
 
 import (
+	"crypto/sha1"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -36,6 +37,7 @@ const (
 	ActionValidateContent
 	ActionValidateHeaders
 	ActionValidateParameters
+	ActionValidateClientCertificate
 	ActionSetBackend
 	ActionRewriteURI
 	ActionForward
@@ -81,6 +83,7 @@ type Action struct {
 	SpecifiedHeaderAction   string
 	UnspecifiedHeaderAction string
 	ParameterRules          []ParameterRule
+	CertificateThumbprints  []string
 	Children                []Action
 	RetryCount              int
 	RetryInterval           time.Duration
@@ -559,6 +562,20 @@ func compileNode(item node, strict bool) (Action, bool, error) {
 			rules = append(rules, ParameterRule{Name: strings.TrimSpace(child.Attrs["name"]), Values: values, Action: action})
 		}
 		return Action{Kind: ActionValidateParameters, ParameterRules: rules, SpecifiedHeaderAction: specified, UnspecifiedHeaderAction: unspecified, FailedCode: http.StatusBadRequest}, true, nil
+	case "validate-client-certificate":
+		thumbprints := []string{}
+		for _, child := range item.Children {
+			if child.Name != "identities" {
+				return unsupported(item.Name + "/" + child.Name), true, nil
+			}
+			for _, identity := range child.Children {
+				if identity.Name != "identity" || strings.TrimSpace(identity.Attrs["thumbprint"]) == "" {
+					return unsupported(item.Name + "/identities/" + identity.Name), true, nil
+				}
+				thumbprints = append(thumbprints, strings.ToUpper(strings.ReplaceAll(strings.TrimSpace(identity.Attrs["thumbprint"]), ":", "")))
+			}
+		}
+		return Action{Kind: ActionValidateClientCertificate, CertificateThumbprints: thumbprints, FailedCode: http.StatusForbidden}, true, nil
 	case "set-backend-service":
 		value, backendID := item.Attrs["base-url"], item.Attrs["backend-id"]
 		if (value == "") == (backendID == "") || expression(value) || expression(backendID) {
@@ -967,6 +984,26 @@ func Execute(actions []Action, state *State) error {
 			for _, rule := range rules {
 				if _, present := query[rule.Name]; !present && rule.Action == "prevent" {
 					state.Returned, state.StatusCode, state.Body = true, action.FailedCode, "parameter validation failed"
+					return nil
+				}
+			}
+		case ActionValidateClientCertificate:
+			if state.Request == nil || state.Request.TLS == nil || len(state.Request.TLS.PeerCertificates) == 0 {
+				state.Returned, state.StatusCode, state.Body = true, action.FailedCode, "client certificate validation failed"
+				return nil
+			}
+			if len(action.CertificateThumbprints) > 0 {
+				matched := false
+				for _, certificate := range state.Request.TLS.PeerCertificates {
+					fingerprint := strings.ToUpper(fmt.Sprintf("%X", sha1.Sum(certificate.Raw)))
+					for _, expected := range action.CertificateThumbprints {
+						if fingerprint == expected {
+							matched = true
+						}
+					}
+				}
+				if !matched {
+					state.Returned, state.StatusCode, state.Body = true, action.FailedCode, "client certificate validation failed"
 					return nil
 				}
 			}
