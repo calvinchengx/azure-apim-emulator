@@ -36,6 +36,7 @@ type Server struct {
 	portalUpsertNamedValue  func(model.NamedValue) (model.NamedValue, error)
 	portalUpsertCertificate func(model.Certificate) (model.Certificate, error)
 	portalUpsertTag         func(model.Tag) (model.Tag, error)
+	portalUpsertGroup       func(model.Group) (model.Group, error)
 }
 
 // New wires a server. Overrides are intended for in-process tests.
@@ -56,7 +57,7 @@ func New(cfg *config.Config, validator auth.RequestValidator, backendClient, jwk
 	if tokenValidator, ok := validator.(*auth.Validator); ok {
 		runtime.SetPolicyTokenValidator(tokenValidator.ValidateToken)
 	}
-	s := &Server{Cfg: cfg, Clock: ck, Store: st, Gateway: runtime, mux: http.NewServeMux(), portalUpsertAPI: st.UpsertAPI, portalUpsertProduct: st.UpsertProduct, portalUpsertBackend: st.UpsertBackend, portalUpsertNamedValue: st.UpsertNamedValue, portalUpsertCertificate: st.UpsertCertificate, portalUpsertTag: st.UpsertTag}
+	s := &Server{Cfg: cfg, Clock: ck, Store: st, Gateway: runtime, mux: http.NewServeMux(), portalUpsertAPI: st.UpsertAPI, portalUpsertProduct: st.UpsertProduct, portalUpsertBackend: st.UpsertBackend, portalUpsertNamedValue: st.UpsertNamedValue, portalUpsertCertificate: st.UpsertCertificate, portalUpsertTag: st.UpsertTag, portalUpsertGroup: st.UpsertGroup}
 	s.ARM = &arm.Handler{
 		Store: st, Auth: validator,
 		Activate:       func() error { return runtime.Activate(st, cfg.StrictPolicies) },
@@ -128,6 +129,8 @@ func (s *Server) register() {
 	s.mux.HandleFunc("PUT /_emulator/portal/api/certificate", s.portalCertificate)
 	s.mux.HandleFunc("GET /_emulator/portal/api/tag", s.portalTag)
 	s.mux.HandleFunc("PUT /_emulator/portal/api/tag", s.portalTag)
+	s.mux.HandleFunc("GET /_emulator/portal/api/group", s.portalGroup)
+	s.mux.HandleFunc("PUT /_emulator/portal/api/group", s.portalGroup)
 	s.mux.HandleFunc("POST /_emulator/portal/api/faults", s.updateFault)
 	s.mux.HandleFunc("GET /_emulator/portal/api/policy", s.portalPolicy)
 	s.mux.HandleFunc("PUT /_emulator/portal/api/policy", s.portalPolicy)
@@ -514,6 +517,61 @@ func (s *Server) portalTag(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"id": tag.ID(), "name": tag.Name, "displayName": tag.DisplayName, "etag": tag.ETag})
+}
+
+func (s *Server) portalGroup(w http.ResponseWriter, r *http.Request) {
+	resourceID := strings.TrimSpace(r.URL.Query().Get("resourceId"))
+	if resourceID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "resourceId is required"})
+		return
+	}
+	group, err := s.Store.GetGroup(resourceID)
+	if errors.Is(err, store.ErrNotFound) {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": "group not found"})
+		return
+	}
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	if r.Method == http.MethodPut {
+		var body struct {
+			DisplayName *string `json:"displayName"`
+			Description *string `json:"description"`
+			Type        *string `json:"type"`
+			ExternalID  *string `json:"externalId"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "malformed JSON"})
+			return
+		}
+		if body.DisplayName != nil {
+			group.DisplayName = strings.TrimSpace(*body.DisplayName)
+		}
+		if body.Description != nil {
+			group.Description = *body.Description
+		}
+		if body.Type != nil {
+			group.Type = strings.TrimSpace(*body.Type)
+		}
+		if body.ExternalID != nil {
+			group.ExternalID = strings.TrimSpace(*body.ExternalID)
+		}
+		if group.DisplayName == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "displayName cannot be empty"})
+			return
+		}
+		group, err = s.portalUpsertGroup(group)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+			return
+		}
+		if err := s.Gateway.Activate(s.Store, s.Cfg.StrictPolicies); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"id": group.ID(), "name": group.Name, "displayName": group.DisplayName, "description": group.Description, "type": group.Type, "externalId": group.ExternalID, "builtIn": group.BuiltIn, "etag": group.ETag})
 }
 
 func countAPIVersionSets(st *store.Store, id string) int {

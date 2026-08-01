@@ -231,7 +231,7 @@ func TestControlAndDispatchEndpoints(t *testing.T) {
 		t.Fatalf("portal backend read = %d %s", backendRead.Code, backendRead.Body.String())
 	}
 	backendUpdate := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(backendUpdate, httptest.NewRequest(http.MethodPut, backendURL, strings.NewReader(`{"title":"Updated Backend","url":"https://new-backend.test","protocol":"https","description":"updated"}`)))
+	srv.Handler().ServeHTTP(backendUpdate, httptest.NewRequest(http.MethodPut, backendURL, strings.NewReader(`{"title":"Updated Backend","url":"https://new-backend.test","protocol":"https","resourceId":"backend-resource","description":"updated"}`)))
 	if backendUpdate.Code != http.StatusOK || !strings.Contains(backendUpdate.Body.String(), "new-backend.test") {
 		t.Fatalf("portal backend update = %d %s", backendUpdate.Code, backendUpdate.Body.String())
 	}
@@ -261,7 +261,7 @@ func TestControlAndDispatchEndpoints(t *testing.T) {
 		t.Fatalf("portal certificate redaction = %d %s", certificateRead.Code, certificateRead.Body.String())
 	}
 	certificateUpdate := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(certificateUpdate, httptest.NewRequest(http.MethodPut, certificateURL, strings.NewReader(`{"subject":"CN=updated","keyVaultSecretId":"https://vault/secrets/cert"}`)))
+	srv.Handler().ServeHTTP(certificateUpdate, httptest.NewRequest(http.MethodPut, certificateURL, strings.NewReader(`{"subject":"CN=updated","thumbprint":"DEF456","keyVaultSecretId":"https://vault/secrets/cert","keyVaultIdentityId":"identity"}`)))
 	if certificateUpdate.Code != http.StatusOK || !strings.Contains(certificateUpdate.Body.String(), "updated") {
 		t.Fatalf("portal certificate update = %d %s", certificateUpdate.Code, certificateUpdate.Body.String())
 	}
@@ -280,6 +280,42 @@ func TestControlAndDispatchEndpoints(t *testing.T) {
 	if tagUpdate.Code != http.StatusOK || !strings.Contains(tagUpdate.Body.String(), "Updated Tag") {
 		t.Fatalf("portal tag update = %d %s", tagUpdate.Code, tagUpdate.Body.String())
 	}
+	portalGroup := model.Group{ServiceID: portalAPI.ServiceID, Name: "portal-group", DisplayName: "Portal Group", Type: "custom"}
+	if _, err := srv.Store.UpsertGroup(portalGroup); err != nil {
+		t.Fatal(err)
+	}
+	groupURL := "/_emulator/portal/api/group?resourceId=" + url.QueryEscape(portalGroup.ID())
+	groupRead := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(groupRead, httptest.NewRequest(http.MethodGet, groupURL, nil))
+	if groupRead.Code != http.StatusOK || !strings.Contains(groupRead.Body.String(), "Portal Group") {
+		t.Fatalf("portal group read = %d %s", groupRead.Code, groupRead.Body.String())
+	}
+	groupUpdate := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(groupUpdate, httptest.NewRequest(http.MethodPut, groupURL, strings.NewReader(`{"displayName":"Updated Group","description":"updated","type":"external","externalId":"external-group"}`)))
+	if groupUpdate.Code != http.StatusOK || !strings.Contains(groupUpdate.Body.String(), "Updated Group") {
+		t.Fatalf("portal group update = %d %s", groupUpdate.Code, groupUpdate.Body.String())
+	}
+	for _, request := range []*http.Request{
+		httptest.NewRequest(http.MethodGet, "/_emulator/portal/api/group", nil),
+		httptest.NewRequest(http.MethodGet, "/_emulator/portal/api/group?resourceId=/missing", nil),
+		httptest.NewRequest(http.MethodPut, groupURL, strings.NewReader("{")),
+		httptest.NewRequest(http.MethodPut, groupURL, strings.NewReader(`{"displayName":" "}`)),
+	} {
+		recorder := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(recorder, request)
+		if recorder.Code != http.StatusBadRequest && recorder.Code != http.StatusNotFound {
+			t.Fatalf("portal group invalid = %d %s", recorder.Code, recorder.Body.String())
+		}
+	}
+	srv.portalUpsertGroup = func(model.Group) (model.Group, error) {
+		return model.Group{}, errors.New("injected group persistence failure")
+	}
+	groupStoreFailure := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(groupStoreFailure, httptest.NewRequest(http.MethodPut, groupURL, strings.NewReader(`{"displayName":"Store Failure"}`)))
+	if groupStoreFailure.Code != http.StatusBadRequest {
+		t.Fatalf("portal group persistence failure = %d %s", groupStoreFailure.Code, groupStoreFailure.Body.String())
+	}
+	srv.portalUpsertGroup = srv.Store.UpsertGroup
 	for _, request := range []*http.Request{
 		httptest.NewRequest(http.MethodGet, "/_emulator/portal/api/tag", nil),
 		httptest.NewRequest(http.MethodGet, "/_emulator/portal/api/tag?resourceId=/missing", nil),
@@ -395,6 +431,11 @@ func TestControlAndDispatchEndpoints(t *testing.T) {
 	srv.Handler().ServeHTTP(productActivationFailure, httptest.NewRequest(http.MethodPut, productURL, strings.NewReader(`{"state":"published"}`)))
 	if productActivationFailure.Code != http.StatusBadRequest {
 		t.Fatalf("portal product activation failure = %d %s", productActivationFailure.Code, productActivationFailure.Body.String())
+	}
+	groupActivationFailure := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(groupActivationFailure, httptest.NewRequest(http.MethodPut, groupURL, strings.NewReader(`{"displayName":"Activation Failure"}`)))
+	if groupActivationFailure.Code != http.StatusBadRequest {
+		t.Fatalf("portal group activation failure = %d %s", groupActivationFailure.Code, groupActivationFailure.Body.String())
 	}
 	tagActivationFailure := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(tagActivationFailure, httptest.NewRequest(http.MethodPut, tagURL, strings.NewReader(`{"displayName":"Activation Failure"}`)))
@@ -554,6 +595,11 @@ func TestControlAndDispatchEndpoints(t *testing.T) {
 	srv.Handler().ServeHTTP(tagFailure, httptest.NewRequest(http.MethodGet, tagURL, nil))
 	if tagFailure.Code != http.StatusInternalServerError {
 		t.Fatalf("tag store failure = %d %s", tagFailure.Code, tagFailure.Body.String())
+	}
+	groupFailure := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(groupFailure, httptest.NewRequest(http.MethodGet, groupURL, nil))
+	if groupFailure.Code != http.StatusInternalServerError {
+		t.Fatalf("group store failure = %d %s", groupFailure.Code, groupFailure.Body.String())
 	}
 	diagnosticFailure := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(diagnosticFailure, httptest.NewRequest(http.MethodGet, "/_emulator/portal/api/diagnostics", nil))
