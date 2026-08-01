@@ -34,6 +34,7 @@ const (
 	ActionCORS
 	ActionSendRequest
 	ActionRateLimit
+	ActionLimitConcurrency
 	ActionCacheLookup
 	ActionCacheStore
 	ActionValidateStatus
@@ -186,6 +187,8 @@ type State struct {
 	ValueCacheSet           func(string, string, time.Duration)
 	ValueCacheRemove        func(string)
 	RateLimit               func(string, int, time.Duration) bool
+	AcquireConcurrency      func(string, int) func()
+	ConcurrencyReleases     []func()
 	CacheGet                func(string) (int, http.Header, string, bool)
 	CacheSet                func(string, int, http.Header, string, time.Duration)
 	CacheKey                string
@@ -478,6 +481,12 @@ func compileNode(item node, strict bool) (Action, bool, error) {
 			return unsupported(item.Name), true, nil
 		}
 		return Action{Kind: ActionRateLimit, Value: item.Attrs["counter-key"], LimitCalls: calls, LimitPeriod: period, StatusCode: http.StatusTooManyRequests, Body: item.Attrs["retry-after-header-name"]}, true, nil
+	case "limit-concurrency":
+		count, err := strconv.Atoi(item.Attrs["max-count"])
+		if err != nil || count <= 0 || expression(item.Attrs["key"]) || len(item.Children) > 0 {
+			return unsupported(item.Name), true, nil
+		}
+		return Action{Kind: ActionLimitConcurrency, Value: item.Attrs["key"], LimitCalls: count, StatusCode: http.StatusTooManyRequests, Body: "concurrency limit exceeded"}, true, nil
 	case "cache-lookup":
 		return Action{Kind: ActionCacheLookup}, true, nil
 	case "cache-store":
@@ -1010,6 +1019,20 @@ func Execute(actions []Action, state *State) error {
 				}
 				return nil
 			}
+		case ActionLimitConcurrency:
+			if state.AcquireConcurrency == nil {
+				return fmt.Errorf("limit-concurrency requires a configured limiter")
+			}
+			key := action.Value
+			if key == "" && state.Request != nil {
+				key = state.Request.RemoteAddr
+			}
+			release := state.AcquireConcurrency(key, action.LimitCalls)
+			if release == nil {
+				state.Returned, state.StatusCode, state.Body = true, action.StatusCode, action.Body
+				return nil
+			}
+			state.ConcurrencyReleases = append(state.ConcurrencyReleases, release)
 		case ActionCacheLookup:
 			if state.CacheGet == nil {
 				return fmt.Errorf("cache-lookup requires a configured cache")

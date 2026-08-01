@@ -90,6 +90,8 @@ type Runtime struct {
 	cacheMu              sync.Mutex
 	cache                map[string]cacheEntry
 	valueCache           map[string]valueCacheEntry
+	concurrencyMu        sync.Mutex
+	concurrency          map[string]chan struct{}
 }
 
 type cacheEntry struct {
@@ -148,7 +150,7 @@ func New(defaultService string, client *http.Client) *Runtime {
 	if client == nil {
 		client = http.DefaultClient
 	}
-	r := &Runtime{defaultService: defaultService, client: client, policySendRequest: client.Do, traces: map[string]Trace{}, breakers: map[string]circuitState{}, faults: map[string]Fault{}, rateWindows: map[string][]time.Time{}, cache: map[string]cacheEntry{}, valueCache: map[string]valueCacheEntry{}}
+	r := &Runtime{defaultService: defaultService, client: client, policySendRequest: client.Do, traces: map[string]Trace{}, breakers: map[string]circuitState{}, faults: map[string]Fault{}, rateWindows: map[string][]time.Time{}, cache: map[string]cacheEntry{}, valueCache: map[string]valueCacheEntry{}, concurrency: map[string]chan struct{}{}}
 	r.current.Store(&Snapshot{Services: map[string]*Service{}})
 	return r
 }
@@ -176,6 +178,26 @@ func (r *Runtime) rateLimit(key string, calls int, period time.Duration) bool {
 	}
 	r.rateWindows[key] = append(kept, now)
 	return false
+}
+
+func (r *Runtime) acquireConcurrency(key string, max int) func() {
+	r.concurrencyMu.Lock()
+	semaphore := r.concurrency[key]
+	if semaphore == nil || cap(semaphore) != max {
+		semaphore = make(chan struct{}, max)
+		r.concurrency[key] = semaphore
+	}
+	select {
+	case semaphore <- struct{}{}:
+		r.concurrencyMu.Unlock()
+		var once sync.Once
+		return func() {
+			once.Do(func() { <-semaphore })
+		}
+	default:
+		r.concurrencyMu.Unlock()
+		return nil
+	}
 }
 
 func (r *Runtime) cacheGet(key string) (int, http.Header, string, bool) {
@@ -612,7 +634,12 @@ func (r *Runtime) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		activePlan = subscriptionPlan
 	}
 	cacheKey := service.Name + ":" + route.API.ID() + ":" + req.Method + ":" + req.URL.RequestURI()
-	state := &policy.State{Request: req, BackendURL: route.API.ServiceURL, Path: relative, Headers: make(http.Header), ValidateToken: r.policyTokenValidator, SendRequest: r.policySendRequest, Trace: func(phase, detail string) { traceEvent(trace, phase, detail) }, RateLimit: r.rateLimit, CacheGet: r.cacheGet, CacheSet: r.cacheSet, ValueCacheGet: r.valueCacheGet, ValueCacheSet: r.valueCacheSet, ValueCacheRemove: r.valueCacheRemove, CacheKey: cacheKey}
+	state := &policy.State{Request: req, BackendURL: route.API.ServiceURL, Path: relative, Headers: make(http.Header), ValidateToken: r.policyTokenValidator, SendRequest: r.policySendRequest, Trace: func(phase, detail string) { traceEvent(trace, phase, detail) }, RateLimit: r.rateLimit, AcquireConcurrency: r.acquireConcurrency, CacheGet: r.cacheGet, CacheSet: r.cacheSet, ValueCacheGet: r.valueCacheGet, ValueCacheSet: r.valueCacheSet, ValueCacheRemove: r.valueCacheRemove, CacheKey: cacheKey}
+	defer func() {
+		for index := len(state.ConcurrencyReleases) - 1; index >= 0; index-- {
+			state.ConcurrencyReleases[index]()
+		}
+	}()
 	traceEvent(trace, "inbound", "")
 	if err := policy.Execute(activePlan.Inbound, state); err != nil {
 		r.policyFailure(w, req, activePlan, state, err)

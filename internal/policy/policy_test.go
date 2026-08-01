@@ -37,6 +37,31 @@ func TestCompileAndExecute(t *testing.T) {
 	}
 }
 
+func TestLimitConcurrency(t *testing.T) {
+	plan, err := Compile(`<policies><inbound><limit-concurrency key="tenant" max-count="1"/></inbound></policies>`, true)
+	if err != nil || len(plan.Inbound) != 1 || plan.Inbound[0].Kind != ActionLimitConcurrency {
+		t.Fatalf("limit-concurrency plan = %+v, %v", plan, err)
+	}
+	held := true
+	first, second := &State{AcquireConcurrency: func(string, int) func() { return func() { held = false } }}, &State{AcquireConcurrency: func(string, int) func() {
+		if held {
+			return nil
+		}
+		return func() {}
+	}}
+	if err := Execute(plan.Inbound, first); err != nil || first.Returned {
+		t.Fatalf("first concurrency execution = %+v, %v", first, err)
+	}
+	if err := Execute(plan.Inbound, second); err != nil || !second.Returned || second.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("second concurrency execution = %+v, %v", second, err)
+	}
+	first.ConcurrencyReleases[0]()
+	second = &State{AcquireConcurrency: func(string, int) func() { return func() {} }}
+	if err := Execute(plan.Inbound, second); err != nil || second.Returned {
+		t.Fatalf("released concurrency execution = %+v, %v", second, err)
+	}
+}
+
 func TestRetryPolicyCompilationAndExecution(t *testing.T) {
 	plan, err := Compile(`<policies><backend><retry count="2" interval="0" condition="@(context.Response.StatusCode >= 500)"><set-backend-service base-url="https://retry.example"/><forward-request/></retry></backend></policies>`, true)
 	if err != nil {
