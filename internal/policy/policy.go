@@ -38,6 +38,7 @@ const (
 	ActionValidateHeaders
 	ActionValidateParameters
 	ActionValidateClientCertificate
+	ActionChoose
 	ActionSetBackend
 	ActionRewriteURI
 	ActionForward
@@ -84,6 +85,8 @@ type Action struct {
 	UnspecifiedHeaderAction string
 	ParameterRules          []ParameterRule
 	CertificateThumbprints  []string
+	Branches                []ChooseBranch
+	Otherwise               []Action
 	Children                []Action
 	RetryCount              int
 	RetryInterval           time.Duration
@@ -110,6 +113,12 @@ type ParameterRule struct {
 	Name   string
 	Values []string
 	Action string
+}
+
+// ChooseBranch is a conditional policy branch.
+type ChooseBranch struct {
+	Condition string
+	Actions   []Action
 }
 
 // Plan contains the four APIM policy sections.
@@ -576,6 +585,39 @@ func compileNode(item node, strict bool) (Action, bool, error) {
 			}
 		}
 		return Action{Kind: ActionValidateClientCertificate, CertificateThumbprints: thumbprints, FailedCode: http.StatusForbidden}, true, nil
+	case "choose":
+		result := Action{Kind: ActionChoose}
+		otherwiseSeen := false
+		for _, child := range item.Children {
+			switch child.Name {
+			case "when":
+				condition := strings.TrimSpace(child.Attrs["condition"])
+				if condition == "" {
+					return Action{}, false, fmt.Errorf("choose when requires a condition")
+				}
+				actions, err := compileNodes(child.Children, strict)
+				if err != nil {
+					return Action{}, false, err
+				}
+				result.Branches = append(result.Branches, ChooseBranch{Condition: condition, Actions: actions})
+			case "otherwise":
+				if otherwiseSeen {
+					return Action{}, false, fmt.Errorf("choose has multiple otherwise branches")
+				}
+				otherwiseSeen = true
+				actions, err := compileNodes(child.Children, strict)
+				if err != nil {
+					return Action{}, false, err
+				}
+				result.Otherwise = actions
+			default:
+				return unsupported(item.Name + "/" + child.Name), true, nil
+			}
+		}
+		if len(result.Branches) == 0 {
+			return Action{}, false, fmt.Errorf("choose requires at least one when branch")
+		}
+		return result, true, nil
 	case "set-backend-service":
 		value, backendID := item.Attrs["base-url"], item.Attrs["backend-id"]
 		if (value == "") == (backendID == "") || expression(value) || expression(backendID) {
@@ -1007,6 +1049,24 @@ func Execute(actions []Action, state *State) error {
 					return nil
 				}
 			}
+		case ActionChoose:
+			selected := action.Otherwise
+			for _, branch := range action.Branches {
+				matched, err := evaluateCondition(branch.Condition, state)
+				if err != nil {
+					return err
+				}
+				if matched {
+					selected = branch.Actions
+					break
+				}
+			}
+			if err := Execute(selected, state); err != nil {
+				return err
+			}
+			if state.Returned {
+				return nil
+			}
 		case ActionSetBackend:
 			state.BackendURL = action.Value
 			state.BackendID = action.BackendID
@@ -1029,6 +1089,35 @@ func Execute(actions []Action, state *State) error {
 		}
 	}
 	return nil
+}
+
+func evaluateCondition(condition string, state *State) (bool, error) {
+	condition = strings.TrimSpace(condition)
+	switch strings.ToLower(condition) {
+	case "true", "@(true)":
+		return true, nil
+	case "false", "@(false)":
+		return false, nil
+	}
+	if state.Request == nil {
+		return false, fmt.Errorf("choose condition requires a request")
+	}
+	condition = strings.TrimSpace(strings.TrimPrefix(condition, "@("))
+	condition = strings.TrimSuffix(condition, ")")
+	parts := strings.SplitN(condition, "==", 2)
+	if len(parts) != 2 {
+		return false, fmt.Errorf("unsupported choose condition %q", condition)
+	}
+	left := strings.TrimSpace(parts[0])
+	right := strings.Trim(strings.TrimSpace(parts[1]), "\"'")
+	switch left {
+	case "context.Request.Method":
+		return state.Request.Method == right, nil
+	case "context.Request.Url.Path", "context.Request.URL.Path":
+		return state.Request.URL.Path == right, nil
+	default:
+		return false, fmt.Errorf("unsupported choose condition %q", condition)
+	}
 }
 
 func setHeader(headers http.Header, header Header) {

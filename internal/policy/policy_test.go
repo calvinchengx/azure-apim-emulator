@@ -519,6 +519,7 @@ func TestValidateHeadersPolicy(t *testing.T) {
 	}
 	request := httptest.NewRequest(http.MethodGet, "/", nil)
 	request.Header.Set("X-Mode", "strict")
+	request.Header.Set("X-Extra", "ignored")
 	state := &State{Request: request}
 	if err := Execute(plan.Inbound, state); err != nil || state.Returned {
 		t.Fatalf("valid header = %+v, %v", state, err)
@@ -640,6 +641,75 @@ func TestValidateClientCertificatePolicy(t *testing.T) {
 	}
 	if err := Execute(plan.Inbound, &State{}); err != nil {
 		t.Fatalf("client certificate state error = %v", err)
+	}
+}
+
+func TestChoosePolicy(t *testing.T) {
+	plan, err := Compile(`<policies><inbound><choose><when condition="@(context.Request.Method == 'GET')"><set-header name="X-Branch"><value>get</value></set-header></when><otherwise><set-header name="X-Branch"><value>other</value></set-header></otherwise></choose></inbound></policies>`, true)
+	if err != nil || len(plan.Inbound) != 1 || plan.Inbound[0].Kind != ActionChoose {
+		t.Fatalf("choose plan = %+v, %v", plan, err)
+	}
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	state := &State{Request: request}
+	if err := Execute(plan.Inbound, state); err != nil || request.Header.Get("X-Branch") != "get" {
+		t.Fatalf("when branch = %+v, %v", state, err)
+	}
+	request = httptest.NewRequest(http.MethodPost, "/", nil)
+	state = &State{Request: request}
+	if err := Execute(plan.Inbound, state); err != nil || request.Header.Get("X-Branch") != "other" {
+		t.Fatalf("otherwise branch = %+v, %v", state, err)
+	}
+	truePlan, err := Compile(`<policies><inbound><choose><when condition="true"><set-variable name="picked"><value>yes</value></set-variable></when><when condition="false"><set-variable name="picked"><value>no</value></set-variable></when></choose></inbound></policies>`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state = &State{Request: httptest.NewRequest(http.MethodGet, "/", nil)}
+	if err := Execute(truePlan.Inbound, state); err != nil || state.Variables["picked"] != "yes" {
+		t.Fatalf("literal choose = %+v, %v", state, err)
+	}
+	falsePlan, err := Compile(`<policies><inbound><choose><when condition="false"><set-variable name="picked"><value>no</value></set-variable></when></choose></inbound></policies>`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state = &State{Request: httptest.NewRequest(http.MethodGet, "/", nil)}
+	if err := Execute(falsePlan.Inbound, state); err != nil || state.Variables != nil {
+		t.Fatalf("false choose = %+v, %v", state, err)
+	}
+	pathPlan, err := Compile(`<policies><inbound><choose><when condition="@(context.Request.Url.Path == '/match')"><set-variable name="picked"><value>path</value></set-variable></when></choose></inbound></policies>`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state = &State{Request: httptest.NewRequest(http.MethodGet, "/match", nil)}
+	if err := Execute(pathPlan.Inbound, state); err != nil || state.Variables["picked"] != "path" {
+		t.Fatalf("path choose = %+v, %v", state, err)
+	}
+	returned := &State{Request: httptest.NewRequest(http.MethodGet, "/", nil)}
+	if err := Execute([]Action{{Kind: ActionChoose, Branches: []ChooseBranch{{Condition: "true", Actions: []Action{{Kind: ActionReturnResponse, StatusCode: http.StatusTeapot}}}}}}, returned); err != nil || !returned.Returned {
+		t.Fatalf("returned choose = %+v, %v", returned, err)
+	}
+	if err := Execute([]Action{{Kind: ActionChoose, Branches: []ChooseBranch{{Condition: "true", Actions: []Action{{Kind: ActionUnsupported, Source: "bad"}}}}}}, &State{Request: httptest.NewRequest(http.MethodGet, "/", nil)}); err == nil {
+		t.Fatal("choose child error lost")
+	}
+	if err := Execute([]Action{{Kind: ActionChoose, Branches: []ChooseBranch{{Condition: "@(context.Request.Method == 'GET')", Actions: nil}}}}, &State{}); err == nil {
+		t.Fatal("choose condition request error lost")
+	}
+	for _, value := range []string{
+		`<policies><inbound><choose><when><set-variable name="x"><value>y</value></set-variable></when></choose></inbound></policies>`,
+		`<policies><inbound><choose><otherwise/><otherwise/></choose></inbound></policies>`,
+		`<policies><inbound><choose><unknown/></choose></inbound></policies>`,
+		`<policies><inbound><choose><when condition="true"><unknown/></when></choose></inbound></policies>`,
+		`<policies><inbound><choose><when condition="true"/><otherwise><unknown/></otherwise></choose></inbound></policies>`,
+	} {
+		if _, err := Compile(value, true); err == nil {
+			t.Fatalf("invalid choose accepted: %s", value)
+		}
+	}
+	unsupportedPlan, err := Compile(`<policies><inbound><choose><when condition="@(context.Request.Headers.Get('X') == 'yes')"/></choose></inbound></policies>`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := Execute(unsupportedPlan.Inbound, &State{Request: httptest.NewRequest(http.MethodGet, "/", nil)}); err == nil {
+		t.Fatal("unsupported choose condition accepted")
 	}
 }
 
