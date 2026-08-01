@@ -673,6 +673,7 @@ func TestActivateInheritsServicePolicyWhenAPIHasNone(t *testing.T) {
 	}
 	apiComposed := false
 	operationComposed := false
+	productComposed := false
 	runtime := New("emulator", &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
 		if request.Header.Get("X-Service-Policy") != "inherited" {
 			t.Errorf("inherited header = %q", request.Header.Get("X-Service-Policy"))
@@ -682,6 +683,9 @@ func TestActivateInheritsServicePolicyWhenAPIHasNone(t *testing.T) {
 		}
 		if operationComposed && request.Header.Get("X-Operation-Policy") != "operation" {
 			t.Errorf("composed operation header = %q", request.Header.Get("X-Operation-Policy"))
+		}
+		if productComposed && request.Header.Get("X-Product-Policy") != "product" {
+			t.Errorf("composed product header = %q", request.Header.Get("X-Product-Policy"))
 		}
 		return &http.Response{StatusCode: http.StatusNoContent, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(""))}, nil
 	})})
@@ -705,6 +709,30 @@ func TestActivateInheritsServicePolicyWhenAPIHasNone(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertGatewayStatus(t, runtime, httptest.NewRequest(http.MethodGet, "/inherited", nil), http.StatusNoContent)
+	product, err := st.UpsertProduct(model.Product{ServiceID: service.ID(), Name: "product", State: "published"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.LinkProductAPI(product.ID(), api.ID()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.UpsertSubscription(model.Subscription{ServiceID: service.ID(), Name: "product-subscription", Scope: product.ID(), State: "active", PrimaryKey: "product-key"}); err != nil {
+		t.Fatal(err)
+	}
+	api.SubscriptionRequired = true
+	if _, err := st.UpsertAPI(api); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.UpsertPolicy(model.Policy{ScopeID: product.ID(), Value: `<policies><inbound><set-header name="X-Product-Policy" exists-action="override"><value>product</value></set-header></inbound></policies>`}); err != nil {
+		t.Fatal(err)
+	}
+	productComposed = true
+	if err := runtime.Activate(st, false); err != nil {
+		t.Fatal(err)
+	}
+	productRequest := httptest.NewRequest(http.MethodGet, "/inherited", nil)
+	productRequest.Header.Set("Ocp-Apim-Subscription-Key", "product-key")
+	assertGatewayStatus(t, runtime, productRequest, http.StatusNoContent)
 }
 
 func TestActivateExpandsPolicyFragments(t *testing.T) {

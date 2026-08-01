@@ -60,13 +60,14 @@ type Service struct {
 
 // Route is a compiled API route.
 type Route struct {
-	API            model.API
-	VersionSet     *model.APIVersionSet
-	Operations     []model.Operation
-	Plan           policy.Plan
-	OperationPlans map[string]policy.Plan
-	AcceptedKeys   map[string]bool
-	Diagnostics    []model.Diagnostic
+	API               model.API
+	VersionSet        *model.APIVersionSet
+	Operations        []model.Operation
+	Plan              policy.Plan
+	OperationPlans    map[string]policy.Plan
+	SubscriptionPlans map[string]policy.Plan
+	AcceptedKeys      map[string]bool
+	Diagnostics       []model.Diagnostic
 }
 
 // Runtime atomically publishes snapshots and serves gateway traffic.
@@ -416,7 +417,33 @@ func (r *Runtime) Activate(st *store.Store, strict bool) error {
 			}
 			operationPlans[strings.ToLower(operationID)] = operationPlan
 		}
-		service.Routes = append(service.Routes, &Route{API: api, VersionSet: versionSet, Operations: operationList, OperationPlans: operationPlans, Plan: plan, AcceptedKeys: keysByAPI[strings.ToLower(api.ID())], Diagnostics: diagnostics[strings.ToLower(api.ID())]})
+		subscriptionPlans := map[string]policy.Plan{}
+		for _, subscription := range subscriptions {
+			if !strings.EqualFold(subscription.State, "active") || !strings.HasPrefix(strings.ToLower(subscription.Scope), strings.ToLower(api.ServiceID)+"/products/") {
+				continue
+			}
+			linked := false
+			for _, linkedAPI := range links[subscription.Scope] {
+				if strings.EqualFold(linkedAPI, api.ID()) || strings.EqualFold(linkedAPI, logicalAPIID(api.ID())) {
+					linked = true
+					break
+				}
+			}
+			if !linked {
+				continue
+			}
+			if productPlan, defined := policyByScope[strings.ToLower(subscription.Scope)]; defined {
+				apiPlan := plan
+				for _, operationPlan := range operationPlans {
+					apiPlan = operationPlan
+					break
+				}
+				composed := mergeProductPlan(productPlan, apiPlan)
+				subscriptionPlans[strings.ToLower(subscription.PrimaryKey)] = composed
+				subscriptionPlans[strings.ToLower(subscription.SecondaryKey)] = composed
+			}
+		}
+		service.Routes = append(service.Routes, &Route{API: api, VersionSet: versionSet, Operations: operationList, OperationPlans: operationPlans, SubscriptionPlans: subscriptionPlans, Plan: plan, AcceptedKeys: keysByAPI[strings.ToLower(api.ID())], Diagnostics: diagnostics[strings.ToLower(api.ID())]})
 	}
 	for _, service := range snapshot.Services {
 		sort.SliceStable(service.Routes, func(i, j int) bool { return len(service.Routes[i].API.Path) > len(service.Routes[j].API.Path) })
@@ -443,6 +470,32 @@ func composeInheritedActions(child, parent []policy.Action) []policy.Action {
 		} else {
 			result = append(result, action)
 		}
+	}
+	return result
+}
+
+func mergeProductPlan(product, child policy.Plan) policy.Plan {
+	return policy.Plan{
+		Inbound:  mergeProductActions(product.Inbound, child.Inbound),
+		Backend:  mergeProductActions(product.Backend, child.Backend),
+		Outbound: mergeProductActions(product.Outbound, child.Outbound),
+		OnError:  mergeProductActions(product.OnError, child.OnError),
+	}
+}
+
+func mergeProductActions(product, child []policy.Action) []policy.Action {
+	result := make([]policy.Action, 0, len(product)+len(child))
+	base := false
+	for _, action := range product {
+		if action.Kind == policy.ActionBase {
+			result = append(result, child...)
+			base = true
+		} else {
+			result = append(result, action)
+		}
+	}
+	if !base {
+		result = append(result, child...)
 	}
 	return result
 }
@@ -554,6 +607,9 @@ func (r *Runtime) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		}
 		gatewayError(w, http.StatusUnauthorized, "SubscriptionKeyInvalid", message)
 		return
+	}
+	if subscriptionPlan, ok := route.SubscriptionPlans[strings.ToLower(subscriptionKey(req))]; ok {
+		activePlan = subscriptionPlan
 	}
 	cacheKey := service.Name + ":" + route.API.ID() + ":" + req.Method + ":" + req.URL.RequestURI()
 	state := &policy.State{Request: req, BackendURL: route.API.ServiceURL, Path: relative, Headers: make(http.Header), ValidateToken: r.policyTokenValidator, SendRequest: r.policySendRequest, Trace: func(phase, detail string) { traceEvent(trace, phase, detail) }, RateLimit: r.rateLimit, CacheGet: r.cacheGet, CacheSet: r.cacheSet, ValueCacheGet: r.valueCacheGet, ValueCacheSet: r.valueCacheSet, ValueCacheRemove: r.valueCacheRemove, CacheKey: cacheKey}
