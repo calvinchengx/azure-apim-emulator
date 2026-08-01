@@ -1,0 +1,8 @@
+{
+  "location": "local",
+  "properties": {
+    "publisherName": "Differential",
+    "publisherEmail": "differential@example.test",
+    "customProperties": {"fixture": "service-lifecycle"}
+  }
+}

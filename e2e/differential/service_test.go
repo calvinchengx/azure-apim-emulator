@@ -27,6 +27,8 @@ type fixtureManifest struct {
 	Normalizations []string `json:"normalizations"`
 	Scenarios      []struct {
 		ID            string `json:"id"`
+		Status        string `json:"status"`
+		Fixture       string `json:"fixture"`
 		APIVersion    string `json:"apiVersion"`
 		AzureRequired bool   `json:"azureRequired"`
 	} `json:"scenarios"`
@@ -46,8 +48,11 @@ func TestDifferentialFixtureManifest(t *testing.T) {
 	}
 	seen := map[string]bool{}
 	for _, scenario := range manifest.Scenarios {
-		if scenario.ID == "" || scenario.APIVersion == "" || seen[scenario.ID] {
+		if scenario.ID == "" || scenario.Status == "" || scenario.APIVersion == "" || seen[scenario.ID] {
 			t.Fatalf("invalid or duplicate differential scenario: %+v", scenario)
+		}
+		if scenario.Status == "implemented" && scenario.Fixture == "" {
+			t.Fatalf("implemented differential scenario has no fixture: %+v", scenario)
 		}
 		seen[scenario.ID] = true
 	}

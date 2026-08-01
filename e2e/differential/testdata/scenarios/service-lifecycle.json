@@ -1,0 +1,8 @@
+{
+  "id": "service-lifecycle",
+  "apiVersion": "2024-05-01",
+  "steps": [
+    {"method": "PUT", "path": "service", "bodyFile": "service-lifecycle-body.json", "expectBodyFile": "service-lifecycle-golden.json", "expectStatus": 200},
+    {"method": "GET", "path": "service", "expectBodyFile": "service-lifecycle-golden.json", "expectStatus": 200}
+  ]
+}

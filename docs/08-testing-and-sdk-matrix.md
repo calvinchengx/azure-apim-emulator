@@ -96,6 +96,15 @@ The P0 service differential is non-destructive. Set
 inventory, replays that document into an isolated emulator, and compares the
 writable projection without changing Azure.
 
+Declarative replay scenarios live under `e2e/differential/testdata/` and are
+listed in `fixture-manifest.json`. Each implemented scenario defines ordered
+management or gateway steps, fixture-backed request bodies, expected status
+codes, and a golden response projection. The same runner is intended for
+local replay and authorized Azure witnesses. Normalization is recursive and
+explicitly limited to the manifest rules for generated IDs, timestamps,
+secrets, regional hostnames, and unordered collections; it does not normalize
+arbitrary response differences.
+
 ## Deterministic controls
 
 `/_emulator` supports:

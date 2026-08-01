@@ -9,10 +9,10 @@
     "unordered-collections"
   ],
   "scenarios": [
-    {"id": "service-lifecycle", "apiVersion": "2024-05-01", "azureRequired": false},
-    {"id": "api-openapi-roundtrip", "apiVersion": "2024-05-01", "azureRequired": true},
-    {"id": "policy-scope-inheritance", "apiVersion": "2024-05-01", "azureRequired": true},
-    {"id": "diagnostic-header-masking", "apiVersion": "2024-05-01", "azureRequired": true},
-    {"id": "custom-domain-network-access", "apiVersion": "2024-05-01", "azureRequired": true}
+    {"id": "service-lifecycle", "status": "implemented", "fixture": "service-lifecycle.json", "apiVersion": "2024-05-01", "azureRequired": false},
+    {"id": "api-openapi-roundtrip", "status": "planned", "apiVersion": "2024-05-01", "azureRequired": true},
+    {"id": "policy-scope-inheritance", "status": "planned", "apiVersion": "2024-05-01", "azureRequired": true},
+    {"id": "diagnostic-header-masking", "status": "planned", "apiVersion": "2024-05-01", "azureRequired": true},
+    {"id": "custom-domain-network-access", "status": "planned", "apiVersion": "2024-05-01", "azureRequired": true}
   ]
 }

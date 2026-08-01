@@ -1,0 +1,9 @@
+{
+  "location": "local",
+  "sku": {"name": "Developer", "capacity": 1},
+  "properties": {
+    "publisherName": "Differential",
+    "publisherEmail": "differential@example.test",
+    "customProperties": {"fixture": "service-lifecycle"}
+  }
+}
