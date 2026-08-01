@@ -35,6 +35,7 @@ const (
 	ActionValidateStatus
 	ActionValidateContent
 	ActionValidateHeaders
+	ActionValidateParameters
 	ActionSetBackend
 	ActionRewriteURI
 	ActionForward
@@ -79,6 +80,7 @@ type Action struct {
 	HeaderRules             []HeaderRule
 	SpecifiedHeaderAction   string
 	UnspecifiedHeaderAction string
+	ParameterRules          []ParameterRule
 	Children                []Action
 	RetryCount              int
 	RetryInterval           time.Duration
@@ -95,6 +97,13 @@ type Header struct {
 
 // HeaderRule describes an allowed value for a validated header.
 type HeaderRule struct {
+	Name   string
+	Values []string
+	Action string
+}
+
+// ParameterRule describes an allowed query parameter value.
+type ParameterRule struct {
 	Name   string
 	Values []string
 	Action string
@@ -516,6 +525,40 @@ func compileNode(item node, strict bool) (Action, bool, error) {
 			rules = append(rules, HeaderRule{Name: strings.ToLower(strings.TrimSpace(child.Attrs["name"])), Values: values, Action: action})
 		}
 		return Action{Kind: ActionValidateHeaders, HeaderRules: rules, SpecifiedHeaderAction: specified, UnspecifiedHeaderAction: unspecified, FailedCode: http.StatusBadRequest}, true, nil
+	case "validate-parameters":
+		specified := strings.ToLower(item.Attrs["specified-parameter-action"])
+		if specified == "" {
+			specified = "prevent"
+		}
+		unspecified := strings.ToLower(item.Attrs["unspecified-parameter-action"])
+		if unspecified == "" {
+			unspecified = "ignore"
+		}
+		if (specified != "prevent" && specified != "ignore") || (unspecified != "prevent" && unspecified != "ignore") {
+			return Action{}, false, fmt.Errorf("invalid validate-parameters action")
+		}
+		rules := []ParameterRule{}
+		for _, child := range item.Children {
+			if child.Name != "parameter" || strings.TrimSpace(child.Attrs["name"]) == "" {
+				return unsupported(item.Name + "/" + child.Name), true, nil
+			}
+			action := strings.ToLower(child.Attrs["action"])
+			if action == "" {
+				action = specified
+			}
+			if action != "prevent" && action != "ignore" {
+				return Action{}, false, fmt.Errorf("invalid validate-parameters parameter action")
+			}
+			values := []string{}
+			for _, value := range child.Children {
+				if value.Name != "value" {
+					return unsupported(item.Name + "/parameter/" + value.Name), true, nil
+				}
+				values = append(values, strings.TrimSpace(value.Text))
+			}
+			rules = append(rules, ParameterRule{Name: strings.TrimSpace(child.Attrs["name"]), Values: values, Action: action})
+		}
+		return Action{Kind: ActionValidateParameters, ParameterRules: rules, SpecifiedHeaderAction: specified, UnspecifiedHeaderAction: unspecified, FailedCode: http.StatusBadRequest}, true, nil
 	case "set-backend-service":
 		value, backendID := item.Attrs["base-url"], item.Attrs["backend-id"]
 		if (value == "") == (backendID == "") || expression(value) || expression(backendID) {
@@ -884,6 +927,46 @@ func Execute(actions []Action, state *State) error {
 			for _, rule := range rules {
 				if len(headers.Values(rule.Name)) == 0 && rule.Action == "prevent" {
 					state.Returned, state.StatusCode, state.Body = true, action.FailedCode, "header validation failed"
+					return nil
+				}
+			}
+		case ActionValidateParameters:
+			if state.Request == nil || state.Request.URL == nil {
+				return fmt.Errorf("validate-parameters requires a request")
+			}
+			query := state.Request.URL.Query()
+			rules := make(map[string]ParameterRule, len(action.ParameterRules))
+			for _, rule := range action.ParameterRules {
+				rules[rule.Name] = rule
+			}
+			for name, values := range query {
+				rule, specified := rules[name]
+				if !specified {
+					if action.UnspecifiedHeaderAction == "prevent" {
+						state.Returned, state.StatusCode, state.Body = true, action.FailedCode, "parameter validation failed"
+						return nil
+					}
+					continue
+				}
+				if rule.Action == "ignore" || len(rule.Values) == 0 {
+					continue
+				}
+				matched := false
+				for _, actual := range values {
+					for _, expected := range rule.Values {
+						if actual == expected {
+							matched = true
+						}
+					}
+				}
+				if !matched {
+					state.Returned, state.StatusCode, state.Body = true, action.FailedCode, "parameter validation failed"
+					return nil
+				}
+			}
+			for _, rule := range rules {
+				if _, present := query[rule.Name]; !present && rule.Action == "prevent" {
+					state.Returned, state.StatusCode, state.Body = true, action.FailedCode, "parameter validation failed"
 					return nil
 				}
 			}

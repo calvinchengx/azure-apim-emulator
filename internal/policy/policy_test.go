@@ -561,6 +561,49 @@ func TestValidateHeadersPolicy(t *testing.T) {
 	}
 }
 
+func TestValidateParametersPolicy(t *testing.T) {
+	plan, err := Compile(`<policies><inbound><validate-parameters specified-parameter-action="prevent" unspecified-parameter-action="ignore"><parameter name="mode"><value>strict</value></parameter></validate-parameters></inbound></policies>`, true)
+	if err != nil || len(plan.Inbound) != 1 || plan.Inbound[0].Kind != ActionValidateParameters {
+		t.Fatalf("parameter validation plan = %+v, %v", plan, err)
+	}
+	request := httptest.NewRequest(http.MethodGet, "/?mode=strict&extra=value", nil)
+	state := &State{Request: request}
+	if err := Execute(plan.Inbound, state); err != nil || state.Returned {
+		t.Fatalf("valid parameter = %+v, %v", state, err)
+	}
+	request = httptest.NewRequest(http.MethodGet, "/?mode=loose", nil)
+	state = &State{Request: request}
+	if err := Execute(plan.Inbound, state); err != nil || !state.Returned || state.StatusCode != http.StatusBadRequest {
+		t.Fatalf("invalid parameter = %+v, %v", state, err)
+	}
+	request = httptest.NewRequest(http.MethodGet, "/", nil)
+	state = &State{Request: request}
+	if err := Execute(plan.Inbound, state); err != nil || !state.Returned {
+		t.Fatalf("missing parameter = %+v, %v", state, err)
+	}
+	ignore, err := Compile(`<policies><inbound><validate-parameters specified-parameter-action="ignore" unspecified-parameter-action="prevent"><parameter name="mode"><value>strict</value></parameter></validate-parameters></inbound></policies>`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state = &State{Request: httptest.NewRequest(http.MethodGet, "/?other=value", nil)}
+	if err := Execute(ignore.Inbound, state); err != nil || !state.Returned {
+		t.Fatalf("unspecified parameter = %+v, %v", state, err)
+	}
+	for _, value := range []string{
+		`<policies><inbound><validate-parameters specified-parameter-action="bad"/></inbound></policies>`,
+		`<policies><inbound><validate-parameters><parameter name="mode" action="bad"/></validate-parameters></inbound></policies>`,
+		`<policies><inbound><validate-parameters><unknown/></validate-parameters></inbound></policies>`,
+		`<policies><inbound><validate-parameters><parameter name="mode"><unknown/></parameter></validate-parameters></inbound></policies>`,
+	} {
+		if _, err := Compile(value, true); err == nil {
+			t.Fatalf("invalid parameter validation accepted: %s", value)
+		}
+	}
+	if err := Execute(plan.Inbound, &State{}); err == nil {
+		t.Fatal("parameter validation without request accepted")
+	}
+}
+
 type errorBody struct{}
 
 func (errorBody) Read([]byte) (int, error) { return 0, errors.New("body read failed") }
