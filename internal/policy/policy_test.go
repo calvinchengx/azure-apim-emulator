@@ -1066,6 +1066,44 @@ func TestJSONPPolicy(t *testing.T) {
 	}
 }
 
+func TestValueCachePolicies(t *testing.T) {
+	plan, err := Compile(`<policies><inbound><cache-lookup-value key="user" variable-name="cached"/></inbound><outbound><cache-store-value key="user" value="Ada" duration="60"/></outbound></policies>`, true)
+	if err != nil || len(plan.Inbound) != 1 || len(plan.Outbound) != 1 || plan.Inbound[0].Kind != ActionCacheLookupValue || plan.Outbound[0].Kind != ActionCacheStoreValue {
+		t.Fatalf("value cache plan = %+v, %v", plan, err)
+	}
+	stored := map[string]string{}
+	var duration time.Duration
+	state := &State{ValueCacheGet: func(key string) (string, bool) { return stored[key], stored[key] != "" }, ValueCacheSet: func(key, value string, got time.Duration) { stored[key], duration = value, got }}
+	if err := Execute(plan.Outbound, state); err != nil || stored["user"] != "Ada" || duration != time.Minute {
+		t.Fatalf("value cache store = %+v %v, %v", stored, duration, err)
+	}
+	state = &State{ValueCacheGet: func(key string) (string, bool) { return stored[key], true }}
+	if err := Execute(plan.Inbound, state); err != nil || state.Variables["cached"] != "Ada" {
+		t.Fatalf("value cache hit = %+v, %v", state, err)
+	}
+	state = &State{ValueCacheGet: func(string) (string, bool) { return "", false }}
+	if err := Execute(plan.Inbound, state); err != nil || state.Variables != nil {
+		t.Fatalf("value cache miss = %+v, %v", state, err)
+	}
+	if err := Execute(plan.Inbound, &State{}); err == nil {
+		t.Fatal("value cache lookup without cache accepted")
+	}
+	if err := Execute(plan.Outbound, &State{}); err == nil {
+		t.Fatal("value cache store without cache accepted")
+	}
+	for _, value := range []string{
+		`<policies><inbound><cache-lookup-value key="" variable-name="cached"/></inbound></policies>`,
+		`<policies><inbound><cache-lookup-value key="@(context.Url)" variable-name="cached"/></inbound></policies>`,
+		`<policies><outbound><cache-store-value key="user" value="Ada" duration="bad"/></outbound></policies>`,
+		`<policies><outbound><cache-store-value key="user" value="Ada" duration="0"/></outbound></policies>`,
+		`<policies><outbound><cache-store-value key="user" value="@(context.Url)"/></outbound></policies>`,
+	} {
+		if _, err := Compile(value, true); err == nil {
+			t.Fatalf("invalid value cache accepted: %s", value)
+		}
+	}
+}
+
 type errorBody struct{}
 
 func (errorBody) Read([]byte) (int, error) { return 0, errors.New("body read failed") }

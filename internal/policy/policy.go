@@ -11,6 +11,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -50,6 +51,8 @@ const (
 	ActionJSONToXML
 	ActionXMLToJSON
 	ActionJSONP
+	ActionCacheLookupValue
+	ActionCacheStoreValue
 	ActionSetBackend
 	ActionRewriteURI
 	ActionForward
@@ -112,6 +115,9 @@ type Action struct {
 	ReplaceTo               string
 	TransformRoot           string
 	JSONPParameter          string
+	ValueCacheKey           string
+	ValueCacheValue         string
+	ValueCacheDuration      time.Duration
 	Children                []Action
 	RetryCount              int
 	RetryInterval           time.Duration
@@ -174,6 +180,8 @@ type State struct {
 	AcquireToken            func(string) (string, error)
 	AcquireOAuth2Token      func(string, string, string, string) (string, error)
 	AttachClientCertificate func(*http.Request, string) error
+	ValueCacheGet           func(string) (string, bool)
+	ValueCacheSet           func(string, string, time.Duration)
 	RateLimit               func(string, int, time.Duration) bool
 	CacheGet                func(string) (int, http.Header, string, bool)
 	CacheSet                func(string, int, http.Header, string, time.Duration)
@@ -721,6 +729,26 @@ func compileNode(item node, strict bool) (Action, bool, error) {
 			return unsupported(item.Name), true, nil
 		}
 		return Action{Kind: ActionJSONP, JSONPParameter: parameter}, true, nil
+	case "cache-lookup-value":
+		key, variable := item.Attrs["key"], item.Attrs["variable-name"]
+		if key == "" || variable == "" || expression(key) || expression(variable) || len(item.Children) > 0 {
+			return unsupported(item.Name), true, nil
+		}
+		return Action{Kind: ActionCacheLookupValue, ValueCacheKey: key, Variable: variable}, true, nil
+	case "cache-store-value":
+		key, value := item.Attrs["key"], item.Attrs["value"]
+		if key == "" || expression(key) || expression(value) || len(item.Children) > 0 {
+			return unsupported(item.Name), true, nil
+		}
+		duration := 300 * time.Second
+		if raw := item.Attrs["duration"]; raw != "" {
+			seconds, err := strconv.Atoi(raw)
+			if err != nil || seconds <= 0 {
+				return Action{}, false, fmt.Errorf("invalid cache-store-value duration")
+			}
+			duration = time.Duration(seconds) * time.Second
+		}
+		return Action{Kind: ActionCacheStoreValue, ValueCacheKey: key, ValueCacheValue: value, ValueCacheDuration: duration}, true, nil
 	case "set-backend-service":
 		value, backendID := item.Attrs["base-url"], item.Attrs["backend-id"]
 		if (value == "") == (backendID == "") || expression(value) || expression(backendID) {
@@ -1281,6 +1309,22 @@ func Execute(actions []Action, state *State) error {
 				return err
 			}
 			state.Response.Body = io.NopCloser(strings.NewReader(callback + "(" + string(value) + ");"))
+		case ActionCacheLookupValue:
+			if state.ValueCacheGet == nil {
+				return fmt.Errorf("cache-lookup-value requires a cache")
+			}
+			value, ok := state.ValueCacheGet(action.ValueCacheKey)
+			if ok {
+				if state.Variables == nil {
+					state.Variables = map[string]string{}
+				}
+				state.Variables[action.Variable] = value
+			}
+		case ActionCacheStoreValue:
+			if state.ValueCacheSet == nil {
+				return fmt.Errorf("cache-store-value requires a cache")
+			}
+			state.ValueCacheSet(action.ValueCacheKey, action.ValueCacheValue, action.ValueCacheDuration)
 		case ActionSetBackend:
 			state.BackendURL = action.Value
 			state.BackendID = action.BackendID
