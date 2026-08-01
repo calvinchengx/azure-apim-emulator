@@ -909,6 +909,12 @@ func TestServeHTTPFailuresAndPolicyResponses(t *testing.T) {
 	if recorder.Code != http.StatusAccepted || recorder.Body.String() != "local" || recorder.Header().Get("X-Local") != "yes" {
 		t.Fatalf("local response = %d %q %v", recorder.Code, recorder.Body.String(), recorder.Header())
 	}
+	route.Plan.Inbound = []policy.Action{{Kind: policy.ActionLimitConcurrency, Value: "tenant", LimitCalls: 1, StatusCode: http.StatusTooManyRequests, Body: "busy"}, {Kind: policy.ActionReturnResponse, StatusCode: http.StatusOK, Body: "limited"}}
+	limited := httptest.NewRecorder()
+	runtime.ServeHTTP(limited, httptest.NewRequest(http.MethodGet, "/api/items", nil))
+	if limited.Code != http.StatusOK || limited.Body.String() != "limited" {
+		t.Fatalf("limit-concurrency gateway response = %d %q", limited.Code, limited.Body.String())
+	}
 	route.Plan.Inbound = []policy.Action{{Kind: policy.ActionTrace, TraceSource: "test", TraceSeverity: "info", TraceMessage: "policy trace"}, {Kind: policy.ActionReturnResponse, StatusCode: http.StatusOK, Body: "traced"}}
 	traceRequest := httptest.NewRequest(http.MethodGet, "/api/items", nil)
 	traceRequest.Header.Set("Ocp-Apim-Trace", "true")

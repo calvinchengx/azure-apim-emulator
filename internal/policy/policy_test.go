@@ -55,6 +55,11 @@ func TestLimitConcurrency(t *testing.T) {
 	if err := Execute(plan.Inbound, &State{}); err == nil {
 		t.Fatal("limit-concurrency without limiter succeeded")
 	}
+	requestKey := ""
+	requestState := &State{Request: httptest.NewRequest(http.MethodGet, "/", nil), AcquireConcurrency: func(key string, _ int) func() { requestKey = key; return func() {} }}
+	if err := Execute([]Action{{Kind: ActionLimitConcurrency, LimitCalls: 1}}, requestState); err != nil || requestKey == "" {
+		t.Fatalf("request-key concurrency execution = %+v, %v", requestState, err)
+	}
 	held := true
 	first, second := &State{AcquireConcurrency: func(string, int) func() { return func() { held = false } }}, &State{AcquireConcurrency: func(string, int) func() {
 		if held {

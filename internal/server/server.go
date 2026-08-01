@@ -110,6 +110,8 @@ func (s *Server) register() {
 	})
 	s.mux.HandleFunc("GET /_emulator/portal/api/faults", func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, http.StatusOK, s.Gateway.FaultsSnapshot()) })
 	s.mux.HandleFunc("GET /_emulator/portal/api/diagnostics", s.portalDiagnostics)
+	s.mux.HandleFunc("GET /_emulator/portal/api/resource", s.portalResource)
+	s.mux.HandleFunc("PUT /_emulator/portal/api/resource", s.portalResource)
 	s.mux.HandleFunc("POST /_emulator/portal/api/faults", s.updateFault)
 	s.mux.HandleFunc("GET /_emulator/portal/api/policy", s.portalPolicy)
 	s.mux.HandleFunc("PUT /_emulator/portal/api/policy", s.portalPolicy)
@@ -165,6 +167,64 @@ func (s *Server) portalDiagnostics(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"serviceId": serviceID, "events": events})
+}
+
+func (s *Server) portalResource(w http.ResponseWriter, r *http.Request) {
+	resourceID := strings.TrimSpace(r.URL.Query().Get("resourceId"))
+	if resourceID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "resourceId is required"})
+		return
+	}
+	api, err := s.Store.GetAPI(resourceID)
+	if errors.Is(err, store.ErrNotFound) {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": "resource not found"})
+		return
+	}
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	if r.Method == http.MethodPut {
+		var body struct {
+			DisplayName          *string `json:"displayName"`
+			Path                 *string `json:"path"`
+			ServiceURL           *string `json:"serviceUrl"`
+			SubscriptionRequired *bool   `json:"subscriptionRequired"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "malformed JSON"})
+			return
+		}
+		if body.DisplayName != nil {
+			api.DisplayName = strings.TrimSpace(*body.DisplayName)
+		}
+		if body.Path != nil {
+			api.Path = strings.Trim(*body.Path, "/")
+		}
+		if body.ServiceURL != nil {
+			api.ServiceURL = strings.TrimSpace(*body.ServiceURL)
+		}
+		if body.SubscriptionRequired != nil {
+			api.SubscriptionRequired = *body.SubscriptionRequired
+		}
+		if api.DisplayName == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "displayName cannot be empty"})
+			return
+		}
+		api, err = s.Store.UpsertAPI(api)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+			return
+		}
+		if err := s.Gateway.Activate(s.Store, s.Cfg.StrictPolicies); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"id": api.ID(), "name": api.Name, "displayName": api.DisplayName, "path": api.Path,
+		"serviceUrl": api.ServiceURL, "subscriptionRequired": api.SubscriptionRequired, "etag": api.ETag,
+	})
 }
 
 func countAPIVersionSets(st *store.Store, id string) int {

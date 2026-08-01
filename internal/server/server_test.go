@@ -189,6 +189,50 @@ func TestControlAndDispatchEndpoints(t *testing.T) {
 	if readPolicy.Code != http.StatusOK || !strings.Contains(readPolicy.Body.String(), "policies") {
 		t.Fatalf("portal policy read = %d %s", readPolicy.Code, readPolicy.Body.String())
 	}
+	portalAPI := model.API{ServiceID: model.Service{SubscriptionID: defaultSubscription, ResourceGroup: defaultResourceGroup, Name: "emulator"}.ID(), Name: "portal-api", DisplayName: "Portal API", Path: "portal", ServiceURL: "https://backend.test"}
+	if _, err := srv.Store.UpsertAPI(portalAPI); err != nil {
+		t.Fatal(err)
+	}
+	resourceURL := "/_emulator/portal/api/resource?resourceId=" + url.QueryEscape(portalAPI.ID())
+	resourceRead := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(resourceRead, httptest.NewRequest(http.MethodGet, resourceURL, nil))
+	if resourceRead.Code != http.StatusOK || !strings.Contains(resourceRead.Body.String(), "Portal API") {
+		t.Fatalf("portal resource read = %d %s", resourceRead.Code, resourceRead.Body.String())
+	}
+	resourceUpdate := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(resourceUpdate, httptest.NewRequest(http.MethodPut, resourceURL, strings.NewReader(`{"displayName":"Updated Portal API","path":"updated"}`)))
+	if resourceUpdate.Code != http.StatusOK || !strings.Contains(resourceUpdate.Body.String(), "Updated Portal API") {
+		t.Fatalf("portal resource update = %d %s", resourceUpdate.Code, resourceUpdate.Body.String())
+	}
+	fullResourceUpdate := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(fullResourceUpdate, httptest.NewRequest(http.MethodPut, resourceURL, strings.NewReader(`{"displayName":"Full Portal API","path":"full","serviceUrl":"https://new-backend.test","subscriptionRequired":true}`)))
+	if fullResourceUpdate.Code != http.StatusOK || !strings.Contains(fullResourceUpdate.Body.String(), "new-backend.test") {
+		t.Fatalf("full portal resource update = %d %s", fullResourceUpdate.Code, fullResourceUpdate.Body.String())
+	}
+	if _, err := srv.Store.UpsertPolicy(model.Policy{ScopeID: portalAPI.ID(), Value: "<invalid>"}); err != nil {
+		t.Fatal(err)
+	}
+	activationResourceUpdate := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(activationResourceUpdate, httptest.NewRequest(http.MethodPut, resourceURL, strings.NewReader(`{"displayName":"Activation Failure"}`)))
+	if activationResourceUpdate.Code != http.StatusBadRequest {
+		t.Fatalf("portal resource activation failure = %d %s", activationResourceUpdate.Code, activationResourceUpdate.Body.String())
+	}
+	emptyUpdate := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(emptyUpdate, httptest.NewRequest(http.MethodPut, resourceURL, strings.NewReader(`{"displayName":" "}`)))
+	if emptyUpdate.Code != http.StatusBadRequest {
+		t.Fatalf("empty portal resource name = %d %s", emptyUpdate.Code, emptyUpdate.Body.String())
+	}
+	for _, request := range []*http.Request{
+		httptest.NewRequest(http.MethodGet, "/_emulator/portal/api/resource", nil),
+		httptest.NewRequest(http.MethodGet, "/_emulator/portal/api/resource?resourceId=/missing", nil),
+		httptest.NewRequest(http.MethodPut, resourceURL, strings.NewReader("{")),
+	} {
+		recorder := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(recorder, request)
+		if recorder.Code != http.StatusBadRequest && recorder.Code != http.StatusNotFound {
+			t.Fatalf("portal resource invalid = %d %s", recorder.Code, recorder.Body.String())
+		}
+	}
 	for _, request := range []*http.Request{
 		httptest.NewRequest(http.MethodGet, "/_emulator/portal/api/policy", nil),
 		httptest.NewRequest(http.MethodPut, "/_emulator/portal/api/policy?scopeId="+url.QueryEscape(scope), strings.NewReader("{")),
@@ -265,6 +309,11 @@ func TestControlAndDispatchEndpoints(t *testing.T) {
 	srv.Handler().ServeHTTP(storeFailure, httptest.NewRequest(http.MethodGet, "/_emulator/portal/api/policy?scopeId="+url.QueryEscape(scope), nil))
 	if storeFailure.Code != http.StatusInternalServerError {
 		t.Fatalf("store failure = %d %s", storeFailure.Code, storeFailure.Body.String())
+	}
+	resourceFailure := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(resourceFailure, httptest.NewRequest(http.MethodGet, resourceURL, nil))
+	if resourceFailure.Code != http.StatusInternalServerError {
+		t.Fatalf("resource store failure = %d %s", resourceFailure.Code, resourceFailure.Body.String())
 	}
 	diagnosticFailure := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(diagnosticFailure, httptest.NewRequest(http.MethodGet, "/_emulator/portal/api/diagnostics", nil))
