@@ -32,6 +32,7 @@ const (
 	ActionRateLimit
 	ActionCacheLookup
 	ActionCacheStore
+	ActionValidateStatus
 	ActionSetBackend
 	ActionRewriteURI
 	ActionForward
@@ -68,6 +69,8 @@ type Action struct {
 	LimitCalls    int
 	LimitPeriod   time.Duration
 	CacheDuration time.Duration
+	StatusMin     int
+	StatusMax     int
 	Children      []Action
 	RetryCount    int
 	RetryInterval time.Duration
@@ -417,6 +420,27 @@ func compileNode(item node, strict bool) (Action, bool, error) {
 			return unsupported(item.Name), true, nil
 		}
 		return Action{Kind: ActionCacheStore, CacheDuration: duration}, true, nil
+	case "validate-status-code":
+		min, max := 200, 299
+		for _, child := range item.Children {
+			if child.Name != "status-code-range" {
+				return unsupported(item.Name + "/" + child.Name), true, nil
+			}
+			if value := child.Attrs["min"]; value != "" {
+				if _, err := fmt.Sscanf(value, "%d", &min); err != nil {
+					return Action{}, false, fmt.Errorf("invalid validate-status-code minimum")
+				}
+			}
+			if value := child.Attrs["max"]; value != "" {
+				if _, err := fmt.Sscanf(value, "%d", &max); err != nil {
+					return Action{}, false, fmt.Errorf("invalid validate-status-code maximum")
+				}
+			}
+		}
+		if min < 100 || max > 599 || min > max {
+			return Action{}, false, fmt.Errorf("invalid validate-status-code range")
+		}
+		return Action{Kind: ActionValidateStatus, StatusMin: min, StatusMax: max, Action: strings.ToLower(item.Attrs["unspecified-code-action"]), FailedCode: http.StatusBadGateway, Value: item.Attrs["errors-variable-name"]}, true, nil
 	case "set-backend-service":
 		value, backendID := item.Attrs["base-url"], item.Attrs["backend-id"]
 		if (value == "") == (backendID == "") || expression(value) || expression(backendID) {
@@ -693,6 +717,21 @@ func Execute(actions []Action, state *State) error {
 				state.Response.Body = io.NopCloser(strings.NewReader(body))
 			}
 			state.CacheSet(state.CacheKey, state.Response.StatusCode, state.Response.Header.Clone(), body, action.CacheDuration)
+		case ActionValidateStatus:
+			if state.Response == nil {
+				return fmt.Errorf("validate-status-code requires a response")
+			}
+			valid := state.Response.StatusCode >= action.StatusMin && state.Response.StatusCode <= action.StatusMax
+			if !valid && action.Action != "ignore" {
+				state.Returned, state.StatusCode, state.Body = true, action.FailedCode, "response status code is outside the configured range"
+				if action.Value != "" {
+					if state.Variables == nil {
+						state.Variables = map[string]string{}
+					}
+					state.Variables[action.Value] = fmt.Sprintf("%d", state.Response.StatusCode)
+				}
+				return nil
+			}
 		case ActionSetBackend:
 			state.BackendURL = action.Value
 			state.BackendID = action.BackendID

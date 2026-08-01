@@ -421,6 +421,46 @@ func TestCachePolicies(t *testing.T) {
 	}
 }
 
+func TestValidateStatusCodePolicy(t *testing.T) {
+	plan, err := Compile(`<policies><outbound><validate-status-code unspecified-code-action="prevent" errors-variable-name="status"><status-code-range min="200" max="299"/></validate-status-code></outbound></policies>`, true)
+	if err != nil || len(plan.Outbound) != 1 || plan.Outbound[0].Kind != ActionValidateStatus {
+		t.Fatalf("validation plan = %+v, %v", plan, err)
+	}
+	state := &State{Response: &http.Response{StatusCode: http.StatusOK}, Variables: map[string]string{}}
+	if err := Execute(plan.Outbound, state); err != nil || state.Returned {
+		t.Fatalf("valid status = %+v, %v", state, err)
+	}
+	state = &State{Response: &http.Response{StatusCode: http.StatusInternalServerError}, Variables: map[string]string{}}
+	if err := Execute(plan.Outbound, state); err != nil || !state.Returned || state.StatusCode != http.StatusBadGateway || state.Variables["status"] != "500" {
+		t.Fatalf("invalid status = %+v, %v", state, err)
+	}
+	ignore, err := Compile(`<policies><outbound><validate-status-code unspecified-code-action="ignore"><status-code-range min="200" max="299"/></validate-status-code></outbound></policies>`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state = &State{Response: &http.Response{StatusCode: http.StatusInternalServerError}}
+	if err := Execute(ignore.Outbound, state); err != nil || state.Returned {
+		t.Fatalf("ignored status = %+v, %v", state, err)
+	}
+	for _, value := range []string{
+		`<policies><outbound><validate-status-code><status-code-range min="bad"/></validate-status-code></outbound></policies>`,
+		`<policies><outbound><validate-status-code><status-code-range max="bad"/></validate-status-code></outbound></policies>`,
+		`<policies><outbound><validate-status-code><status-code-range min="500" max="200"/></validate-status-code></outbound></policies>`,
+		`<policies><outbound><validate-status-code><unknown/></validate-status-code></outbound></policies>`,
+	} {
+		if _, err := Compile(value, true); err == nil {
+			t.Fatalf("invalid status validation accepted: %s", value)
+		}
+	}
+	if err := Execute(plan.Outbound, &State{}); err == nil {
+		t.Fatal("status validation without response accepted")
+	}
+	withoutVariables := &State{Response: &http.Response{StatusCode: http.StatusInternalServerError}}
+	if err := Execute(plan.Outbound, withoutVariables); err != nil || !withoutVariables.Returned || withoutVariables.Variables["status"] != "500" {
+		t.Fatalf("status variables = %+v, %v", withoutVariables, err)
+	}
+}
+
 type errorBody struct{}
 
 func (errorBody) Read([]byte) (int, error) { return 0, errors.New("body read failed") }
