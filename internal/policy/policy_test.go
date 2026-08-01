@@ -805,6 +805,40 @@ func TestAuthenticationManagedIdentityPolicy(t *testing.T) {
 	}
 }
 
+func TestAuthenticationOAuth2Policy(t *testing.T) {
+	plan, err := Compile(`<policies><backend><authentication-oauth2 client-id="client" client-secret="secret" token-endpoint="https://login.test/token" resource="api://resource"/></backend></policies>`, true)
+	if err != nil || len(plan.Backend) != 1 || plan.Backend[0].Kind != ActionAuthenticationOAuth2 {
+		t.Fatalf("oauth2 plan = %+v, %v", plan, err)
+	}
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	state := &State{Request: request, AcquireOAuth2Token: func(clientID, secret, endpoint, resource string) (string, error) {
+		if clientID != "client" || secret != "secret" || endpoint != "https://login.test/token" || resource != "api://resource" {
+			t.Fatalf("oauth2 inputs = %q %q %q %q", clientID, secret, endpoint, resource)
+		}
+		return "oauth-token", nil
+	}}
+	if err := Execute(plan.Backend, state); err != nil || request.Header.Get("Authorization") != "Bearer oauth-token" {
+		t.Fatalf("oauth2 header = %q, %v", request.Header.Get("Authorization"), err)
+	}
+	if err := Execute(plan.Backend, &State{Request: httptest.NewRequest(http.MethodGet, "/", nil)}); err == nil {
+		t.Fatal("oauth2 without provider accepted")
+	}
+	providerErr := errors.New("oauth2 unavailable")
+	state = &State{Request: httptest.NewRequest(http.MethodGet, "/", nil), AcquireOAuth2Token: func(string, string, string, string) (string, error) { return "", providerErr }}
+	if err := Execute(plan.Backend, state); !errors.Is(err, providerErr) {
+		t.Fatalf("oauth2 provider error = %v", err)
+	}
+	for _, value := range []string{
+		`<policies><backend><authentication-oauth2 client-id="" client-secret="secret" token-endpoint="https://login.test/token"/></backend></policies>`,
+		`<policies><backend><authentication-oauth2 client-id="client" client-secret="secret" token-endpoint="@(context.Url)"/></backend></policies>`,
+		`<policies><backend><authentication-oauth2 client-id="client" client-secret="secret" token-endpoint="https://login.test/token"><unknown/></authentication-oauth2></backend></policies>`,
+	} {
+		if _, err := Compile(value, true); err == nil {
+			t.Fatalf("invalid oauth2 policy accepted: %s", value)
+		}
+	}
+}
+
 type errorBody struct{}
 
 func (errorBody) Read([]byte) (int, error) { return 0, errors.New("body read failed") }

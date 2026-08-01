@@ -43,6 +43,7 @@ const (
 	ActionTrace
 	ActionAuthenticationBasic
 	ActionAuthenticationManagedIdentity
+	ActionAuthenticationOAuth2
 	ActionSetBackend
 	ActionRewriteURI
 	ActionForward
@@ -97,6 +98,9 @@ type Action struct {
 	AuthUsername            string
 	AuthPassword            string
 	AuthResource            string
+	AuthClientID            string
+	AuthClientSecret        string
+	AuthTokenEndpoint       string
 	Children                []Action
 	RetryCount              int
 	RetryInterval           time.Duration
@@ -141,26 +145,27 @@ type Plan struct {
 
 // State is mutable request state exposed to policy actions.
 type State struct {
-	Request       *http.Request
-	Response      *http.Response
-	BackendURL    string
-	BackendID     string
-	Path          string
-	Returned      bool
-	StatusCode    int
-	Reason        string
-	Body          string
-	BodySet       bool
-	Headers       http.Header
-	Variables     map[string]string
-	ValidateToken func(string) error
-	SendRequest   func(*http.Request) (*http.Response, error)
-	Trace         func(string, string)
-	AcquireToken  func(string) (string, error)
-	RateLimit     func(string, int, time.Duration) bool
-	CacheGet      func(string) (int, http.Header, string, bool)
-	CacheSet      func(string, int, http.Header, string, time.Duration)
-	CacheKey      string
+	Request            *http.Request
+	Response           *http.Response
+	BackendURL         string
+	BackendID          string
+	Path               string
+	Returned           bool
+	StatusCode         int
+	Reason             string
+	Body               string
+	BodySet            bool
+	Headers            http.Header
+	Variables          map[string]string
+	ValidateToken      func(string) error
+	SendRequest        func(*http.Request) (*http.Response, error)
+	Trace              func(string, string)
+	AcquireToken       func(string) (string, error)
+	AcquireOAuth2Token func(string, string, string, string) (string, error)
+	RateLimit          func(string, int, time.Duration) bool
+	CacheGet           func(string) (int, http.Header, string, bool)
+	CacheSet           func(string, int, http.Header, string, time.Duration)
+	CacheKey           string
 }
 
 type node struct {
@@ -657,6 +662,15 @@ func compileNode(item node, strict bool) (Action, bool, error) {
 			return unsupported(item.Name + "/" + item.Children[0].Name), true, nil
 		}
 		return Action{Kind: ActionAuthenticationManagedIdentity, AuthResource: resource}, true, nil
+	case "authentication-oauth2":
+		clientID, clientSecret, endpoint := item.Attrs["client-id"], item.Attrs["client-secret"], item.Attrs["token-endpoint"]
+		if clientID == "" || clientSecret == "" || endpoint == "" || expression(clientID) || expression(clientSecret) || expression(endpoint) {
+			return unsupported(item.Name), true, nil
+		}
+		if len(item.Children) > 0 {
+			return unsupported(item.Name + "/" + item.Children[0].Name), true, nil
+		}
+		return Action{Kind: ActionAuthenticationOAuth2, AuthClientID: clientID, AuthClientSecret: clientSecret, AuthTokenEndpoint: endpoint, AuthResource: item.Attrs["resource"]}, true, nil
 	case "set-backend-service":
 		value, backendID := item.Attrs["base-url"], item.Attrs["backend-id"]
 		if (value == "") == (backendID == "") || expression(value) || expression(backendID) {
@@ -1123,6 +1137,18 @@ func Execute(actions []Action, state *State) error {
 				return fmt.Errorf("authentication-managed-identity requires a token provider")
 			}
 			token, err := state.AcquireToken(action.AuthResource)
+			if err != nil {
+				return err
+			}
+			state.Request.Header.Set("Authorization", "Bearer "+token)
+		case ActionAuthenticationOAuth2:
+			if state.Request == nil {
+				return fmt.Errorf("authentication-oauth2 requires a request")
+			}
+			if state.AcquireOAuth2Token == nil {
+				return fmt.Errorf("authentication-oauth2 requires a token provider")
+			}
+			token, err := state.AcquireOAuth2Token(action.AuthClientID, action.AuthClientSecret, action.AuthTokenEndpoint, action.AuthResource)
 			if err != nil {
 				return err
 			}
