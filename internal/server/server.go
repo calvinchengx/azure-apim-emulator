@@ -32,6 +32,7 @@ type Server struct {
 	mux                 *http.ServeMux
 	portalUpsertAPI     func(model.API) (model.API, error)
 	portalUpsertProduct func(model.Product) (model.Product, error)
+	portalUpsertBackend func(model.Backend) (model.Backend, error)
 }
 
 // New wires a server. Overrides are intended for in-process tests.
@@ -52,7 +53,7 @@ func New(cfg *config.Config, validator auth.RequestValidator, backendClient, jwk
 	if tokenValidator, ok := validator.(*auth.Validator); ok {
 		runtime.SetPolicyTokenValidator(tokenValidator.ValidateToken)
 	}
-	s := &Server{Cfg: cfg, Clock: ck, Store: st, Gateway: runtime, mux: http.NewServeMux(), portalUpsertAPI: st.UpsertAPI, portalUpsertProduct: st.UpsertProduct}
+	s := &Server{Cfg: cfg, Clock: ck, Store: st, Gateway: runtime, mux: http.NewServeMux(), portalUpsertAPI: st.UpsertAPI, portalUpsertProduct: st.UpsertProduct, portalUpsertBackend: st.UpsertBackend}
 	s.ARM = &arm.Handler{
 		Store: st, Auth: validator,
 		Activate:       func() error { return runtime.Activate(st, cfg.StrictPolicies) },
@@ -116,6 +117,8 @@ func (s *Server) register() {
 	s.mux.HandleFunc("PUT /_emulator/portal/api/resource", s.portalResource)
 	s.mux.HandleFunc("GET /_emulator/portal/api/product", s.portalProduct)
 	s.mux.HandleFunc("PUT /_emulator/portal/api/product", s.portalProduct)
+	s.mux.HandleFunc("GET /_emulator/portal/api/backend", s.portalBackend)
+	s.mux.HandleFunc("PUT /_emulator/portal/api/backend", s.portalBackend)
 	s.mux.HandleFunc("POST /_emulator/portal/api/faults", s.updateFault)
 	s.mux.HandleFunc("GET /_emulator/portal/api/policy", s.portalPolicy)
 	s.mux.HandleFunc("PUT /_emulator/portal/api/policy", s.portalPolicy)
@@ -282,6 +285,68 @@ func (s *Server) portalProduct(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"id": product.ID(), "name": product.Name, "displayName": product.DisplayName,
 		"state": product.State, "approvalRequired": product.ApprovalRequired, "etag": product.ETag,
+	})
+}
+
+func (s *Server) portalBackend(w http.ResponseWriter, r *http.Request) {
+	resourceID := strings.TrimSpace(r.URL.Query().Get("resourceId"))
+	if resourceID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "resourceId is required"})
+		return
+	}
+	backend, err := s.Store.GetBackend(resourceID)
+	if errors.Is(err, store.ErrNotFound) {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": "backend not found"})
+		return
+	}
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	if r.Method == http.MethodPut {
+		var body struct {
+			Title       *string `json:"title"`
+			Description *string `json:"description"`
+			URL         *string `json:"url"`
+			Protocol    *string `json:"protocol"`
+			ResourceID  *string `json:"resourceId"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "malformed JSON"})
+			return
+		}
+		if body.Title != nil {
+			backend.Title = strings.TrimSpace(*body.Title)
+		}
+		if body.Description != nil {
+			backend.Description = *body.Description
+		}
+		if body.URL != nil {
+			backend.URL = strings.TrimSpace(*body.URL)
+		}
+		if body.Protocol != nil {
+			backend.Protocol = strings.TrimSpace(*body.Protocol)
+		}
+		if body.ResourceID != nil {
+			backend.ResourceID = strings.TrimSpace(*body.ResourceID)
+		}
+		if backend.Title == "" || backend.URL == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "title and url are required"})
+			return
+		}
+		backend, err = s.portalUpsertBackend(backend)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+			return
+		}
+		if err := s.Gateway.Activate(s.Store, s.Cfg.StrictPolicies); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"id": backend.ID(), "name": backend.Name, "title": backend.Title, "description": backend.Description,
+		"url": backend.URL, "protocol": backend.Protocol, "resourceId": backend.ResourceID, "etag": backend.ETag,
 	})
 }
 

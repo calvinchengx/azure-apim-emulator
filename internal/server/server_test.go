@@ -220,6 +220,42 @@ func TestControlAndDispatchEndpoints(t *testing.T) {
 	if productUpdate.Code != http.StatusOK || !strings.Contains(productUpdate.Body.String(), "published") {
 		t.Fatalf("portal product update = %d %s", productUpdate.Code, productUpdate.Body.String())
 	}
+	portalBackend := model.Backend{ServiceID: portalAPI.ServiceID, Name: "portal-backend", Title: "Portal Backend", URL: "https://backend.test", Protocol: "http"}
+	if _, err := srv.Store.UpsertBackend(portalBackend); err != nil {
+		t.Fatal(err)
+	}
+	backendURL := "/_emulator/portal/api/backend?resourceId=" + url.QueryEscape(portalBackend.ID())
+	backendRead := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(backendRead, httptest.NewRequest(http.MethodGet, backendURL, nil))
+	if backendRead.Code != http.StatusOK || !strings.Contains(backendRead.Body.String(), "Portal Backend") {
+		t.Fatalf("portal backend read = %d %s", backendRead.Code, backendRead.Body.String())
+	}
+	backendUpdate := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(backendUpdate, httptest.NewRequest(http.MethodPut, backendURL, strings.NewReader(`{"title":"Updated Backend","url":"https://new-backend.test","protocol":"https","description":"updated"}`)))
+	if backendUpdate.Code != http.StatusOK || !strings.Contains(backendUpdate.Body.String(), "new-backend.test") {
+		t.Fatalf("portal backend update = %d %s", backendUpdate.Code, backendUpdate.Body.String())
+	}
+	for _, request := range []*http.Request{
+		httptest.NewRequest(http.MethodGet, "/_emulator/portal/api/backend", nil),
+		httptest.NewRequest(http.MethodGet, "/_emulator/portal/api/backend?resourceId=/missing", nil),
+		httptest.NewRequest(http.MethodPut, backendURL, strings.NewReader("{")),
+		httptest.NewRequest(http.MethodPut, backendURL, strings.NewReader(`{"title":"","url":""}`)),
+	} {
+		recorder := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(recorder, request)
+		if recorder.Code != http.StatusBadRequest && recorder.Code != http.StatusNotFound {
+			t.Fatalf("portal backend invalid = %d %s", recorder.Code, recorder.Body.String())
+		}
+	}
+	srv.portalUpsertBackend = func(model.Backend) (model.Backend, error) {
+		return model.Backend{}, errors.New("injected backend persistence failure")
+	}
+	backendStoreFailure := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(backendStoreFailure, httptest.NewRequest(http.MethodPut, backendURL, strings.NewReader(`{"title":"Store Failure"}`)))
+	if backendStoreFailure.Code != http.StatusBadRequest {
+		t.Fatalf("portal backend persistence failure = %d %s", backendStoreFailure.Code, backendStoreFailure.Body.String())
+	}
+	srv.portalUpsertBackend = srv.Store.UpsertBackend
 	for _, request := range []*http.Request{
 		httptest.NewRequest(http.MethodGet, "/_emulator/portal/api/product", nil),
 		httptest.NewRequest(http.MethodGet, "/_emulator/portal/api/product?resourceId=/missing", nil),
@@ -249,6 +285,11 @@ func TestControlAndDispatchEndpoints(t *testing.T) {
 	srv.Handler().ServeHTTP(productActivationFailure, httptest.NewRequest(http.MethodPut, productURL, strings.NewReader(`{"state":"published"}`)))
 	if productActivationFailure.Code != http.StatusBadRequest {
 		t.Fatalf("portal product activation failure = %d %s", productActivationFailure.Code, productActivationFailure.Body.String())
+	}
+	backendActivationFailure := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(backendActivationFailure, httptest.NewRequest(http.MethodPut, backendURL, strings.NewReader(`{"title":"Activation Failure"}`)))
+	if backendActivationFailure.Code != http.StatusBadRequest {
+		t.Fatalf("portal backend activation failure = %d %s", backendActivationFailure.Code, backendActivationFailure.Body.String())
 	}
 	srv.portalUpsertProduct = func(model.Product) (model.Product, error) {
 		return model.Product{}, errors.New("injected product persistence failure")
@@ -368,6 +409,11 @@ func TestControlAndDispatchEndpoints(t *testing.T) {
 	srv.Handler().ServeHTTP(productFailure, httptest.NewRequest(http.MethodGet, productURL, nil))
 	if productFailure.Code != http.StatusInternalServerError {
 		t.Fatalf("product store failure = %d %s", productFailure.Code, productFailure.Body.String())
+	}
+	backendFailure := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(backendFailure, httptest.NewRequest(http.MethodGet, backendURL, nil))
+	if backendFailure.Code != http.StatusInternalServerError {
+		t.Fatalf("backend store failure = %d %s", backendFailure.Code, backendFailure.Body.String())
 	}
 	diagnosticFailure := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(diagnosticFailure, httptest.NewRequest(http.MethodGet, "/_emulator/portal/api/diagnostics", nil))
