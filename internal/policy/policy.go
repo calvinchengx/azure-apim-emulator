@@ -45,6 +45,7 @@ const (
 	ActionAuthenticationManagedIdentity
 	ActionAuthenticationOAuth2
 	ActionAuthenticationCertificate
+	ActionFindReplace
 	ActionSetBackend
 	ActionRewriteURI
 	ActionForward
@@ -103,6 +104,8 @@ type Action struct {
 	AuthClientSecret        string
 	AuthTokenEndpoint       string
 	AuthCertificateID       string
+	ReplaceFrom             string
+	ReplaceTo               string
 	Children                []Action
 	RetryCount              int
 	RetryInterval           time.Duration
@@ -683,6 +686,15 @@ func compileNode(item node, strict bool) (Action, bool, error) {
 			return unsupported(item.Name + "/" + item.Children[0].Name), true, nil
 		}
 		return Action{Kind: ActionAuthenticationCertificate, AuthCertificateID: certificateID}, true, nil
+	case "find-and-replace":
+		from, to := item.Attrs["from"], item.Attrs["to"]
+		if from == "" || expression(from) || expression(to) {
+			return unsupported(item.Name), true, nil
+		}
+		if len(item.Children) > 0 {
+			return unsupported(item.Name + "/" + item.Children[0].Name), true, nil
+		}
+		return Action{Kind: ActionFindReplace, ReplaceFrom: from, ReplaceTo: to}, true, nil
 	case "set-backend-service":
 		value, backendID := item.Attrs["base-url"], item.Attrs["backend-id"]
 		if (value == "") == (backendID == "") || expression(value) || expression(backendID) {
@@ -1174,6 +1186,27 @@ func Execute(actions []Action, state *State) error {
 			}
 			if err := state.AttachClientCertificate(state.Request, action.AuthCertificateID); err != nil {
 				return err
+			}
+		case ActionFindReplace:
+			var body io.ReadCloser
+			if state.Response != nil {
+				body = state.Response.Body
+			} else if state.Request != nil {
+				body = state.Request.Body
+			} else {
+				return fmt.Errorf("find-and-replace requires a request or response")
+			}
+			value, err := io.ReadAll(body)
+			if err != nil {
+				return err
+			}
+			replaced := strings.ReplaceAll(string(value), action.ReplaceFrom, action.ReplaceTo)
+			if state.Response != nil {
+				state.Response.Body = io.NopCloser(strings.NewReader(replaced))
+			} else {
+				state.Request.Body = io.NopCloser(strings.NewReader(replaced))
+				state.Request.ContentLength = int64(len(replaced))
+				state.Request.GetBody = func() (io.ReadCloser, error) { return io.NopCloser(strings.NewReader(replaced)), nil }
 			}
 		case ActionSetBackend:
 			state.BackendURL = action.Value

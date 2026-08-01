@@ -875,6 +875,56 @@ func TestAuthenticationCertificatePolicy(t *testing.T) {
 	}
 }
 
+func TestFindAndReplacePolicy(t *testing.T) {
+	plan, err := Compile(`<policies><inbound><find-and-replace from="old" to="new"/></inbound><outbound><find-and-replace from="backend" to="client"/></outbound></policies>`, true)
+	if err != nil || len(plan.Inbound) != 1 || len(plan.Outbound) != 1 || plan.Inbound[0].Kind != ActionFindReplace {
+		t.Fatalf("find-and-replace plan = %+v, %v", plan, err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("old value"))
+	state := &State{Request: request}
+	if err := Execute(plan.Inbound, state); err != nil {
+		t.Fatal(err)
+	}
+	body, err := io.ReadAll(request.Body)
+	if err != nil || string(body) != "new value" || request.ContentLength != int64(len("new value")) {
+		t.Fatalf("request replacement = %q, %v", body, err)
+	}
+	replay, err := request.GetBody()
+	if err != nil {
+		t.Fatal(err)
+	}
+	replayBody, _ := io.ReadAll(replay)
+	if string(replayBody) != "new value" {
+		t.Fatalf("request replay = %q", replayBody)
+	}
+	response := &http.Response{Body: io.NopCloser(strings.NewReader("backend value"))}
+	state = &State{Response: response}
+	if err := Execute(plan.Outbound, state); err != nil {
+		t.Fatal(err)
+	}
+	body, _ = io.ReadAll(response.Body)
+	if string(body) != "client value" {
+		t.Fatalf("response replacement = %q", body)
+	}
+	if err := Execute(plan.Inbound, &State{}); err == nil {
+		t.Fatal("find-and-replace without body accepted")
+	}
+	badBody := &State{Request: httptest.NewRequest(http.MethodPost, "/", nil)}
+	badBody.Request.Body = errorBody{}
+	if err := Execute(plan.Inbound, badBody); err == nil {
+		t.Fatal("find-and-replace body read error lost")
+	}
+	for _, value := range []string{
+		`<policies><inbound><find-and-replace from="" to="new"/></inbound></policies>`,
+		`<policies><inbound><find-and-replace from="old" to="@(context.Request.Body)"/></inbound></policies>`,
+		`<policies><inbound><find-and-replace from="old" to="new"><unknown/></find-and-replace></inbound></policies>`,
+	} {
+		if _, err := Compile(value, true); err == nil {
+			t.Fatalf("invalid find-and-replace accepted: %s", value)
+		}
+	}
+}
+
 type errorBody struct{}
 
 func (errorBody) Read([]byte) (int, error) { return 0, errors.New("body read failed") }
