@@ -265,6 +265,40 @@ func TestControlAndDispatchEndpoints(t *testing.T) {
 	if certificateUpdate.Code != http.StatusOK || !strings.Contains(certificateUpdate.Body.String(), "updated") {
 		t.Fatalf("portal certificate update = %d %s", certificateUpdate.Code, certificateUpdate.Body.String())
 	}
+	portalTag := model.Tag{ServiceID: portalAPI.ServiceID, Name: "portal-tag", DisplayName: "Portal Tag"}
+	if _, err := srv.Store.UpsertTag(portalTag); err != nil {
+		t.Fatal(err)
+	}
+	tagURL := "/_emulator/portal/api/tag?resourceId=" + url.QueryEscape(portalTag.ID())
+	tagRead := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(tagRead, httptest.NewRequest(http.MethodGet, tagURL, nil))
+	if tagRead.Code != http.StatusOK || !strings.Contains(tagRead.Body.String(), "Portal Tag") {
+		t.Fatalf("portal tag read = %d %s", tagRead.Code, tagRead.Body.String())
+	}
+	tagUpdate := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(tagUpdate, httptest.NewRequest(http.MethodPut, tagURL, strings.NewReader(`{"displayName":"Updated Tag"}`)))
+	if tagUpdate.Code != http.StatusOK || !strings.Contains(tagUpdate.Body.String(), "Updated Tag") {
+		t.Fatalf("portal tag update = %d %s", tagUpdate.Code, tagUpdate.Body.String())
+	}
+	for _, request := range []*http.Request{
+		httptest.NewRequest(http.MethodGet, "/_emulator/portal/api/tag", nil),
+		httptest.NewRequest(http.MethodGet, "/_emulator/portal/api/tag?resourceId=/missing", nil),
+		httptest.NewRequest(http.MethodPut, tagURL, strings.NewReader("{")),
+		httptest.NewRequest(http.MethodPut, tagURL, strings.NewReader(`{"displayName":" "}`)),
+	} {
+		recorder := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(recorder, request)
+		if recorder.Code != http.StatusBadRequest && recorder.Code != http.StatusNotFound {
+			t.Fatalf("portal tag invalid = %d %s", recorder.Code, recorder.Body.String())
+		}
+	}
+	srv.portalUpsertTag = func(model.Tag) (model.Tag, error) { return model.Tag{}, errors.New("injected tag persistence failure") }
+	tagStoreFailure := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(tagStoreFailure, httptest.NewRequest(http.MethodPut, tagURL, strings.NewReader(`{"displayName":"Store Failure"}`)))
+	if tagStoreFailure.Code != http.StatusBadRequest {
+		t.Fatalf("portal tag persistence failure = %d %s", tagStoreFailure.Code, tagStoreFailure.Body.String())
+	}
+	srv.portalUpsertTag = srv.Store.UpsertTag
 	for _, request := range []*http.Request{
 		httptest.NewRequest(http.MethodGet, "/_emulator/portal/api/certificate", nil),
 		httptest.NewRequest(http.MethodGet, "/_emulator/portal/api/certificate?resourceId=/missing", nil),
@@ -361,6 +395,11 @@ func TestControlAndDispatchEndpoints(t *testing.T) {
 	srv.Handler().ServeHTTP(productActivationFailure, httptest.NewRequest(http.MethodPut, productURL, strings.NewReader(`{"state":"published"}`)))
 	if productActivationFailure.Code != http.StatusBadRequest {
 		t.Fatalf("portal product activation failure = %d %s", productActivationFailure.Code, productActivationFailure.Body.String())
+	}
+	tagActivationFailure := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(tagActivationFailure, httptest.NewRequest(http.MethodPut, tagURL, strings.NewReader(`{"displayName":"Activation Failure"}`)))
+	if tagActivationFailure.Code != http.StatusBadRequest {
+		t.Fatalf("portal tag activation failure = %d %s", tagActivationFailure.Code, tagActivationFailure.Body.String())
 	}
 	certificateActivationFailure := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(certificateActivationFailure, httptest.NewRequest(http.MethodPut, certificateURL, strings.NewReader(`{"subject":"Activation Failure"}`)))
@@ -510,6 +549,11 @@ func TestControlAndDispatchEndpoints(t *testing.T) {
 	srv.Handler().ServeHTTP(certificateFailure, httptest.NewRequest(http.MethodGet, certificateURL, nil))
 	if certificateFailure.Code != http.StatusInternalServerError {
 		t.Fatalf("certificate store failure = %d %s", certificateFailure.Code, certificateFailure.Body.String())
+	}
+	tagFailure := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(tagFailure, httptest.NewRequest(http.MethodGet, tagURL, nil))
+	if tagFailure.Code != http.StatusInternalServerError {
+		t.Fatalf("tag store failure = %d %s", tagFailure.Code, tagFailure.Body.String())
 	}
 	diagnosticFailure := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(diagnosticFailure, httptest.NewRequest(http.MethodGet, "/_emulator/portal/api/diagnostics", nil))
