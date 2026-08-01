@@ -125,6 +125,9 @@ func Parse(source string) (Document, error) {
 	}
 	sort.Strings(pathNames)
 	for _, path := range pathNames {
+		if path == "" || path[0] != '/' {
+			return Document{}, fmt.Errorf("path %q must begin with '/'", path)
+		}
 		pathItem, ok := paths[path].(map[string]any)
 		if !ok {
 			return Document{}, fmt.Errorf("path %q must be an object", path)
@@ -141,6 +144,16 @@ func Parse(source string) (Document, error) {
 			operation, ok := pathItem[method].(map[string]any)
 			if !ok {
 				return Document{}, fmt.Errorf("operation %s %s must be an object", strings.ToUpper(method), path)
+			}
+			if value, exists := operation["operationId"]; exists {
+				if _, ok := value.(string); !ok {
+					return Document{}, fmt.Errorf("operationId for %s %s must be a string", strings.ToUpper(method), path)
+				}
+			}
+			if value, exists := operation["summary"]; exists {
+				if _, ok := value.(string); !ok {
+					return Document{}, fmt.Errorf("summary for %s %s must be a string", strings.ToUpper(method), path)
+				}
 			}
 			name := stringValue(operation, "operationId")
 			if name == "" {

@@ -108,6 +108,9 @@ func TestParseDefaultsAndValidation(t *testing.T) {
 		`{"openapi":"3.0.0","info":{"title":"API"},"paths":[]}`,
 		`{"openapi":"3.0.0","info":{"title":"API"},"paths":{"/x":[]}}`,
 		`{"openapi":"3.0.0","info":{"title":"API"},"paths":{"/x":{"get":[]}}}`,
+		`{"openapi":"3.0.0","info":{"title":"API"},"paths":{"x":{"get":{}}}}`,
+		`{"openapi":"3.0.0","info":{"title":"API"},"paths":{"/x":{"get":{"operationId":1}}}}`,
+		`{"openapi":"3.0.0","info":{"title":"API"},"paths":{"/x":{"get":{"summary":false}}}}`,
 	}
 	for _, source := range tests {
 		if _, err := Parse(source); err == nil {
