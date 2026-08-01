@@ -1104,6 +1104,30 @@ func TestValueCachePolicies(t *testing.T) {
 	}
 }
 
+func TestValueCacheRemovePolicy(t *testing.T) {
+	plan, err := Compile(`<policies><inbound><cache-remove-value key="user"/></inbound></policies>`, true)
+	if err != nil || len(plan.Inbound) != 1 || plan.Inbound[0].Kind != ActionCacheRemoveValue {
+		t.Fatalf("value cache remove plan = %+v, %v", plan, err)
+	}
+	removed := ""
+	state := &State{ValueCacheRemove: func(key string) { removed = key }}
+	if err := Execute(plan.Inbound, state); err != nil || removed != "user" {
+		t.Fatalf("value cache remove = %q, %v", removed, err)
+	}
+	if err := Execute(plan.Inbound, &State{}); err == nil {
+		t.Fatal("value cache remove without cache accepted")
+	}
+	for _, value := range []string{
+		`<policies><inbound><cache-remove-value key=""/></inbound></policies>`,
+		`<policies><inbound><cache-remove-value key="@(context.Url)"/></inbound></policies>`,
+		`<policies><inbound><cache-remove-value key="user"><unknown/></cache-remove-value></inbound></policies>`,
+	} {
+		if _, err := Compile(value, true); err == nil {
+			t.Fatalf("invalid value cache remove accepted: %s", value)
+		}
+	}
+}
+
 type errorBody struct{}
 
 func (errorBody) Read([]byte) (int, error) { return 0, errors.New("body read failed") }

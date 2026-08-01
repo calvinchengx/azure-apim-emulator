@@ -53,6 +53,7 @@ const (
 	ActionJSONP
 	ActionCacheLookupValue
 	ActionCacheStoreValue
+	ActionCacheRemoveValue
 	ActionSetBackend
 	ActionRewriteURI
 	ActionForward
@@ -182,6 +183,7 @@ type State struct {
 	AttachClientCertificate func(*http.Request, string) error
 	ValueCacheGet           func(string) (string, bool)
 	ValueCacheSet           func(string, string, time.Duration)
+	ValueCacheRemove        func(string)
 	RateLimit               func(string, int, time.Duration) bool
 	CacheGet                func(string) (int, http.Header, string, bool)
 	CacheSet                func(string, int, http.Header, string, time.Duration)
@@ -749,6 +751,12 @@ func compileNode(item node, strict bool) (Action, bool, error) {
 			duration = time.Duration(seconds) * time.Second
 		}
 		return Action{Kind: ActionCacheStoreValue, ValueCacheKey: key, ValueCacheValue: value, ValueCacheDuration: duration}, true, nil
+	case "cache-remove-value":
+		key := item.Attrs["key"]
+		if key == "" || expression(key) || len(item.Children) > 0 {
+			return unsupported(item.Name), true, nil
+		}
+		return Action{Kind: ActionCacheRemoveValue, ValueCacheKey: key}, true, nil
 	case "set-backend-service":
 		value, backendID := item.Attrs["base-url"], item.Attrs["backend-id"]
 		if (value == "") == (backendID == "") || expression(value) || expression(backendID) {
@@ -1325,6 +1333,11 @@ func Execute(actions []Action, state *State) error {
 				return fmt.Errorf("cache-store-value requires a cache")
 			}
 			state.ValueCacheSet(action.ValueCacheKey, action.ValueCacheValue, action.ValueCacheDuration)
+		case ActionCacheRemoveValue:
+			if state.ValueCacheRemove == nil {
+				return fmt.Errorf("cache-remove-value requires a cache")
+			}
+			state.ValueCacheRemove(action.ValueCacheKey)
 		case ActionSetBackend:
 			state.BackendURL = action.Value
 			state.BackendID = action.BackendID
