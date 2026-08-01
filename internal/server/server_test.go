@@ -250,6 +250,41 @@ func TestControlAndDispatchEndpoints(t *testing.T) {
 	if namedValueUpdate.Code != http.StatusOK || strings.Contains(namedValueUpdate.Body.String(), "rotated-secret") {
 		t.Fatalf("portal named value update = %d %s", namedValueUpdate.Code, namedValueUpdate.Body.String())
 	}
+	portalCertificate := model.Certificate{ServiceID: portalAPI.ServiceID, Name: "portal-cert", Subject: "CN=portal", Thumbprint: "ABC123", Data: []byte("private-material"), Password: "private-password"}
+	if _, err := srv.Store.UpsertCertificate(portalCertificate); err != nil {
+		t.Fatal(err)
+	}
+	certificateURL := "/_emulator/portal/api/certificate?resourceId=" + url.QueryEscape(portalCertificate.ID())
+	certificateRead := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(certificateRead, httptest.NewRequest(http.MethodGet, certificateURL, nil))
+	if certificateRead.Code != http.StatusOK || strings.Contains(certificateRead.Body.String(), "private-material") || strings.Contains(certificateRead.Body.String(), "private-password") || !strings.Contains(certificateRead.Body.String(), `"hasData":true`) {
+		t.Fatalf("portal certificate redaction = %d %s", certificateRead.Code, certificateRead.Body.String())
+	}
+	certificateUpdate := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(certificateUpdate, httptest.NewRequest(http.MethodPut, certificateURL, strings.NewReader(`{"subject":"CN=updated","keyVaultSecretId":"https://vault/secrets/cert"}`)))
+	if certificateUpdate.Code != http.StatusOK || !strings.Contains(certificateUpdate.Body.String(), "updated") {
+		t.Fatalf("portal certificate update = %d %s", certificateUpdate.Code, certificateUpdate.Body.String())
+	}
+	for _, request := range []*http.Request{
+		httptest.NewRequest(http.MethodGet, "/_emulator/portal/api/certificate", nil),
+		httptest.NewRequest(http.MethodGet, "/_emulator/portal/api/certificate?resourceId=/missing", nil),
+		httptest.NewRequest(http.MethodPut, certificateURL, strings.NewReader("{")),
+	} {
+		recorder := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(recorder, request)
+		if recorder.Code != http.StatusBadRequest && recorder.Code != http.StatusNotFound {
+			t.Fatalf("portal certificate invalid = %d %s", recorder.Code, recorder.Body.String())
+		}
+	}
+	srv.portalUpsertCertificate = func(model.Certificate) (model.Certificate, error) {
+		return model.Certificate{}, errors.New("injected certificate persistence failure")
+	}
+	certificateStoreFailure := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(certificateStoreFailure, httptest.NewRequest(http.MethodPut, certificateURL, strings.NewReader(`{"subject":"Store Failure"}`)))
+	if certificateStoreFailure.Code != http.StatusBadRequest {
+		t.Fatalf("portal certificate persistence failure = %d %s", certificateStoreFailure.Code, certificateStoreFailure.Body.String())
+	}
+	srv.portalUpsertCertificate = srv.Store.UpsertCertificate
 	namedValuePublic := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(namedValuePublic, httptest.NewRequest(http.MethodPut, namedValueURL, strings.NewReader(`{"displayName":"Public Value","secret":false}`)))
 	if namedValuePublic.Code != http.StatusOK || !strings.Contains(namedValuePublic.Body.String(), "rotated-secret") {
@@ -326,6 +361,11 @@ func TestControlAndDispatchEndpoints(t *testing.T) {
 	srv.Handler().ServeHTTP(productActivationFailure, httptest.NewRequest(http.MethodPut, productURL, strings.NewReader(`{"state":"published"}`)))
 	if productActivationFailure.Code != http.StatusBadRequest {
 		t.Fatalf("portal product activation failure = %d %s", productActivationFailure.Code, productActivationFailure.Body.String())
+	}
+	certificateActivationFailure := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(certificateActivationFailure, httptest.NewRequest(http.MethodPut, certificateURL, strings.NewReader(`{"subject":"Activation Failure"}`)))
+	if certificateActivationFailure.Code != http.StatusBadRequest {
+		t.Fatalf("portal certificate activation failure = %d %s", certificateActivationFailure.Code, certificateActivationFailure.Body.String())
 	}
 	namedValueActivationFailure := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(namedValueActivationFailure, httptest.NewRequest(http.MethodPut, namedValueURL, strings.NewReader(`{"value":"activation-failure"}`)))
@@ -465,6 +505,11 @@ func TestControlAndDispatchEndpoints(t *testing.T) {
 	srv.Handler().ServeHTTP(namedValueFailure, httptest.NewRequest(http.MethodGet, namedValueURL, nil))
 	if namedValueFailure.Code != http.StatusInternalServerError {
 		t.Fatalf("named value store failure = %d %s", namedValueFailure.Code, namedValueFailure.Body.String())
+	}
+	certificateFailure := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(certificateFailure, httptest.NewRequest(http.MethodGet, certificateURL, nil))
+	if certificateFailure.Code != http.StatusInternalServerError {
+		t.Fatalf("certificate store failure = %d %s", certificateFailure.Code, certificateFailure.Body.String())
 	}
 	diagnosticFailure := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(diagnosticFailure, httptest.NewRequest(http.MethodGet, "/_emulator/portal/api/diagnostics", nil))
