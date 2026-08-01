@@ -789,6 +789,9 @@ func TestAuthenticationManagedIdentityPolicy(t *testing.T) {
 	if err := Execute(plan.Backend, &State{Request: httptest.NewRequest(http.MethodGet, "/", nil)}); err == nil {
 		t.Fatal("managed identity without provider accepted")
 	}
+	if err := Execute(plan.Backend, &State{}); err == nil {
+		t.Fatal("managed identity without request accepted")
+	}
 	providerErr := errors.New("token unavailable")
 	state = &State{Request: httptest.NewRequest(http.MethodGet, "/", nil), AcquireToken: func(string) (string, error) { return "", providerErr }}
 	if err := Execute(plan.Backend, state); !errors.Is(err, providerErr) {
@@ -822,6 +825,9 @@ func TestAuthenticationOAuth2Policy(t *testing.T) {
 	}
 	if err := Execute(plan.Backend, &State{Request: httptest.NewRequest(http.MethodGet, "/", nil)}); err == nil {
 		t.Fatal("oauth2 without provider accepted")
+	}
+	if err := Execute(plan.Backend, &State{}); err == nil {
+		t.Fatal("oauth2 without request accepted")
 	}
 	providerErr := errors.New("oauth2 unavailable")
 	state = &State{Request: httptest.NewRequest(http.MethodGet, "/", nil), AcquireOAuth2Token: func(string, string, string, string) (string, error) { return "", providerErr }}
@@ -858,6 +864,9 @@ func TestAuthenticationCertificatePolicy(t *testing.T) {
 	}
 	if err := Execute(plan.Backend, &State{Request: httptest.NewRequest(http.MethodGet, "/", nil)}); err == nil {
 		t.Fatal("certificate auth without provider accepted")
+	}
+	if err := Execute(plan.Backend, &State{}); err == nil {
+		t.Fatal("certificate auth without request accepted")
 	}
 	providerErr := errors.New("certificate unavailable")
 	state = &State{Request: httptest.NewRequest(http.MethodGet, "/", nil), AttachClientCertificate: func(*http.Request, string) error { return providerErr }}
@@ -921,6 +930,53 @@ func TestFindAndReplacePolicy(t *testing.T) {
 	} {
 		if _, err := Compile(value, true); err == nil {
 			t.Fatalf("invalid find-and-replace accepted: %s", value)
+		}
+	}
+}
+
+func TestJSONToXMLPolicy(t *testing.T) {
+	plan, err := Compile(`<policies><outbound><json-to-xml root-element-name="document"/></outbound></policies>`, true)
+	if err != nil || len(plan.Outbound) != 1 || plan.Outbound[0].Kind != ActionJSONToXML {
+		t.Fatalf("json-to-xml plan = %+v, %v", plan, err)
+	}
+	response := &http.Response{Body: io.NopCloser(strings.NewReader(`{"name":"Ada","items":[1,"two"],"empty":null}`))}
+	state := &State{Response: response}
+	if err := Execute(plan.Outbound, state); err != nil {
+		t.Fatal(err)
+	}
+	body, err := io.ReadAll(response.Body)
+	if err != nil || !strings.HasPrefix(string(body), "<document>") || !strings.HasSuffix(string(body), "</document>") || !strings.Contains(string(body), "<name>Ada</name>") || !strings.Contains(string(body), "<items><item>1</item><item>two</item></items>") || !strings.Contains(string(body), "<empty></empty>") {
+		t.Fatalf("json-to-xml body = %q, %v", body, err)
+	}
+	if err := Execute(plan.Outbound, &State{Request: httptest.NewRequest(http.MethodGet, "/", nil)}); err == nil {
+		t.Fatal("json-to-xml without response accepted")
+	}
+	bad := &State{Response: &http.Response{Body: io.NopCloser(strings.NewReader("{"))}}
+	if err := Execute(plan.Outbound, bad); err == nil {
+		t.Fatal("invalid JSON accepted")
+	}
+	readError := &State{Response: &http.Response{Body: errorBody{}}}
+	if err := Execute(plan.Outbound, readError); err == nil {
+		t.Fatal("JSON body read error lost")
+	}
+	if _, err := jsonValueXML("", map[string]any{}); err == nil {
+		t.Fatal("empty XML root accepted")
+	}
+	if _, err := jsonValueXML("root", map[string]any{"": "bad"}); err == nil {
+		t.Fatal("empty nested XML element accepted")
+	}
+	if _, err := jsonValueXML("root", []any{map[string]any{"": "bad"}}); err == nil {
+		t.Fatal("empty array XML element accepted")
+	}
+	if err := Execute([]Action{{Kind: ActionJSONToXML}}, &State{Response: &http.Response{Body: io.NopCloser(strings.NewReader("{}"))}}); err == nil {
+		t.Fatal("empty JSON transform root accepted")
+	}
+	for _, value := range []string{
+		`<policies><outbound><json-to-xml root-element-name="@(context.Response.Body)"/></outbound></policies>`,
+		`<policies><outbound><json-to-xml><unknown/></json-to-xml></outbound></policies>`,
+	} {
+		if _, err := Compile(value, true); err == nil {
+			t.Fatalf("invalid json-to-xml accepted: %s", value)
 		}
 	}
 }

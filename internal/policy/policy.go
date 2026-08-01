@@ -4,6 +4,7 @@ package policy
 import (
 	"crypto/sha1"
 	"encoding/base64"
+	"encoding/json"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -46,6 +47,7 @@ const (
 	ActionAuthenticationOAuth2
 	ActionAuthenticationCertificate
 	ActionFindReplace
+	ActionJSONToXML
 	ActionSetBackend
 	ActionRewriteURI
 	ActionForward
@@ -106,6 +108,7 @@ type Action struct {
 	AuthCertificateID       string
 	ReplaceFrom             string
 	ReplaceTo               string
+	TransformRoot           string
 	Children                []Action
 	RetryCount              int
 	RetryInterval           time.Duration
@@ -695,6 +698,15 @@ func compileNode(item node, strict bool) (Action, bool, error) {
 			return unsupported(item.Name + "/" + item.Children[0].Name), true, nil
 		}
 		return Action{Kind: ActionFindReplace, ReplaceFrom: from, ReplaceTo: to}, true, nil
+	case "json-to-xml":
+		root := item.Attrs["root-element-name"]
+		if root == "" {
+			root = "root"
+		}
+		if expression(root) || len(item.Children) > 0 {
+			return unsupported(item.Name), true, nil
+		}
+		return Action{Kind: ActionJSONToXML, TransformRoot: root}, true, nil
 	case "set-backend-service":
 		value, backendID := item.Attrs["base-url"], item.Attrs["backend-id"]
 		if (value == "") == (backendID == "") || expression(value) || expression(backendID) {
@@ -1208,6 +1220,23 @@ func Execute(actions []Action, state *State) error {
 				state.Request.ContentLength = int64(len(replaced))
 				state.Request.GetBody = func() (io.ReadCloser, error) { return io.NopCloser(strings.NewReader(replaced)), nil }
 			}
+		case ActionJSONToXML:
+			if state.Response == nil {
+				return fmt.Errorf("json-to-xml requires a response")
+			}
+			value, err := io.ReadAll(state.Response.Body)
+			if err != nil {
+				return err
+			}
+			var document any
+			if err := json.Unmarshal(value, &document); err != nil {
+				return err
+			}
+			xmlValue, err := jsonValueXML(action.TransformRoot, document)
+			if err != nil {
+				return err
+			}
+			state.Response.Body = io.NopCloser(strings.NewReader(xmlValue))
 		case ActionSetBackend:
 			state.BackendURL = action.Value
 			state.BackendID = action.BackendID
@@ -1259,6 +1288,43 @@ func evaluateCondition(condition string, state *State) (bool, error) {
 	default:
 		return false, fmt.Errorf("unsupported choose condition %q", condition)
 	}
+}
+
+func jsonValueXML(name string, value any) (string, error) {
+	var builder strings.Builder
+	var write func(string, any) error
+	write = func(tag string, item any) error {
+		if tag == "" {
+			return fmt.Errorf("json-to-xml element name is empty")
+		}
+		builder.WriteString("<" + tag + ">")
+		switch typed := item.(type) {
+		case map[string]any:
+			for key, child := range typed {
+				if err := write(key, child); err != nil {
+					return err
+				}
+			}
+		case []any:
+			for _, child := range typed {
+				if err := write("item", child); err != nil {
+					return err
+				}
+			}
+		case nil:
+		default:
+			value := fmt.Sprint(typed)
+			if err := xml.EscapeText(&builder, []byte(value)); err != nil {
+				return err
+			}
+		}
+		builder.WriteString("</" + tag + ">")
+		return nil
+	}
+	if err := write(name, value); err != nil {
+		return "", err
+	}
+	return builder.String(), nil
 }
 
 func setHeader(headers http.Header, header Header) {
