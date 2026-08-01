@@ -186,6 +186,21 @@ func TestForwardWithRetryReplaysRequestBody(t *testing.T) {
 	noRetry.Body.Close()
 }
 
+func TestAcquireConcurrency(t *testing.T) {
+	runtime := New("emulator", nil)
+	release := runtime.acquireConcurrency("tenant", 1)
+	if release == nil || runtime.acquireConcurrency("tenant", 1) != nil {
+		t.Fatal("concurrency slot was not enforced")
+	}
+	release()
+	if runtime.acquireConcurrency("tenant", 1) == nil {
+		t.Fatal("released concurrency slot was not reusable")
+	}
+	if runtime.acquireConcurrency("other", 2) == nil || runtime.acquireConcurrency("other", 2) == nil || runtime.acquireConcurrency("other", 2) != nil {
+		t.Fatal("independent concurrency slots were not isolated")
+	}
+}
+
 func TestMergeProductActionsSupportsBaseAndAppend(t *testing.T) {
 	product := []policy.Action{{Kind: policy.ActionSetHeader, Name: "product"}}
 	child := []policy.Action{{Kind: policy.ActionSetHeader, Name: "child"}}

@@ -38,9 +38,22 @@ func TestCompileAndExecute(t *testing.T) {
 }
 
 func TestLimitConcurrency(t *testing.T) {
+	for _, source := range []string{
+		`<policies><inbound><limit-concurrency max-count="0"/></inbound></policies>`,
+		`<policies><inbound><limit-concurrency max-count="bad"/></inbound></policies>`,
+		`<policies><inbound><limit-concurrency max-count="1" key="@(context.Request.IpAddress)"/></inbound></policies>`,
+	} {
+		invalid, invalidErr := Compile(source, false)
+		if invalidErr != nil || len(invalid.Inbound) != 1 || invalid.Inbound[0].Kind != ActionUnsupported {
+			t.Fatalf("invalid limit-concurrency = %+v, %v", invalid, invalidErr)
+		}
+	}
 	plan, err := Compile(`<policies><inbound><limit-concurrency key="tenant" max-count="1"/></inbound></policies>`, true)
 	if err != nil || len(plan.Inbound) != 1 || plan.Inbound[0].Kind != ActionLimitConcurrency {
 		t.Fatalf("limit-concurrency plan = %+v, %v", plan, err)
+	}
+	if err := Execute(plan.Inbound, &State{}); err == nil {
+		t.Fatal("limit-concurrency without limiter succeeded")
 	}
 	held := true
 	first, second := &State{AcquireConcurrency: func(string, int) func() { return func() { held = false } }}, &State{AcquireConcurrency: func(string, int) func() {
