@@ -690,7 +690,14 @@ func TestScanFunctionsRejectMalformedRows(t *testing.T) {
 			"diagnostic events",
 			`CREATE TABLE diagnostic_events (id, service_id, api_id, diagnostic_id, correlation_id, method, path, status_code, timestamp, duration_nanos, client_ip)`,
 			`INSERT INTO diagnostic_events VALUES ('id', 'service', NULL, '', '', '', '', 0, 0, 0, '')`,
-			func(db *sql.DB) error { _, err := (&Store{db: db}).ListDiagnosticEvents("service"); return err },
+			func(db *sql.DB) error {
+				st := &Store{db: db}
+				if err := st.AddDiagnosticEvent(model.DiagnosticEvent{ID: "legacy", ServiceID: "service"}); err != nil {
+					return err
+				}
+				_, err := st.ListDiagnosticEvents("service")
+				return err
+			},
 		},
 		{
 			"products",
@@ -1967,7 +1974,10 @@ func TestLoggerDiagnosticAndEventLifecycle(t *testing.T) {
 	if err := st.AddDiagnosticEvent(event); err != nil {
 		t.Fatal(err)
 	}
-	if events, err := st.ListDiagnosticEvents(strings.ToUpper(service.ID())); err != nil || len(events) != 1 || events[0] != event {
+	if err := st.AddDiagnosticEvent(model.DiagnosticEvent{ID: "invalid", Metadata: map[string]any{"channel": make(chan int)}}); err == nil {
+		t.Fatal("unsupported diagnostic metadata was accepted")
+	}
+	if events, err := st.ListDiagnosticEvents(strings.ToUpper(service.ID())); err != nil || len(events) != 1 || events[0].ID != event.ID || events[0].ServiceID != event.ServiceID || events[0].APIID != event.APIID || events[0].DiagnosticID != event.DiagnosticID || events[0].CorrelationID != event.CorrelationID || events[0].Method != event.Method || events[0].Path != event.Path || events[0].StatusCode != event.StatusCode || events[0].Timestamp != event.Timestamp || events[0].DurationNanos != event.DurationNanos || events[0].ClientIP != event.ClientIP {
 		t.Fatalf("ListDiagnosticEvents = %+v, %v", events, err)
 	}
 

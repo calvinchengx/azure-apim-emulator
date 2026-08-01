@@ -84,13 +84,17 @@ portal. Optional adapters export to OTLP, an Application Insights-compatible
 collector, HTTP/Event Hub-style fixtures, and user-provided endpoints. Azure
 credentials or network calls are never required for the standard test suite.
 
-The current P1 slice implements lossless logger and service/API diagnostic ARM
+The current slice implements lossless logger and service/API diagnostic ARM
 documents, logger credential isolation and reference projection, logger resource
 reference protection, recursive diagnostic PATCH with indexed null/default
 synchronization, revision cloning, fixed sampling, `allErrors` override behavior,
 and local request events containing correlation, status, duration, method, path,
-and optional client IP. Header/body capture, exact Azure credential reference
-naming, external adapters, analytics, and metrics remain tracked parity work.
+and optional client IP. Opt-in diagnostic header capture is persisted with
+case-preserving multi-value headers and masks authorization, cookie, subscription
+key, and API-key headers. Body limits, external adapters, analytics, and metrics
+remain tracked parity work. Explicit `publicNetworkAccess=Disabled` now blocks
+local gateway ingress with an APIM-shaped 403; private endpoint reachability and
+custom-domain certificate lifecycle remain differential work.
 
 ## Security posture
 

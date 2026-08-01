@@ -1,0 +1,18 @@
+{
+  "schemaVersion": "1",
+  "normalizations": [
+    "request-id",
+    "correlation-id",
+    "timestamps",
+    "generated-secrets",
+    "regional-hostnames",
+    "unordered-collections"
+  ],
+  "scenarios": [
+    {"id": "service-lifecycle", "apiVersion": "2024-05-01", "azureRequired": false},
+    {"id": "api-openapi-roundtrip", "apiVersion": "2024-05-01", "azureRequired": true},
+    {"id": "policy-scope-inheritance", "apiVersion": "2024-05-01", "azureRequired": true},
+    {"id": "diagnostic-header-masking", "apiVersion": "2024-05-01", "azureRequired": true},
+    {"id": "custom-domain-network-access", "apiVersion": "2024-05-01", "azureRequired": true}
+  ]
+}

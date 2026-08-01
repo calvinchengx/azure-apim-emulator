@@ -221,7 +221,8 @@ CREATE TABLE IF NOT EXISTS diagnostic_events (
   id TEXT PRIMARY KEY, service_id TEXT NOT NULL REFERENCES services(id) ON DELETE CASCADE,
   api_id TEXT NOT NULL, diagnostic_id TEXT NOT NULL, correlation_id TEXT NOT NULL,
   method TEXT NOT NULL, path TEXT NOT NULL, status_code INTEGER NOT NULL,
-  timestamp INTEGER NOT NULL, duration_nanos INTEGER NOT NULL, client_ip TEXT NOT NULL
+  timestamp INTEGER NOT NULL, duration_nanos INTEGER NOT NULL, client_ip TEXT NOT NULL,
+  metadata_json TEXT NOT NULL DEFAULT '{}'
 );
 CREATE TABLE IF NOT EXISTS products (
   id TEXT PRIMARY KEY, service_id TEXT NOT NULL REFERENCES services(id) ON DELETE CASCADE,
@@ -259,6 +260,7 @@ CREATE TABLE IF NOT EXISTS policies (
 	if err != nil {
 		return fmt.Errorf("migrate: %w", err)
 	}
+	_, _ = s.db.Exec(`ALTER TABLE diagnostic_events ADD COLUMN metadata_json TEXT NOT NULL DEFAULT '{}'`)
 	return nil
 }
 
@@ -2129,19 +2131,37 @@ func (s *Store) DeleteDiagnostic(id string) error {
 
 // AddDiagnosticEvent persists one local gateway telemetry event.
 func (s *Store) AddDiagnosticEvent(v model.DiagnosticEvent) error {
-	_, err := s.db.Exec(`INSERT INTO diagnostic_events
+	metadata, err := json.Marshal(v.Metadata)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec(`INSERT INTO diagnostic_events
+      (id, service_id, api_id, diagnostic_id, correlation_id, method, path, status_code,
+       timestamp, duration_nanos, client_ip, metadata_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		v.ID, v.ServiceID, v.APIID, v.DiagnosticID, v.CorrelationID, v.Method, v.Path,
+		v.StatusCode, v.Timestamp, v.DurationNanos, v.ClientIP, string(metadata))
+	if err != nil && strings.Contains(strings.ToLower(err.Error()), "metadata_json") {
+		_, err = s.db.Exec(`INSERT INTO diagnostic_events
       (id, service_id, api_id, diagnostic_id, correlation_id, method, path, status_code,
        timestamp, duration_nanos, client_ip) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		v.ID, v.ServiceID, v.APIID, v.DiagnosticID, v.CorrelationID, v.Method, v.Path,
-		v.StatusCode, v.Timestamp, v.DurationNanos, v.ClientIP)
+			v.ID, v.ServiceID, v.APIID, v.DiagnosticID, v.CorrelationID, v.Method, v.Path,
+			v.StatusCode, v.Timestamp, v.DurationNanos, v.ClientIP)
+	}
 	return err
 }
 
 // ListDiagnosticEvents returns persisted events for a service in insertion-time order.
 func (s *Store) ListDiagnosticEvents(serviceID string) ([]model.DiagnosticEvent, error) {
 	rows, err := s.db.Query(`SELECT id, service_id, api_id, diagnostic_id, correlation_id, method,
+      path, status_code, timestamp, duration_nanos, client_ip, metadata_json FROM diagnostic_events
+      WHERE lower(service_id)=lower(?) ORDER BY timestamp, id`, serviceID)
+	legacy := false
+	if err != nil && strings.Contains(strings.ToLower(err.Error()), "metadata_json") {
+		legacy = true
+		rows, err = s.db.Query(`SELECT id, service_id, api_id, diagnostic_id, correlation_id, method,
       path, status_code, timestamp, duration_nanos, client_ip FROM diagnostic_events
       WHERE lower(service_id)=lower(?) ORDER BY timestamp, id`, serviceID)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -2149,9 +2169,17 @@ func (s *Store) ListDiagnosticEvents(serviceID string) ([]model.DiagnosticEvent,
 	values := make([]model.DiagnosticEvent, 0)
 	for rows.Next() {
 		var v model.DiagnosticEvent
-		if err := rows.Scan(&v.ID, &v.ServiceID, &v.APIID, &v.DiagnosticID, &v.CorrelationID,
-			&v.Method, &v.Path, &v.StatusCode, &v.Timestamp, &v.DurationNanos, &v.ClientIP); err != nil {
+		var metadata string
+		scanValues := []any{&v.ID, &v.ServiceID, &v.APIID, &v.DiagnosticID, &v.CorrelationID,
+			&v.Method, &v.Path, &v.StatusCode, &v.Timestamp, &v.DurationNanos, &v.ClientIP}
+		if !legacy {
+			scanValues = append(scanValues, &metadata)
+		}
+		if err := rows.Scan(scanValues...); err != nil {
 			return nil, err
+		}
+		if metadata != "" {
+			_ = json.Unmarshal([]byte(metadata), &v.Metadata)
 		}
 		values = append(values, v)
 	}

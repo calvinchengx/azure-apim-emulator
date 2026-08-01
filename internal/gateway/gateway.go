@@ -50,12 +50,13 @@ func (r *Runtime) SnapshotSummary() map[string]any {
 
 // Service is compiled runtime state for one APIM service.
 type Service struct {
-	Name         string
-	Hostnames    map[string]bool
-	Routes       []*Route
-	Backends     map[string]model.Backend
-	Certificates map[string]model.Certificate
-	Diagnostics  []model.Diagnostic
+	Name                  string
+	Hostnames             map[string]bool
+	PublicNetworkDisabled bool
+	Routes                []*Route
+	Backends              map[string]model.Backend
+	Certificates          map[string]model.Certificate
+	Diagnostics           []model.Diagnostic
 }
 
 // Route is a compiled API route.
@@ -404,7 +405,7 @@ func (r *Runtime) Activate(st *store.Store, strict bool) error {
 	}
 	snapshot := &Snapshot{Services: map[string]*Service{}}
 	for _, item := range services {
-		snapshot.Services[strings.ToLower(item.Name)] = &Service{Name: item.Name, Hostnames: customHostnames(item.Document), Backends: backends[strings.ToLower(item.ID())], Certificates: certificates[strings.ToLower(item.ID())], Diagnostics: diagnostics[strings.ToLower(item.ID())]}
+		snapshot.Services[strings.ToLower(item.Name)] = &Service{Name: item.Name, Hostnames: customHostnames(item.Document), PublicNetworkDisabled: !publicNetworkAccess(item.Document), Backends: backends[strings.ToLower(item.ID())], Certificates: certificates[strings.ToLower(item.ID())], Diagnostics: diagnostics[strings.ToLower(item.ID())]}
 	}
 	for _, api := range apis {
 		if !api.IsCurrent {
@@ -597,6 +598,10 @@ func (r *Runtime) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	service := snapshot.Services[strings.ToLower(serviceName)]
 	if service == nil {
 		gatewayError(w, http.StatusNotFound, "ServiceNotFound", "API Management service was not found.")
+		return
+	}
+	if service.PublicNetworkDisabled {
+		gatewayError(w, http.StatusForbidden, "PublicNetworkAccessDisabled", "Public network access is disabled for this service.")
 		return
 	}
 	route, relative := matchRoute(service.Routes, req)
@@ -1030,13 +1035,39 @@ func (r *Runtime) emitDiagnostics(req *http.Request, service *Service, route *Ro
 				clientIP = req.RemoteAddr
 			}
 		}
+		metadata := diagnosticMetadata(diagnostic, req, output)
 		_ = eventStore.AddDiagnosticEvent(model.DiagnosticEvent{
 			ID: store.NewOpaqueID(), ServiceID: route.API.ServiceID, APIID: route.API.ID(),
 			DiagnosticID: diagnostic.ID(), CorrelationID: correlationID, Method: req.Method,
 			Path: req.URL.Path, StatusCode: status, Timestamp: eventStore.Clock.Now(),
-			DurationNanos: time.Since(started).Nanoseconds(), ClientIP: clientIP,
+			DurationNanos: time.Since(started).Nanoseconds(), ClientIP: clientIP, Metadata: metadata,
 		})
 	}
+}
+
+func diagnosticMetadata(diagnostic model.Diagnostic, req *http.Request, output *diagnosticWriter) map[string]any {
+	properties, _ := diagnostic.Document["properties"].(map[string]any)
+	logHeaders, _ := properties["logHeaders"].(bool)
+	if !logHeaders {
+		return nil
+	}
+	return map[string]any{
+		"requestHeaders":  maskedHeaders(req.Header),
+		"responseHeaders": maskedHeaders(output.Header()),
+	}
+}
+
+func maskedHeaders(headers http.Header) map[string][]string {
+	result := make(map[string][]string, len(headers))
+	for name, values := range headers {
+		lower := strings.ToLower(name)
+		if lower == "authorization" || lower == "cookie" || lower == "set-cookie" || lower == "ocp-apim-subscription-key" || lower == "x-api-key" {
+			result[name] = []string{"[REDACTED]"}
+			continue
+		}
+		result[name] = append([]string(nil), values...)
+	}
+	return result
 }
 
 func diagnosticSampled(correlationID string, percentage float64) bool {
@@ -1348,6 +1379,12 @@ func customHostnames(document map[string]any) map[string]bool {
 		collect(properties["hostnameConfigurations"])
 	}
 	return result
+}
+
+func publicNetworkAccess(document map[string]any) bool {
+	properties, _ := document["properties"].(map[string]any)
+	value, _ := properties["publicNetworkAccess"].(string)
+	return !strings.EqualFold(strings.TrimSpace(value), "disabled")
 }
 
 func matchRoute(routes []*Route, request *http.Request) (*Route, string) {

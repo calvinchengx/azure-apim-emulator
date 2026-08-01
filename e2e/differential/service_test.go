@@ -22,6 +22,37 @@ type serviceInventory struct {
 	WritablePropertyFields []string `json:"writablePropertyFields"`
 }
 
+type fixtureManifest struct {
+	SchemaVersion  string   `json:"schemaVersion"`
+	Normalizations []string `json:"normalizations"`
+	Scenarios      []struct {
+		ID            string `json:"id"`
+		APIVersion    string `json:"apiVersion"`
+		AzureRequired bool   `json:"azureRequired"`
+	} `json:"scenarios"`
+}
+
+func TestDifferentialFixtureManifest(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("testdata", "fixture-manifest.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var manifest fixtureManifest
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	if manifest.SchemaVersion != "1" || len(manifest.Normalizations) == 0 || len(manifest.Scenarios) < 5 {
+		t.Fatalf("invalid differential fixture manifest: %+v", manifest)
+	}
+	seen := map[string]bool{}
+	for _, scenario := range manifest.Scenarios {
+		if scenario.ID == "" || scenario.APIVersion == "" || seen[scenario.ID] {
+			t.Fatalf("invalid or duplicate differential scenario: %+v", scenario)
+		}
+		seen[scenario.ID] = true
+	}
+}
+
 func TestServiceSchemaInventory(t *testing.T) {
 	inventory := loadInventory(t)
 	emu := emulator.StartT(t)

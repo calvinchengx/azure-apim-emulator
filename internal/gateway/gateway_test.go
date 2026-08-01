@@ -91,6 +91,9 @@ func TestRoutingHelpers(t *testing.T) {
 	if hosts := customHostnames(map[string]any{"hostnameConfigurations": []any{map[string]any{"hostName": "API.Example.Test"}}, "properties": map[string]any{"hostnameConfigurations": []any{map[string]any{"hostName": "portal.example.test"}}}}); !hosts["api.example.test"] || !hosts["portal.example.test"] {
 		t.Fatalf("custom hostnames = %#v", hosts)
 	}
+	if publicNetworkAccess(map[string]any{"properties": map[string]any{"publicNetworkAccess": "Disabled"}}) || !publicNetworkAccess(map[string]any{"properties": map[string]any{"publicNetworkAccess": "Enabled"}}) {
+		t.Fatal("public network access projection mismatch")
+	}
 	runtime := New("fallback", nil)
 	runtime.current.Store(&Snapshot{Services: map[string]*Service{
 		"custom": {Name: "custom", Hostnames: map[string]bool{"custom.example.test": true}, Routes: []*Route{{API: model.API{Path: "api"}, Operations: []model.Operation{{Method: "GET", URLTemplate: "/"}}, Plan: policy.Plan{Inbound: []policy.Action{{Kind: policy.ActionReturnResponse, StatusCode: http.StatusAccepted, Body: "custom"}}}}}},
@@ -100,6 +103,12 @@ func TestRoutingHelpers(t *testing.T) {
 	runtime.ServeHTTP(response, request)
 	if response.Code != http.StatusAccepted || response.Body.String() != "custom" {
 		t.Fatalf("custom-domain gateway response = %d %q", response.Code, response.Body.String())
+	}
+	runtime.current.Store(&Snapshot{Services: map[string]*Service{"custom": {Name: "custom", Hostnames: map[string]bool{"custom.example.test": true}, PublicNetworkDisabled: true}}})
+	response = httptest.NewRecorder()
+	runtime.ServeHTTP(response, request)
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("disabled public network response = %d", response.Code)
 	}
 	if !templateMatches("/{id}", "/42") || !templateMatches("/fixed", "/fixed") ||
 		templateMatches("/a/b", "/a") || templateMatches("/fixed", "/other") {
@@ -951,18 +960,26 @@ func TestDiagnosticEmissionAndSampling(t *testing.T) {
 	apiModel, _ := st.UpsertAPI(model.API{ServiceID: serviceModel.ID(), Name: "api", Path: "api", ServiceURL: "https://backend"})
 	runtime := New("emulator", nil)
 	runtime.eventStore.Store(st)
-	d100 := model.Diagnostic{ServiceID: serviceModel.ID(), ScopeID: serviceModel.ID(), Name: "all", SamplingPercentage: 100, LogClientIP: true}
+	d100 := model.Diagnostic{ServiceID: serviceModel.ID(), ScopeID: serviceModel.ID(), Name: "all", SamplingPercentage: 100, LogClientIP: true, Document: map[string]any{"properties": map[string]any{"logHeaders": true}}}
 	d0 := model.Diagnostic{ServiceID: serviceModel.ID(), ScopeID: apiModel.ID(), Name: "none", SamplingPercentage: 0}
 	route := &Route{API: apiModel, Diagnostics: []model.Diagnostic{d0}}
 	service := &Service{Diagnostics: []model.Diagnostic{d100, d100}}
 
 	request := httptest.NewRequest(http.MethodGet, "/api/items", nil)
 	request.Header.Set("traceparent", "trace-correlation")
+	request.Header.Set("Authorization", "Bearer secret")
+	request.Header.Set("X-Diagnostic", "visible")
 	request.RemoteAddr = "127.0.0.1:1234"
-	runtime.emitDiagnostics(request, service, route, &diagnosticWriter{ResponseWriter: httptest.NewRecorder()}, time.Now())
+	responseWriter := httptest.NewRecorder()
+	responseWriter.Header().Set("X-Response", "visible")
+	runtime.emitDiagnostics(request, service, route, &diagnosticWriter{ResponseWriter: responseWriter}, time.Now())
 	events, err := st.ListDiagnosticEvents(serviceModel.ID())
 	if err != nil || len(events) != 1 || events[0].CorrelationID != "trace-correlation" || events[0].ClientIP != "127.0.0.1" || events[0].StatusCode != http.StatusOK {
 		t.Fatalf("trace event = %+v, %v", events, err)
+	}
+	requestHeaders := events[0].Metadata["requestHeaders"].(map[string]any)
+	if requestHeaders["Authorization"].([]any)[0] != "[REDACTED]" || requestHeaders["X-Diagnostic"].([]any)[0] != "visible" {
+		t.Fatalf("diagnostic header metadata = %#v", events[0].Metadata)
 	}
 
 	d0.AlwaysLog = "allErrors"

@@ -268,6 +268,7 @@ type DiagnosticEvent struct {
 	Timestamp     int64
 	DurationNanos int64
 	ClientIP      string
+	Metadata      map[string]any
 }
 
 // Operation is an HTTP operation belonging to an API.
