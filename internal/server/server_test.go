@@ -266,6 +266,11 @@ func TestControlAndDispatchEndpoints(t *testing.T) {
 	if storeFailure.Code != http.StatusInternalServerError {
 		t.Fatalf("store failure = %d %s", storeFailure.Code, storeFailure.Body.String())
 	}
+	diagnosticFailure := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(diagnosticFailure, httptest.NewRequest(http.MethodGet, "/_emulator/portal/api/diagnostics", nil))
+	if diagnosticFailure.Code != http.StatusInternalServerError {
+		t.Fatalf("diagnostic store failure = %d %s", diagnosticFailure.Code, diagnosticFailure.Body.String())
+	}
 }
 
 func TestNewRejectsInvalidDataDirectory(t *testing.T) {

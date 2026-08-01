@@ -186,6 +186,19 @@ func TestForwardWithRetryReplaysRequestBody(t *testing.T) {
 	noRetry.Body.Close()
 }
 
+func TestMergeProductActionsSupportsBaseAndAppend(t *testing.T) {
+	product := []policy.Action{{Kind: policy.ActionSetHeader, Name: "product"}}
+	child := []policy.Action{{Kind: policy.ActionSetHeader, Name: "child"}}
+	merged := mergeProductActions(product, child)
+	if len(merged) != 2 || merged[0].Name != "product" || merged[1].Name != "child" {
+		t.Fatalf("append merge = %+v", merged)
+	}
+	merged = mergeProductActions([]policy.Action{{Kind: policy.ActionBase}}, child)
+	if len(merged) != 1 || merged[0].Name != "child" {
+		t.Fatalf("base merge = %+v", merged)
+	}
+}
+
 func TestForwardWithRetryHandlesErrorsAndCancellation(t *testing.T) {
 	attempts := 0
 	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
