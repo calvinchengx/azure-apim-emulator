@@ -132,7 +132,17 @@ func (s *Server) portalStatus(w http.ResponseWriter, _ *http.Request) {
 	resources := make([]map[string]any, 0, len(services))
 	for _, service := range services {
 		apis, _ := s.Store.ListAPIs(service.ID())
-		resources = append(resources, map[string]any{"id": service.ID(), "name": service.Name, "apis": len(apis)})
+		resources = append(resources, map[string]any{
+			"id": service.ID(), "name": service.Name,
+			"counts": map[string]int{
+				"apis": len(apis), "apiVersionSets": countAPIVersionSets(s.Store, service.ID()),
+				"namedValues": countNamedValues(s.Store, service.ID()), "backends": countBackends(s.Store, service.ID()),
+				"certificates": countCertificates(s.Store, service.ID()), "tags": countTags(s.Store, service.ID()),
+				"groups": countGroups(s.Store, service.ID()), "users": countUsers(s.Store, service.ID()),
+				"policyFragments": countPolicyFragments(s.Store, service.ID()), "products": countProducts(s.Store, service.ID()),
+				"subscriptions": countSubscriptions(s.Store, service.ID()), "loggers": countLoggers(s.Store, service.ID()),
+			},
+		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"service":   s.Cfg.DefaultService,
@@ -142,6 +152,30 @@ func (s *Server) portalStatus(w http.ResponseWriter, _ *http.Request) {
 		"faults":    s.Gateway.FaultsSnapshot(),
 	})
 }
+
+func countAPIVersionSets(st *store.Store, id string) int {
+	v, _ := st.ListAPIVersionSets(id)
+	return len(v)
+}
+func countNamedValues(st *store.Store, id string) int { v, _ := st.ListNamedValues(id); return len(v) }
+func countBackends(st *store.Store, id string) int    { v, _ := st.ListBackends(id); return len(v) }
+func countCertificates(st *store.Store, id string) int {
+	v, _ := st.ListCertificates(id)
+	return len(v)
+}
+func countTags(st *store.Store, id string) int   { v, _ := st.ListTags(id); return len(v) }
+func countGroups(st *store.Store, id string) int { v, _ := st.ListGroups(id); return len(v) }
+func countUsers(st *store.Store, id string) int  { v, _ := st.ListUsers(id); return len(v) }
+func countPolicyFragments(st *store.Store, id string) int {
+	v, _ := st.ListPolicyFragments(id)
+	return len(v)
+}
+func countProducts(st *store.Store, id string) int { v, _ := st.ListProducts(id); return len(v) }
+func countSubscriptions(st *store.Store, id string) int {
+	v, _ := st.ListSubscriptions(id)
+	return len(v)
+}
+func countLoggers(st *store.Store, id string) int { v, _ := st.ListLoggers(id); return len(v) }
 
 func (s *Server) updateFault(w http.ResponseWriter, r *http.Request) {
 	var body struct {

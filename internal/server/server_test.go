@@ -150,6 +150,9 @@ func TestControlAndDispatchEndpoints(t *testing.T) {
 	if !strings.Contains(status.Body.String(), `"name":"emulator"`) {
 		t.Fatalf("portal resource summary = %s", status.Body.String())
 	}
+	if !strings.Contains(status.Body.String(), `"counts"`) || !strings.Contains(status.Body.String(), `"products"`) {
+		t.Fatalf("portal core resource counts = %s", status.Body.String())
+	}
 	fault := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(fault, httptest.NewRequest(http.MethodPost, "/_emulator/portal/api/faults", strings.NewReader(`{"service":"emulator","backend":"default","status":503,"remaining":1}`)))
 	if fault.Code != http.StatusOK || !strings.Contains(fault.Body.String(), "emulator/default") {
