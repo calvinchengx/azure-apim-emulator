@@ -34,6 +34,7 @@ const (
 	ActionCacheStore
 	ActionValidateStatus
 	ActionValidateContent
+	ActionValidateHeaders
 	ActionSetBackend
 	ActionRewriteURI
 	ActionForward
@@ -44,48 +45,58 @@ const (
 
 // Action is a compiled policy node.
 type Action struct {
-	Kind          ActionKind
-	Name          string
-	Value         string
-	BackendID     string
-	Action        string
-	StatusCode    int
-	Reason        string
-	Body          string
-	Headers       []Header
-	Variable      string
-	Values        []string
-	IgnoreCase    bool
-	FailedCode    int
-	FilterAction  string
-	Methods       string
-	AllowOrigin   string
-	AllowHeaders  string
-	ExposeHeaders string
-	MaxAge        string
-	AllowCreds    bool
-	SendURL       string
-	SendMethod    string
-	ResponseVar   string
-	LimitCalls    int
-	LimitPeriod   time.Duration
-	CacheDuration time.Duration
-	StatusMin     int
-	StatusMax     int
-	ContentMax    int64
-	ContentAction string
-	ContentTypes  []string
-	Children      []Action
-	RetryCount    int
-	RetryInterval time.Duration
-	Condition     string
-	Source        string
+	Kind                    ActionKind
+	Name                    string
+	Value                   string
+	BackendID               string
+	Action                  string
+	StatusCode              int
+	Reason                  string
+	Body                    string
+	Headers                 []Header
+	Variable                string
+	Values                  []string
+	IgnoreCase              bool
+	FailedCode              int
+	FilterAction            string
+	Methods                 string
+	AllowOrigin             string
+	AllowHeaders            string
+	ExposeHeaders           string
+	MaxAge                  string
+	AllowCreds              bool
+	SendURL                 string
+	SendMethod              string
+	ResponseVar             string
+	LimitCalls              int
+	LimitPeriod             time.Duration
+	CacheDuration           time.Duration
+	StatusMin               int
+	StatusMax               int
+	ContentMax              int64
+	ContentAction           string
+	ContentTypes            []string
+	HeaderRules             []HeaderRule
+	SpecifiedHeaderAction   string
+	UnspecifiedHeaderAction string
+	Children                []Action
+	RetryCount              int
+	RetryInterval           time.Duration
+	Condition               string
+	Source                  string
 }
 
 // Header is a set-header result.
 type Header struct {
 	Name   string
 	Value  string
+	Action string
+}
+
+// HeaderRule describes an allowed value for a validated header.
+type HeaderRule struct {
+	Name   string
+	Values []string
 	Action string
 }
 
@@ -471,6 +482,40 @@ func compileNode(item node, strict bool) (Action, bool, error) {
 			contentTypes = append(contentTypes, strings.ToLower(strings.TrimSpace(child.Attrs["type"])))
 		}
 		return Action{Kind: ActionValidateContent, ContentMax: maxSize, ContentAction: sizeAction, ContentTypes: contentTypes, FailedCode: http.StatusBadRequest}, true, nil
+	case "validate-headers":
+		specified := strings.ToLower(item.Attrs["specified-header-action"])
+		if specified == "" {
+			specified = "prevent"
+		}
+		unspecified := strings.ToLower(item.Attrs["unspecified-header-action"])
+		if unspecified == "" {
+			unspecified = "ignore"
+		}
+		if (specified != "prevent" && specified != "ignore") || (unspecified != "prevent" && unspecified != "ignore") {
+			return Action{}, false, fmt.Errorf("invalid validate-headers action")
+		}
+		rules := []HeaderRule{}
+		for _, child := range item.Children {
+			if child.Name != "header" || strings.TrimSpace(child.Attrs["name"]) == "" {
+				return unsupported(item.Name + "/" + child.Name), true, nil
+			}
+			action := strings.ToLower(child.Attrs["action"])
+			if action == "" {
+				action = specified
+			}
+			if action != "prevent" && action != "ignore" {
+				return Action{}, false, fmt.Errorf("invalid validate-headers header action")
+			}
+			values := []string{}
+			for _, value := range child.Children {
+				if value.Name != "value" {
+					return unsupported(item.Name + "/header/" + value.Name), true, nil
+				}
+				values = append(values, strings.TrimSpace(value.Text))
+			}
+			rules = append(rules, HeaderRule{Name: strings.ToLower(strings.TrimSpace(child.Attrs["name"])), Values: values, Action: action})
+		}
+		return Action{Kind: ActionValidateHeaders, HeaderRules: rules, SpecifiedHeaderAction: specified, UnspecifiedHeaderAction: unspecified, FailedCode: http.StatusBadRequest}, true, nil
 	case "set-backend-service":
 		value, backendID := item.Attrs["base-url"], item.Attrs["backend-id"]
 		if (value == "") == (backendID == "") || expression(value) || expression(backendID) {
@@ -797,6 +842,50 @@ func Execute(actions []Action, state *State) error {
 			if failed && action.ContentAction != "ignore" {
 				state.Returned, state.StatusCode, state.Body = true, action.FailedCode, "content validation failed"
 				return nil
+			}
+		case ActionValidateHeaders:
+			var headers http.Header
+			if state.Response != nil {
+				headers = state.Response.Header
+			} else if state.Request != nil {
+				headers = state.Request.Header
+			} else {
+				return fmt.Errorf("validate-headers requires a request or response")
+			}
+			rules := make(map[string]HeaderRule, len(action.HeaderRules))
+			for _, rule := range action.HeaderRules {
+				rules[strings.ToLower(rule.Name)] = rule
+			}
+			for name, values := range headers {
+				rule, specified := rules[strings.ToLower(name)]
+				if !specified {
+					if action.UnspecifiedHeaderAction == "prevent" {
+						state.Returned, state.StatusCode, state.Body = true, action.FailedCode, "header validation failed"
+						return nil
+					}
+					continue
+				}
+				if rule.Action == "ignore" || len(rule.Values) == 0 {
+					continue
+				}
+				matched := false
+				for _, actual := range values {
+					for _, expected := range rule.Values {
+						if actual == expected {
+							matched = true
+						}
+					}
+				}
+				if !matched {
+					state.Returned, state.StatusCode, state.Body = true, action.FailedCode, "header validation failed"
+					return nil
+				}
+			}
+			for _, rule := range rules {
+				if len(headers.Values(rule.Name)) == 0 && rule.Action == "prevent" {
+					state.Returned, state.StatusCode, state.Body = true, action.FailedCode, "header validation failed"
+					return nil
+				}
 			}
 		case ActionSetBackend:
 			state.BackendURL = action.Value

@@ -508,6 +508,59 @@ func TestValidateContentPolicy(t *testing.T) {
 	}
 }
 
+func TestValidateHeadersPolicy(t *testing.T) {
+	plan, err := Compile(`<policies><inbound><validate-headers specified-header-action="prevent" unspecified-header-action="ignore"><header name="X-Mode"><value>strict</value></header></validate-headers></inbound></policies>`, true)
+	if err != nil || len(plan.Inbound) != 1 || plan.Inbound[0].Kind != ActionValidateHeaders {
+		t.Fatalf("header validation plan = %+v, %v", plan, err)
+	}
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	request.Header.Set("X-Mode", "strict")
+	state := &State{Request: request}
+	if err := Execute(plan.Inbound, state); err != nil || state.Returned {
+		t.Fatalf("valid header = %+v, %v", state, err)
+	}
+	request.Header.Set("X-Mode", "loose")
+	state = &State{Request: request}
+	if err := Execute(plan.Inbound, state); err != nil || !state.Returned || state.StatusCode != http.StatusBadRequest {
+		t.Fatalf("invalid header = %+v, %v", state, err)
+	}
+	ignoreRule, err := Compile(`<policies><inbound><validate-headers><header name="X-Mode" action="ignore"/></validate-headers></inbound></policies>`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state = &State{Request: request}
+	if err := Execute(ignoreRule.Inbound, state); err != nil || state.Returned {
+		t.Fatalf("ignored header = %+v, %v", state, err)
+	}
+	request = httptest.NewRequest(http.MethodGet, "/", nil)
+	state = &State{Request: request}
+	if err := Execute(plan.Inbound, state); err != nil || !state.Returned {
+		t.Fatalf("missing header = %+v, %v", state, err)
+	}
+	ignore, err := Compile(`<policies><outbound><validate-headers specified-header-action="ignore" unspecified-header-action="prevent"><header name="X-Mode"><value>strict</value></header></validate-headers></outbound></policies>`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := &http.Response{Header: http.Header{"X-Other": []string{"value"}}}
+	state = &State{Response: response}
+	if err := Execute(ignore.Outbound, state); err != nil || !state.Returned {
+		t.Fatalf("unspecified header = %+v, %v", state, err)
+	}
+	for _, value := range []string{
+		`<policies><inbound><validate-headers specified-header-action="bad"/></inbound></policies>`,
+		`<policies><inbound><validate-headers><header name="X" action="bad"/></validate-headers></inbound></policies>`,
+		`<policies><inbound><validate-headers><unknown/></validate-headers></inbound></policies>`,
+		`<policies><inbound><validate-headers><header name="X"><unknown/></header></validate-headers></inbound></policies>`,
+	} {
+		if _, err := Compile(value, true); err == nil {
+			t.Fatalf("invalid header validation accepted: %s", value)
+		}
+	}
+	if err := Execute(plan.Inbound, &State{}); err == nil {
+		t.Fatal("header validation without request accepted")
+	}
+}
+
 type errorBody struct{}
 
 func (errorBody) Read([]byte) (int, error) { return 0, errors.New("body read failed") }
