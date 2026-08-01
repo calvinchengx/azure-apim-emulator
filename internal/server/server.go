@@ -24,15 +24,16 @@ const (
 
 // Server owns all emulator components.
 type Server struct {
-	Cfg                 *config.Config
-	Clock               *clock.Clock
-	Store               *store.Store
-	Gateway             *gateway.Runtime
-	ARM                 *arm.Handler
-	mux                 *http.ServeMux
-	portalUpsertAPI     func(model.API) (model.API, error)
-	portalUpsertProduct func(model.Product) (model.Product, error)
-	portalUpsertBackend func(model.Backend) (model.Backend, error)
+	Cfg                    *config.Config
+	Clock                  *clock.Clock
+	Store                  *store.Store
+	Gateway                *gateway.Runtime
+	ARM                    *arm.Handler
+	mux                    *http.ServeMux
+	portalUpsertAPI        func(model.API) (model.API, error)
+	portalUpsertProduct    func(model.Product) (model.Product, error)
+	portalUpsertBackend    func(model.Backend) (model.Backend, error)
+	portalUpsertNamedValue func(model.NamedValue) (model.NamedValue, error)
 }
 
 // New wires a server. Overrides are intended for in-process tests.
@@ -53,7 +54,7 @@ func New(cfg *config.Config, validator auth.RequestValidator, backendClient, jwk
 	if tokenValidator, ok := validator.(*auth.Validator); ok {
 		runtime.SetPolicyTokenValidator(tokenValidator.ValidateToken)
 	}
-	s := &Server{Cfg: cfg, Clock: ck, Store: st, Gateway: runtime, mux: http.NewServeMux(), portalUpsertAPI: st.UpsertAPI, portalUpsertProduct: st.UpsertProduct, portalUpsertBackend: st.UpsertBackend}
+	s := &Server{Cfg: cfg, Clock: ck, Store: st, Gateway: runtime, mux: http.NewServeMux(), portalUpsertAPI: st.UpsertAPI, portalUpsertProduct: st.UpsertProduct, portalUpsertBackend: st.UpsertBackend, portalUpsertNamedValue: st.UpsertNamedValue}
 	s.ARM = &arm.Handler{
 		Store: st, Auth: validator,
 		Activate:       func() error { return runtime.Activate(st, cfg.StrictPolicies) },
@@ -119,6 +120,8 @@ func (s *Server) register() {
 	s.mux.HandleFunc("PUT /_emulator/portal/api/product", s.portalProduct)
 	s.mux.HandleFunc("GET /_emulator/portal/api/backend", s.portalBackend)
 	s.mux.HandleFunc("PUT /_emulator/portal/api/backend", s.portalBackend)
+	s.mux.HandleFunc("GET /_emulator/portal/api/named-value", s.portalNamedValue)
+	s.mux.HandleFunc("PUT /_emulator/portal/api/named-value", s.portalNamedValue)
 	s.mux.HandleFunc("POST /_emulator/portal/api/faults", s.updateFault)
 	s.mux.HandleFunc("GET /_emulator/portal/api/policy", s.portalPolicy)
 	s.mux.HandleFunc("PUT /_emulator/portal/api/policy", s.portalPolicy)
@@ -348,6 +351,65 @@ func (s *Server) portalBackend(w http.ResponseWriter, r *http.Request) {
 		"id": backend.ID(), "name": backend.Name, "title": backend.Title, "description": backend.Description,
 		"url": backend.URL, "protocol": backend.Protocol, "resourceId": backend.ResourceID, "etag": backend.ETag,
 	})
+}
+
+func (s *Server) portalNamedValue(w http.ResponseWriter, r *http.Request) {
+	resourceID := strings.TrimSpace(r.URL.Query().Get("resourceId"))
+	if resourceID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "resourceId is required"})
+		return
+	}
+	value, err := s.Store.GetNamedValue(resourceID)
+	if errors.Is(err, store.ErrNotFound) {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": "named value not found"})
+		return
+	}
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	if r.Method == http.MethodPut {
+		var body struct {
+			DisplayName *string  `json:"displayName"`
+			Value       *string  `json:"value"`
+			Tags        []string `json:"tags"`
+			Secret      *bool    `json:"secret"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "malformed JSON"})
+			return
+		}
+		if body.DisplayName != nil {
+			value.DisplayName = strings.TrimSpace(*body.DisplayName)
+		}
+		if body.Value != nil {
+			value.Value = *body.Value
+		}
+		if body.Tags != nil {
+			value.Tags = append([]string(nil), body.Tags...)
+		}
+		if body.Secret != nil {
+			value.Secret = *body.Secret
+		}
+		if value.DisplayName == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "displayName cannot be empty"})
+			return
+		}
+		value, err = s.portalUpsertNamedValue(value)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+			return
+		}
+		if err := s.Gateway.Activate(s.Store, s.Cfg.StrictPolicies); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+			return
+		}
+	}
+	result := map[string]any{"id": value.ID(), "name": value.Name, "displayName": value.DisplayName, "secret": value.Secret, "tags": value.Tags, "etag": value.ETag}
+	if !value.Secret {
+		result["value"] = value.Value
+	}
+	writeJSON(w, http.StatusOK, result)
 }
 
 func countAPIVersionSets(st *store.Store, id string) int {

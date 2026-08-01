@@ -235,6 +235,47 @@ func TestControlAndDispatchEndpoints(t *testing.T) {
 	if backendUpdate.Code != http.StatusOK || !strings.Contains(backendUpdate.Body.String(), "new-backend.test") {
 		t.Fatalf("portal backend update = %d %s", backendUpdate.Code, backendUpdate.Body.String())
 	}
+	portalNamedValue := model.NamedValue{ServiceID: portalAPI.ServiceID, Name: "portal-secret", DisplayName: "Portal Secret", Value: "initial-secret", Secret: true, Tags: []string{"ops"}}
+	if _, err := srv.Store.UpsertNamedValue(portalNamedValue); err != nil {
+		t.Fatal(err)
+	}
+	namedValueURL := "/_emulator/portal/api/named-value?resourceId=" + url.QueryEscape(portalNamedValue.ID())
+	namedValueRead := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(namedValueRead, httptest.NewRequest(http.MethodGet, namedValueURL, nil))
+	if namedValueRead.Code != http.StatusOK || strings.Contains(namedValueRead.Body.String(), "initial-secret") || !strings.Contains(namedValueRead.Body.String(), `"secret":true`) {
+		t.Fatalf("portal named value redaction = %d %s", namedValueRead.Code, namedValueRead.Body.String())
+	}
+	namedValueUpdate := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(namedValueUpdate, httptest.NewRequest(http.MethodPut, namedValueURL, strings.NewReader(`{"value":"rotated-secret","tags":["ops","rotation"]}`)))
+	if namedValueUpdate.Code != http.StatusOK || strings.Contains(namedValueUpdate.Body.String(), "rotated-secret") {
+		t.Fatalf("portal named value update = %d %s", namedValueUpdate.Code, namedValueUpdate.Body.String())
+	}
+	namedValuePublic := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(namedValuePublic, httptest.NewRequest(http.MethodPut, namedValueURL, strings.NewReader(`{"displayName":"Public Value","secret":false}`)))
+	if namedValuePublic.Code != http.StatusOK || !strings.Contains(namedValuePublic.Body.String(), "rotated-secret") {
+		t.Fatalf("portal named value public update = %d %s", namedValuePublic.Code, namedValuePublic.Body.String())
+	}
+	for _, request := range []*http.Request{
+		httptest.NewRequest(http.MethodGet, "/_emulator/portal/api/named-value", nil),
+		httptest.NewRequest(http.MethodGet, "/_emulator/portal/api/named-value?resourceId=/missing", nil),
+		httptest.NewRequest(http.MethodPut, namedValueURL, strings.NewReader("{")),
+		httptest.NewRequest(http.MethodPut, namedValueURL, strings.NewReader(`{"displayName":" "}`)),
+	} {
+		recorder := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(recorder, request)
+		if recorder.Code != http.StatusBadRequest && recorder.Code != http.StatusNotFound {
+			t.Fatalf("portal named value invalid = %d %s", recorder.Code, recorder.Body.String())
+		}
+	}
+	srv.portalUpsertNamedValue = func(model.NamedValue) (model.NamedValue, error) {
+		return model.NamedValue{}, errors.New("injected named value persistence failure")
+	}
+	namedValueStoreFailure := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(namedValueStoreFailure, httptest.NewRequest(http.MethodPut, namedValueURL, strings.NewReader(`{"value":"store-failure"}`)))
+	if namedValueStoreFailure.Code != http.StatusBadRequest {
+		t.Fatalf("portal named value persistence failure = %d %s", namedValueStoreFailure.Code, namedValueStoreFailure.Body.String())
+	}
+	srv.portalUpsertNamedValue = srv.Store.UpsertNamedValue
 	for _, request := range []*http.Request{
 		httptest.NewRequest(http.MethodGet, "/_emulator/portal/api/backend", nil),
 		httptest.NewRequest(http.MethodGet, "/_emulator/portal/api/backend?resourceId=/missing", nil),
@@ -285,6 +326,11 @@ func TestControlAndDispatchEndpoints(t *testing.T) {
 	srv.Handler().ServeHTTP(productActivationFailure, httptest.NewRequest(http.MethodPut, productURL, strings.NewReader(`{"state":"published"}`)))
 	if productActivationFailure.Code != http.StatusBadRequest {
 		t.Fatalf("portal product activation failure = %d %s", productActivationFailure.Code, productActivationFailure.Body.String())
+	}
+	namedValueActivationFailure := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(namedValueActivationFailure, httptest.NewRequest(http.MethodPut, namedValueURL, strings.NewReader(`{"value":"activation-failure"}`)))
+	if namedValueActivationFailure.Code != http.StatusBadRequest {
+		t.Fatalf("portal named value activation failure = %d %s", namedValueActivationFailure.Code, namedValueActivationFailure.Body.String())
 	}
 	backendActivationFailure := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(backendActivationFailure, httptest.NewRequest(http.MethodPut, backendURL, strings.NewReader(`{"title":"Activation Failure"}`)))
@@ -414,6 +460,11 @@ func TestControlAndDispatchEndpoints(t *testing.T) {
 	srv.Handler().ServeHTTP(backendFailure, httptest.NewRequest(http.MethodGet, backendURL, nil))
 	if backendFailure.Code != http.StatusInternalServerError {
 		t.Fatalf("backend store failure = %d %s", backendFailure.Code, backendFailure.Body.String())
+	}
+	namedValueFailure := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(namedValueFailure, httptest.NewRequest(http.MethodGet, namedValueURL, nil))
+	if namedValueFailure.Code != http.StatusInternalServerError {
+		t.Fatalf("named value store failure = %d %s", namedValueFailure.Code, namedValueFailure.Body.String())
 	}
 	diagnosticFailure := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(diagnosticFailure, httptest.NewRequest(http.MethodGet, "/_emulator/portal/api/diagnostics", nil))
