@@ -839,6 +839,42 @@ func TestAuthenticationOAuth2Policy(t *testing.T) {
 	}
 }
 
+func TestAuthenticationCertificatePolicy(t *testing.T) {
+	plan, err := Compile(`<policies><backend><authentication-certificate certificate-id="client-cert"/></backend></policies>`, true)
+	if err != nil || len(plan.Backend) != 1 || plan.Backend[0].Kind != ActionAuthenticationCertificate {
+		t.Fatalf("certificate auth plan = %+v, %v", plan, err)
+	}
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	attached := ""
+	state := &State{Request: request, AttachClientCertificate: func(gotRequest *http.Request, id string) error {
+		if gotRequest != request {
+			t.Fatal("certificate request changed")
+		}
+		attached = id
+		return nil
+	}}
+	if err := Execute(plan.Backend, state); err != nil || attached != "client-cert" {
+		t.Fatalf("certificate attachment = %q, %v", attached, err)
+	}
+	if err := Execute(plan.Backend, &State{Request: httptest.NewRequest(http.MethodGet, "/", nil)}); err == nil {
+		t.Fatal("certificate auth without provider accepted")
+	}
+	providerErr := errors.New("certificate unavailable")
+	state = &State{Request: httptest.NewRequest(http.MethodGet, "/", nil), AttachClientCertificate: func(*http.Request, string) error { return providerErr }}
+	if err := Execute(plan.Backend, state); !errors.Is(err, providerErr) {
+		t.Fatalf("certificate provider error = %v", err)
+	}
+	for _, value := range []string{
+		`<policies><backend><authentication-certificate certificate-id=""/></backend></policies>`,
+		`<policies><backend><authentication-certificate certificate-id="@(context.Variables['certificate'])"/></backend></policies>`,
+		`<policies><backend><authentication-certificate certificate-id="client-cert"><unknown/></authentication-certificate></backend></policies>`,
+	} {
+		if _, err := Compile(value, true); err == nil {
+			t.Fatalf("invalid certificate auth accepted: %s", value)
+		}
+	}
+}
+
 type errorBody struct{}
 
 func (errorBody) Read([]byte) (int, error) { return 0, errors.New("body read failed") }

@@ -44,6 +44,7 @@ const (
 	ActionAuthenticationBasic
 	ActionAuthenticationManagedIdentity
 	ActionAuthenticationOAuth2
+	ActionAuthenticationCertificate
 	ActionSetBackend
 	ActionRewriteURI
 	ActionForward
@@ -101,6 +102,7 @@ type Action struct {
 	AuthClientID            string
 	AuthClientSecret        string
 	AuthTokenEndpoint       string
+	AuthCertificateID       string
 	Children                []Action
 	RetryCount              int
 	RetryInterval           time.Duration
@@ -145,27 +147,28 @@ type Plan struct {
 
 // State is mutable request state exposed to policy actions.
 type State struct {
-	Request            *http.Request
-	Response           *http.Response
-	BackendURL         string
-	BackendID          string
-	Path               string
-	Returned           bool
-	StatusCode         int
-	Reason             string
-	Body               string
-	BodySet            bool
-	Headers            http.Header
-	Variables          map[string]string
-	ValidateToken      func(string) error
-	SendRequest        func(*http.Request) (*http.Response, error)
-	Trace              func(string, string)
-	AcquireToken       func(string) (string, error)
-	AcquireOAuth2Token func(string, string, string, string) (string, error)
-	RateLimit          func(string, int, time.Duration) bool
-	CacheGet           func(string) (int, http.Header, string, bool)
-	CacheSet           func(string, int, http.Header, string, time.Duration)
-	CacheKey           string
+	Request                 *http.Request
+	Response                *http.Response
+	BackendURL              string
+	BackendID               string
+	Path                    string
+	Returned                bool
+	StatusCode              int
+	Reason                  string
+	Body                    string
+	BodySet                 bool
+	Headers                 http.Header
+	Variables               map[string]string
+	ValidateToken           func(string) error
+	SendRequest             func(*http.Request) (*http.Response, error)
+	Trace                   func(string, string)
+	AcquireToken            func(string) (string, error)
+	AcquireOAuth2Token      func(string, string, string, string) (string, error)
+	AttachClientCertificate func(*http.Request, string) error
+	RateLimit               func(string, int, time.Duration) bool
+	CacheGet                func(string) (int, http.Header, string, bool)
+	CacheSet                func(string, int, http.Header, string, time.Duration)
+	CacheKey                string
 }
 
 type node struct {
@@ -671,6 +674,15 @@ func compileNode(item node, strict bool) (Action, bool, error) {
 			return unsupported(item.Name + "/" + item.Children[0].Name), true, nil
 		}
 		return Action{Kind: ActionAuthenticationOAuth2, AuthClientID: clientID, AuthClientSecret: clientSecret, AuthTokenEndpoint: endpoint, AuthResource: item.Attrs["resource"]}, true, nil
+	case "authentication-certificate":
+		certificateID := item.Attrs["certificate-id"]
+		if certificateID == "" || expression(certificateID) {
+			return unsupported(item.Name), true, nil
+		}
+		if len(item.Children) > 0 {
+			return unsupported(item.Name + "/" + item.Children[0].Name), true, nil
+		}
+		return Action{Kind: ActionAuthenticationCertificate, AuthCertificateID: certificateID}, true, nil
 	case "set-backend-service":
 		value, backendID := item.Attrs["base-url"], item.Attrs["backend-id"]
 		if (value == "") == (backendID == "") || expression(value) || expression(backendID) {
@@ -1153,6 +1165,16 @@ func Execute(actions []Action, state *State) error {
 				return err
 			}
 			state.Request.Header.Set("Authorization", "Bearer "+token)
+		case ActionAuthenticationCertificate:
+			if state.Request == nil {
+				return fmt.Errorf("authentication-certificate requires a request")
+			}
+			if state.AttachClientCertificate == nil {
+				return fmt.Errorf("authentication-certificate requires a certificate provider")
+			}
+			if err := state.AttachClientCertificate(state.Request, action.AuthCertificateID); err != nil {
+				return err
+			}
 		case ActionSetBackend:
 			state.BackendURL = action.Value
 			state.BackendID = action.BackendID
