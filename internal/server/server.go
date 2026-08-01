@@ -108,6 +108,8 @@ func (s *Server) register() {
 	s.mux.HandleFunc("GET /_emulator/portal/api/parity", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"p1": map[string]any{"status": "in-progress", "verified": true}, "coverage": "100.0%"})
 	})
+	s.mux.HandleFunc("GET /_emulator/portal/api/policy", s.portalPolicy)
+	s.mux.HandleFunc("PUT /_emulator/portal/api/policy", s.portalPolicy)
 	s.mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(strings.ToLower(r.URL.Path), "/subscriptions/") {
 			s.ARM.ServeHTTP(w, r)
@@ -136,6 +138,49 @@ func (s *Server) portalStatus(w http.ResponseWriter, _ *http.Request) {
 		"snapshot":  s.Gateway.SnapshotSummary(),
 		"resources": resources,
 	})
+}
+
+func (s *Server) portalPolicy(w http.ResponseWriter, r *http.Request) {
+	scopeID := strings.TrimSpace(r.URL.Query().Get("scopeId"))
+	if scopeID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "scopeId is required"})
+		return
+	}
+	if r.Method == http.MethodGet {
+		value, err := s.Store.GetPolicy(scopeID)
+		if errors.Is(err, store.ErrNotFound) {
+			writeJSON(w, http.StatusNotFound, map[string]any{"error": "policy not found"})
+			return
+		}
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, value)
+		return
+	}
+	var body struct {
+		Format string `json:"format"`
+		Value  string `json:"value"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.Value) == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "format and value are required"})
+		return
+	}
+	if _, err := policy.Compile(body.Value, s.Cfg.StrictPolicies); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+	value, err := s.Store.UpsertPolicy(model.Policy{ScopeID: scopeID, Format: body.Format, Value: body.Value})
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	if err := s.Gateway.Activate(s.Store, s.Cfg.StrictPolicies); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, value)
 }
 
 const portalHTML = `<!doctype html>

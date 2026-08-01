@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -149,6 +150,41 @@ func TestControlAndDispatchEndpoints(t *testing.T) {
 	if !strings.Contains(status.Body.String(), `"name":"emulator"`) {
 		t.Fatalf("portal resource summary = %s", status.Body.String())
 	}
+	scope := "/subscriptions/test/resourceGroups/test/providers/Microsoft.ApiManagement/service/emulator/apis/portal"
+	missingPolicy := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(missingPolicy, httptest.NewRequest(http.MethodGet, "/_emulator/portal/api/policy?scopeId="+url.QueryEscape(scope), nil))
+	if missingPolicy.Code != http.StatusNotFound {
+		t.Fatalf("missing portal policy = %d", missingPolicy.Code)
+	}
+	updatedPolicy := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(updatedPolicy, httptest.NewRequest(http.MethodPut, "/_emulator/portal/api/policy?scopeId="+url.QueryEscape(scope), strings.NewReader(`{"format":"rawxml","value":"<policies><inbound><base/></inbound></policies>"}`)))
+	if updatedPolicy.Code != http.StatusOK || !strings.Contains(updatedPolicy.Body.String(), "rawxml") {
+		t.Fatalf("portal policy update = %d %s", updatedPolicy.Code, updatedPolicy.Body.String())
+	}
+	readPolicy := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(readPolicy, httptest.NewRequest(http.MethodGet, "/_emulator/portal/api/policy?scopeId="+url.QueryEscape(scope), nil))
+	if readPolicy.Code != http.StatusOK || !strings.Contains(readPolicy.Body.String(), "policies") {
+		t.Fatalf("portal policy read = %d %s", readPolicy.Code, readPolicy.Body.String())
+	}
+	for _, request := range []*http.Request{
+		httptest.NewRequest(http.MethodGet, "/_emulator/portal/api/policy", nil),
+		httptest.NewRequest(http.MethodPut, "/_emulator/portal/api/policy?scopeId="+url.QueryEscape(scope), strings.NewReader("{")),
+		httptest.NewRequest(http.MethodPut, "/_emulator/portal/api/policy?scopeId="+url.QueryEscape(scope), strings.NewReader(`{"value":"<broken>"}`)),
+	} {
+		badPolicy := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(badPolicy, request)
+		if badPolicy.Code != http.StatusBadRequest {
+			t.Fatalf("bad portal policy = %d %s", badPolicy.Code, badPolicy.Body.String())
+		}
+	}
+	if _, err := srv.Store.UpsertPolicy(model.Policy{ScopeID: "/invalid-policy", Value: "<broken/>"}); err != nil {
+		t.Fatal(err)
+	}
+	activationFailure := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(activationFailure, httptest.NewRequest(http.MethodPut, "/_emulator/portal/api/policy?scopeId="+url.QueryEscape(scope), strings.NewReader(`{"format":"rawxml","value":"<policies/>"}`)))
+	if activationFailure.Code != http.StatusBadRequest {
+		t.Fatalf("activation failure = %d %s", activationFailure.Code, activationFailure.Body.String())
+	}
 	portal := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(portal, httptest.NewRequest(http.MethodGet, "/_emulator/portal/", nil))
 	if portal.Code != http.StatusOK || !strings.Contains(portal.Body.String(), "Azure APIM Emulator") || !strings.Contains(portal.Header().Get("Content-Type"), "text/html") {
@@ -193,6 +229,19 @@ func TestControlAndDispatchEndpoints(t *testing.T) {
 	srv.Handler().ServeHTTP(missingTrace, httptest.NewRequest(http.MethodGet, "/_emulator/traces/missing", nil))
 	if missingTrace.Code != http.StatusNotFound {
 		t.Fatalf("missing trace = %d", missingTrace.Code)
+	}
+	if err := srv.Store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	updateStoreFailure := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(updateStoreFailure, httptest.NewRequest(http.MethodPut, "/_emulator/portal/api/policy?scopeId="+url.QueryEscape(scope), strings.NewReader(`{"format":"rawxml","value":"<policies/>"}`)))
+	if updateStoreFailure.Code != http.StatusInternalServerError {
+		t.Fatalf("update store failure = %d %s", updateStoreFailure.Code, updateStoreFailure.Body.String())
+	}
+	storeFailure := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(storeFailure, httptest.NewRequest(http.MethodGet, "/_emulator/portal/api/policy?scopeId="+url.QueryEscape(scope), nil))
+	if storeFailure.Code != http.StatusInternalServerError {
+		t.Fatalf("store failure = %d %s", storeFailure.Code, storeFailure.Body.String())
 	}
 }
 

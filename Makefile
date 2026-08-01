@@ -7,7 +7,8 @@ test:
 	go test -race ./...
 
 test-coverage:
-	go test -coverpkg=./... -coverprofile=cover.out ./...
+	go test -coverpkg=./... -coverprofile=cover.raw ./...
+	awk 'NR == 1 { print; next } { key = $$1 FS $$2; if (!(key in max) || $$3 > max[key]) { max[key] = $$3; line[key] = $$0 } } END { for (key in line) print line[key] }' cover.raw > cover.out
 	go tool cover -func=cover.out | awk '/^total:/ { print; if ($$3 != "100.0%") exit 1 }'
 
 test-differential:
