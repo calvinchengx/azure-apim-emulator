@@ -650,6 +650,38 @@ func TestActivateResolvesNamedValuesInPolicies(t *testing.T) {
 	}
 }
 
+func TestActivateInheritsServicePolicyWhenAPIHasNone(t *testing.T) {
+	st, err := store.Open("", clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	service, err := st.UpsertService(model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "emulator"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	api, err := st.UpsertAPI(model.API{ServiceID: service.ID(), Name: "inherited", Path: "inherited", ServiceURL: "https://backend.test", IsCurrent: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.UpsertOperation(model.Operation{APIID: api.ID(), Name: "get", Method: http.MethodGet, URLTemplate: "/"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.UpsertPolicy(model.Policy{ScopeID: service.ID(), Value: `<policies><inbound><set-header name="X-Service-Policy" exists-action="override"><value>inherited</value></set-header></inbound></policies>`}); err != nil {
+		t.Fatal(err)
+	}
+	runtime := New("emulator", &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		if request.Header.Get("X-Service-Policy") != "inherited" {
+			t.Errorf("inherited header = %q", request.Header.Get("X-Service-Policy"))
+		}
+		return &http.Response{StatusCode: http.StatusNoContent, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(""))}, nil
+	})})
+	if err := runtime.Activate(st, false); err != nil {
+		t.Fatal(err)
+	}
+	assertGatewayStatus(t, runtime, httptest.NewRequest(http.MethodGet, "/inherited", nil), http.StatusNoContent)
+}
+
 func TestActivateExpandsPolicyFragments(t *testing.T) {
 	st, err := store.Open("", clock.New())
 	if err != nil {

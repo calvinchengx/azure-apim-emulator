@@ -398,7 +398,11 @@ func (r *Runtime) Activate(st *store.Store, strict bool) error {
 				return fmt.Errorf("API %s references missing version set", api.ID())
 			}
 		}
-		service.Routes = append(service.Routes, &Route{API: api, VersionSet: versionSet, Operations: operationsByAPI[strings.ToLower(api.ID())], Plan: policyByScope[strings.ToLower(api.ID())], AcceptedKeys: keysByAPI[strings.ToLower(api.ID())], Diagnostics: diagnostics[strings.ToLower(api.ID())]})
+		plan := policyByScope[strings.ToLower(api.ID())]
+		if _, defined := policyByScope[strings.ToLower(api.ID())]; !defined {
+			plan = policyByScope[strings.ToLower(api.ServiceID)]
+		}
+		service.Routes = append(service.Routes, &Route{API: api, VersionSet: versionSet, Operations: operationsByAPI[strings.ToLower(api.ID())], Plan: plan, AcceptedKeys: keysByAPI[strings.ToLower(api.ID())], Diagnostics: diagnostics[strings.ToLower(api.ID())]})
 	}
 	for _, service := range snapshot.Services {
 		sort.SliceStable(service.Routes, func(i, j int) bool { return len(service.Routes[i].API.Path) > len(service.Routes[j].API.Path) })
