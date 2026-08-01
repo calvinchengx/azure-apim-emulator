@@ -109,6 +109,7 @@ func (s *Server) register() {
 		writeJSON(w, http.StatusOK, map[string]any{"p1": map[string]any{"status": "in-progress", "verified": true}, "coverage": "100.0%"})
 	})
 	s.mux.HandleFunc("GET /_emulator/portal/api/faults", func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, http.StatusOK, s.Gateway.FaultsSnapshot()) })
+	s.mux.HandleFunc("GET /_emulator/portal/api/diagnostics", s.portalDiagnostics)
 	s.mux.HandleFunc("POST /_emulator/portal/api/faults", s.updateFault)
 	s.mux.HandleFunc("GET /_emulator/portal/api/policy", s.portalPolicy)
 	s.mux.HandleFunc("PUT /_emulator/portal/api/policy", s.portalPolicy)
@@ -151,6 +152,19 @@ func (s *Server) portalStatus(w http.ResponseWriter, _ *http.Request) {
 		"resources": resources,
 		"faults":    s.Gateway.FaultsSnapshot(),
 	})
+}
+
+func (s *Server) portalDiagnostics(w http.ResponseWriter, r *http.Request) {
+	serviceID := strings.TrimSpace(r.URL.Query().Get("serviceId"))
+	if serviceID == "" {
+		serviceID = model.Service{SubscriptionID: defaultSubscription, ResourceGroup: defaultResourceGroup, Name: s.Cfg.DefaultService}.ID()
+	}
+	events, err := s.Store.ListDiagnosticEvents(serviceID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"serviceId": serviceID, "events": events})
 }
 
 func countAPIVersionSets(st *store.Store, id string) int {

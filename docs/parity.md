@@ -48,7 +48,7 @@ Snapshot date: 2026-08-01
 | gRPC | planned | P5 | generated clients and trailer/stream fixtures |
 | networking/private/custom domains | partial | P1/P6 | persisted custom-hostname routing with exact host precedence, backend TLS chain-validation/client-certificate behavior, retry execution, and local gateway reachability; private networking, custom-domain certificate/TLS state, and Azure differential fixtures pending |
 | tiers/SKUs/regions/deployment | planned | P6 | capability audit and tier fixtures |
-| diagnostics/analytics/monitoring | partial | P1/P7 | lossless logger and service/API diagnostic ARM state, logger reference protection, fixed sampling and all-error override, correlation/status/duration/client-IP SQLite events, Go SDK and real gateway integration; body/header capture and masking, external adapters, analytics, metrics, and Azure differential fixtures pending |
+| diagnostics/analytics/monitoring | partial | P1/P7 | lossless logger and service/API diagnostic ARM state, logger reference protection, fixed sampling and all-error override, correlation/status/duration/client-IP SQLite events, portal diagnostic-event navigation, Go SDK and real gateway integration; body/header capture and masking, external adapters, analytics, metrics, and Azure differential fixtures pending |
 | authorization providers/integrations | planned | P7 | adapter and Azure differential suites |
 | AI gateway and MCP | planned | P8 | deterministic providers and opt-in real suites |
 | Entra ARM authentication | sdk-verified | P0 | Go SDK + `azidentity` + in-process `entra-emulator` |

@@ -138,7 +138,7 @@ func TestControlAndDispatchEndpoints(t *testing.T) {
 	}
 	withValidator.Close()
 
-	for _, path := range []string{"/health", "/_emulator/clock", "/_emulator/portal/api/status", "/_emulator/portal/api/snapshot", "/_emulator/portal/api/parity", "/_emulator/portal/api/faults"} {
+	for _, path := range []string{"/health", "/_emulator/clock", "/_emulator/portal/api/status", "/_emulator/portal/api/snapshot", "/_emulator/portal/api/parity", "/_emulator/portal/api/faults", "/_emulator/portal/api/diagnostics"} {
 		recorder := httptest.NewRecorder()
 		srv.Handler().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, path, nil))
 		if recorder.Code != http.StatusOK || recorder.Header().Get("Content-Type") != "application/json; charset=utf-8" {
@@ -149,6 +149,11 @@ func TestControlAndDispatchEndpoints(t *testing.T) {
 	srv.Handler().ServeHTTP(status, httptest.NewRequest(http.MethodGet, "/_emulator/portal/api/status", nil))
 	if !strings.Contains(status.Body.String(), `"name":"emulator"`) {
 		t.Fatalf("portal resource summary = %s", status.Body.String())
+	}
+	diagnostics := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(diagnostics, httptest.NewRequest(http.MethodGet, "/_emulator/portal/api/diagnostics", nil))
+	if diagnostics.Code != http.StatusOK || !strings.Contains(diagnostics.Body.String(), `"events":[]`) {
+		t.Fatalf("portal diagnostics = %d %s", diagnostics.Code, diagnostics.Body.String())
 	}
 	if !strings.Contains(status.Body.String(), `"counts"`) || !strings.Contains(status.Body.String(), `"products"`) {
 		t.Fatalf("portal core resource counts = %s", status.Body.String())
