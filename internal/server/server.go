@@ -24,12 +24,14 @@ const (
 
 // Server owns all emulator components.
 type Server struct {
-	Cfg     *config.Config
-	Clock   *clock.Clock
-	Store   *store.Store
-	Gateway *gateway.Runtime
-	ARM     *arm.Handler
-	mux     *http.ServeMux
+	Cfg                 *config.Config
+	Clock               *clock.Clock
+	Store               *store.Store
+	Gateway             *gateway.Runtime
+	ARM                 *arm.Handler
+	mux                 *http.ServeMux
+	portalUpsertAPI     func(model.API) (model.API, error)
+	portalUpsertProduct func(model.Product) (model.Product, error)
 }
 
 // New wires a server. Overrides are intended for in-process tests.
@@ -50,7 +52,7 @@ func New(cfg *config.Config, validator auth.RequestValidator, backendClient, jwk
 	if tokenValidator, ok := validator.(*auth.Validator); ok {
 		runtime.SetPolicyTokenValidator(tokenValidator.ValidateToken)
 	}
-	s := &Server{Cfg: cfg, Clock: ck, Store: st, Gateway: runtime, mux: http.NewServeMux()}
+	s := &Server{Cfg: cfg, Clock: ck, Store: st, Gateway: runtime, mux: http.NewServeMux(), portalUpsertAPI: st.UpsertAPI, portalUpsertProduct: st.UpsertProduct}
 	s.ARM = &arm.Handler{
 		Store: st, Auth: validator,
 		Activate:       func() error { return runtime.Activate(st, cfg.StrictPolicies) },
@@ -112,6 +114,8 @@ func (s *Server) register() {
 	s.mux.HandleFunc("GET /_emulator/portal/api/diagnostics", s.portalDiagnostics)
 	s.mux.HandleFunc("GET /_emulator/portal/api/resource", s.portalResource)
 	s.mux.HandleFunc("PUT /_emulator/portal/api/resource", s.portalResource)
+	s.mux.HandleFunc("GET /_emulator/portal/api/product", s.portalProduct)
+	s.mux.HandleFunc("PUT /_emulator/portal/api/product", s.portalProduct)
 	s.mux.HandleFunc("POST /_emulator/portal/api/faults", s.updateFault)
 	s.mux.HandleFunc("GET /_emulator/portal/api/policy", s.portalPolicy)
 	s.mux.HandleFunc("PUT /_emulator/portal/api/policy", s.portalPolicy)
@@ -211,7 +215,7 @@ func (s *Server) portalResource(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "displayName cannot be empty"})
 			return
 		}
-		api, err = s.Store.UpsertAPI(api)
+		api, err = s.portalUpsertAPI(api)
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
 			return
@@ -224,6 +228,60 @@ func (s *Server) portalResource(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"id": api.ID(), "name": api.Name, "displayName": api.DisplayName, "path": api.Path,
 		"serviceUrl": api.ServiceURL, "subscriptionRequired": api.SubscriptionRequired, "etag": api.ETag,
+	})
+}
+
+func (s *Server) portalProduct(w http.ResponseWriter, r *http.Request) {
+	resourceID := strings.TrimSpace(r.URL.Query().Get("resourceId"))
+	if resourceID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "resourceId is required"})
+		return
+	}
+	product, err := s.Store.GetProduct(resourceID)
+	if errors.Is(err, store.ErrNotFound) {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": "product not found"})
+		return
+	}
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	if r.Method == http.MethodPut {
+		var body struct {
+			DisplayName      *string `json:"displayName"`
+			State            *string `json:"state"`
+			ApprovalRequired *bool   `json:"approvalRequired"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "malformed JSON"})
+			return
+		}
+		if body.DisplayName != nil {
+			product.DisplayName = strings.TrimSpace(*body.DisplayName)
+		}
+		if body.State != nil {
+			product.State = strings.TrimSpace(*body.State)
+		}
+		if body.ApprovalRequired != nil {
+			product.ApprovalRequired = *body.ApprovalRequired
+		}
+		if product.DisplayName == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "displayName cannot be empty"})
+			return
+		}
+		product, err = s.portalUpsertProduct(product)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+			return
+		}
+		if err := s.Gateway.Activate(s.Store, s.Cfg.StrictPolicies); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"id": product.ID(), "name": product.Name, "displayName": product.DisplayName,
+		"state": product.State, "approvalRequired": product.ApprovalRequired, "etag": product.ETag,
 	})
 }
 

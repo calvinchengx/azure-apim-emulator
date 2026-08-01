@@ -3,6 +3,7 @@ package server
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -204,6 +205,33 @@ func TestControlAndDispatchEndpoints(t *testing.T) {
 	if resourceUpdate.Code != http.StatusOK || !strings.Contains(resourceUpdate.Body.String(), "Updated Portal API") {
 		t.Fatalf("portal resource update = %d %s", resourceUpdate.Code, resourceUpdate.Body.String())
 	}
+	portalProduct := model.Product{ServiceID: portalAPI.ServiceID, Name: "portal-product", DisplayName: "Portal Product", State: "notPublished"}
+	if _, err := srv.Store.UpsertProduct(portalProduct); err != nil {
+		t.Fatal(err)
+	}
+	productURL := "/_emulator/portal/api/product?resourceId=" + url.QueryEscape(portalProduct.ID())
+	productRead := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(productRead, httptest.NewRequest(http.MethodGet, productURL, nil))
+	if productRead.Code != http.StatusOK || !strings.Contains(productRead.Body.String(), "Portal Product") {
+		t.Fatalf("portal product read = %d %s", productRead.Code, productRead.Body.String())
+	}
+	productUpdate := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(productUpdate, httptest.NewRequest(http.MethodPut, productURL, strings.NewReader(`{"displayName":"Updated Product","state":"published","approvalRequired":true}`)))
+	if productUpdate.Code != http.StatusOK || !strings.Contains(productUpdate.Body.String(), "published") {
+		t.Fatalf("portal product update = %d %s", productUpdate.Code, productUpdate.Body.String())
+	}
+	for _, request := range []*http.Request{
+		httptest.NewRequest(http.MethodGet, "/_emulator/portal/api/product", nil),
+		httptest.NewRequest(http.MethodGet, "/_emulator/portal/api/product?resourceId=/missing", nil),
+		httptest.NewRequest(http.MethodPut, productURL, strings.NewReader("{")),
+		httptest.NewRequest(http.MethodPut, productURL, strings.NewReader(`{"displayName":" "}`)),
+	} {
+		recorder := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(recorder, request)
+		if recorder.Code != http.StatusBadRequest && recorder.Code != http.StatusNotFound {
+			t.Fatalf("portal product invalid = %d %s", recorder.Code, recorder.Body.String())
+		}
+	}
 	fullResourceUpdate := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(fullResourceUpdate, httptest.NewRequest(http.MethodPut, resourceURL, strings.NewReader(`{"displayName":"Full Portal API","path":"full","serviceUrl":"https://new-backend.test","subscriptionRequired":true}`)))
 	if fullResourceUpdate.Code != http.StatusOK || !strings.Contains(fullResourceUpdate.Body.String(), "new-backend.test") {
@@ -217,6 +245,27 @@ func TestControlAndDispatchEndpoints(t *testing.T) {
 	if activationResourceUpdate.Code != http.StatusBadRequest {
 		t.Fatalf("portal resource activation failure = %d %s", activationResourceUpdate.Code, activationResourceUpdate.Body.String())
 	}
+	productActivationFailure := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(productActivationFailure, httptest.NewRequest(http.MethodPut, productURL, strings.NewReader(`{"state":"published"}`)))
+	if productActivationFailure.Code != http.StatusBadRequest {
+		t.Fatalf("portal product activation failure = %d %s", productActivationFailure.Code, productActivationFailure.Body.String())
+	}
+	srv.portalUpsertProduct = func(model.Product) (model.Product, error) {
+		return model.Product{}, errors.New("injected product persistence failure")
+	}
+	productStoreFailure := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(productStoreFailure, httptest.NewRequest(http.MethodPut, productURL, strings.NewReader(`{"state":"published"}`)))
+	if productStoreFailure.Code != http.StatusBadRequest {
+		t.Fatalf("portal product persistence failure = %d %s", productStoreFailure.Code, productStoreFailure.Body.String())
+	}
+	srv.portalUpsertProduct = srv.Store.UpsertProduct
+	srv.portalUpsertAPI = func(model.API) (model.API, error) { return model.API{}, errors.New("injected API persistence failure") }
+	apiStoreFailure := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(apiStoreFailure, httptest.NewRequest(http.MethodPut, resourceURL, strings.NewReader(`{"displayName":"Store Failure"}`)))
+	if apiStoreFailure.Code != http.StatusBadRequest {
+		t.Fatalf("portal API persistence failure = %d %s", apiStoreFailure.Code, apiStoreFailure.Body.String())
+	}
+	srv.portalUpsertAPI = srv.Store.UpsertAPI
 	emptyUpdate := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(emptyUpdate, httptest.NewRequest(http.MethodPut, resourceURL, strings.NewReader(`{"displayName":" "}`)))
 	if emptyUpdate.Code != http.StatusBadRequest {
@@ -314,6 +363,11 @@ func TestControlAndDispatchEndpoints(t *testing.T) {
 	srv.Handler().ServeHTTP(resourceFailure, httptest.NewRequest(http.MethodGet, resourceURL, nil))
 	if resourceFailure.Code != http.StatusInternalServerError {
 		t.Fatalf("resource store failure = %d %s", resourceFailure.Code, resourceFailure.Body.String())
+	}
+	productFailure := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(productFailure, httptest.NewRequest(http.MethodGet, productURL, nil))
+	if productFailure.Code != http.StatusInternalServerError {
+		t.Fatalf("product store failure = %d %s", productFailure.Code, productFailure.Body.String())
 	}
 	diagnosticFailure := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(diagnosticFailure, httptest.NewRequest(http.MethodGet, "/_emulator/portal/api/diagnostics", nil))
