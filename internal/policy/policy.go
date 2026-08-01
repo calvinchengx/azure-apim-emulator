@@ -3,6 +3,7 @@ package policy
 
 import (
 	"crypto/sha1"
+	"encoding/base64"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -40,6 +41,7 @@ const (
 	ActionValidateClientCertificate
 	ActionChoose
 	ActionTrace
+	ActionAuthenticationBasic
 	ActionSetBackend
 	ActionRewriteURI
 	ActionForward
@@ -91,6 +93,8 @@ type Action struct {
 	TraceSource             string
 	TraceSeverity           string
 	TraceMessage            string
+	AuthUsername            string
+	AuthPassword            string
 	Children                []Action
 	RetryCount              int
 	RetryInterval           time.Duration
@@ -632,6 +636,15 @@ func compileNode(item node, strict bool) (Action, bool, error) {
 			message = strings.TrimSpace(child.Text)
 		}
 		return Action{Kind: ActionTrace, TraceSource: item.Attrs["source"], TraceSeverity: item.Attrs["severity"], TraceMessage: message}, true, nil
+	case "authentication-basic":
+		username, password := item.Attrs["username"], item.Attrs["password"]
+		if username == "" || password == "" || expression(username) || expression(password) {
+			return unsupported(item.Name), true, nil
+		}
+		if len(item.Children) > 0 {
+			return unsupported(item.Name + "/" + item.Children[0].Name), true, nil
+		}
+		return Action{Kind: ActionAuthenticationBasic, AuthUsername: username, AuthPassword: password}, true, nil
 	case "set-backend-service":
 		value, backendID := item.Attrs["base-url"], item.Attrs["backend-id"]
 		if (value == "") == (backendID == "") || expression(value) || expression(backendID) {
@@ -1085,6 +1098,11 @@ func Execute(actions []Action, state *State) error {
 			if state.Trace != nil {
 				state.Trace("policy", strings.TrimSpace(action.TraceSource+" "+action.TraceSeverity+" "+action.TraceMessage))
 			}
+		case ActionAuthenticationBasic:
+			if state.Request == nil {
+				return fmt.Errorf("authentication-basic requires a request")
+			}
+			state.Request.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte(action.AuthUsername+":"+action.AuthPassword)))
 		case ActionSetBackend:
 			state.BackendURL = action.Value
 			state.BackendID = action.BackendID

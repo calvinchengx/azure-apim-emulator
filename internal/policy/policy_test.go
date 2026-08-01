@@ -747,6 +747,30 @@ func TestTracePolicy(t *testing.T) {
 	}
 }
 
+func TestAuthenticationBasicPolicy(t *testing.T) {
+	plan, err := Compile(`<policies><backend><authentication-basic username="user" password="secret"/></backend></policies>`, true)
+	if err != nil || len(plan.Backend) != 1 || plan.Backend[0].Kind != ActionAuthenticationBasic {
+		t.Fatalf("authentication plan = %+v, %v", plan, err)
+	}
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	state := &State{Request: request}
+	if err := Execute(plan.Backend, state); err != nil || request.Header.Get("Authorization") != "Basic dXNlcjpzZWNyZXQ=" {
+		t.Fatalf("authentication header = %q, %v", request.Header.Get("Authorization"), err)
+	}
+	if err := Execute(plan.Backend, &State{}); err == nil {
+		t.Fatal("authentication without request accepted")
+	}
+	for _, value := range []string{
+		`<policies><backend><authentication-basic username="" password="secret"/></backend></policies>`,
+		`<policies><backend><authentication-basic username="@(context.Variables['user'])" password="secret"/></backend></policies>`,
+		`<policies><backend><authentication-basic username="user" password="secret"><unknown/></authentication-basic></backend></policies>`,
+	} {
+		if _, err := Compile(value, true); err == nil {
+			t.Fatalf("invalid authentication policy accepted: %s", value)
+		}
+	}
+}
+
 type errorBody struct{}
 
 func (errorBody) Read([]byte) (int, error) { return 0, errors.New("body read failed") }
