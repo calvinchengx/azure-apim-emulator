@@ -210,7 +210,7 @@ func TestControlAndDispatchEndpoints(t *testing.T) {
 	}
 	portal := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(portal, httptest.NewRequest(http.MethodGet, "/_emulator/portal/", nil))
-	if portal.Code != http.StatusOK || !strings.Contains(portal.Body.String(), "Azure APIM Emulator") || !strings.Contains(portal.Header().Get("Content-Type"), "text/html") {
+	if portal.Code != http.StatusOK || !strings.Contains(portal.Body.String(), "Azure APIM Emulator") || !strings.Contains(portal.Body.String(), "Diagnostic Events") || !strings.Contains(portal.Header().Get("Content-Type"), "text/html") {
 		t.Fatalf("portal = %d %s", portal.Code, portal.Body.String())
 	}
 

@@ -259,9 +259,12 @@ func (s *Server) portalPolicy(w http.ResponseWriter, r *http.Request) {
 
 const portalHTML = `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>APIM Emulator Operator</title>
-<style>body{font:15px system-ui,sans-serif;max-width:1100px;margin:2rem auto;padding:0 1rem;color:#17202a;background:#f6f8fa}main{background:#fff;border:1px solid #d0d7de;padding:1.25rem;border-radius:8px}h1{margin-top:0}pre{background:#f6f8fa;padding:1rem;overflow:auto}button{padding:.55rem .8rem;border:1px solid #8c959f;border-radius:6px;background:#fff;cursor:pointer}</style></head>
-<body><main><h1>Azure APIM Emulator</h1><p id="summary">Loading runtime state...</p><button id="refresh">Refresh</button><pre id="state"></pre></main>
-<script>async function load(){const r=await fetch('/_emulator/portal/api/status');const v=await r.json();document.querySelector('#summary').textContent=v.service+' | clock '+v.clock.now;document.querySelector('#state').textContent=JSON.stringify(v,null,2)}document.querySelector('#refresh').addEventListener('click',load);load();</script></body></html>`
+<style>body{font:15px system-ui,sans-serif;max-width:1100px;margin:2rem auto;padding:0 1rem;color:#17202a;background:#f6f8fa}main{background:#fff;border:1px solid #d0d7de;padding:1.25rem;border-radius:8px}h1{margin-top:0}h2{font-size:1rem;margin:1.5rem 0 .5rem}pre{background:#f6f8fa;padding:1rem;overflow:auto}button{padding:.55rem .8rem;border:1px solid #8c959f;border-radius:6px;background:#fff;cursor:pointer}table{border-collapse:collapse;width:100%;font-size:.9rem}th,td{text-align:left;border-bottom:1px solid #d8dee4;padding:.45rem}#error{color:#b42318}</style></head>
+<body><main><h1>Azure APIM Emulator</h1><p id="summary">Loading runtime state...</p><button id="refresh">Refresh</button><p id="error" role="alert"></p><h2>Resources</h2><table><thead><tr><th>Service</th><th>Resource</th><th>Count</th></tr></thead><tbody id="resources"></tbody></table><h2>Diagnostic Events</h2><pre id="diagnostics">Loading...</pre></main>
+<script>
+async function get(path){const r=await fetch(path);if(!r.ok)throw new Error(await r.text());return r.json()}
+async function load(){document.querySelector('#error').textContent='';try{const [status,diagnostics]=await Promise.all([get('/_emulator/portal/api/status'),get('/_emulator/portal/api/diagnostics')]);document.querySelector('#summary').textContent=status.service+' | clock '+status.clock.now;const rows=[];for(const service of status.resources||[]){for(const [name,count] of Object.entries(service.counts||{})){rows.push('<tr><td>'+service.name+'</td><td>'+name+'</td><td>'+count+'</td></tr>')}}document.querySelector('#resources').innerHTML=rows.join('');document.querySelector('#diagnostics').textContent=JSON.stringify(diagnostics.events||[],null,2)}catch(error){document.querySelector('#error').textContent='Unable to load operator state: '+error.message}}
+document.querySelector('#refresh').addEventListener('click',load);load();</script></body></html>`
 
 func (s *Server) updateClock(w http.ResponseWriter, r *http.Request) {
 	var body struct {
