@@ -784,6 +784,16 @@ func TestServeHTTPFailuresAndPolicyResponses(t *testing.T) {
 	if recorder.Code != http.StatusAccepted || recorder.Body.String() != "local" || recorder.Header().Get("X-Local") != "yes" {
 		t.Fatalf("local response = %d %q %v", recorder.Code, recorder.Body.String(), recorder.Header())
 	}
+	route.Plan.Inbound = []policy.Action{{Kind: policy.ActionTrace, TraceSource: "test", TraceSeverity: "info", TraceMessage: "policy trace"}, {Kind: policy.ActionReturnResponse, StatusCode: http.StatusOK, Body: "traced"}}
+	traceRequest := httptest.NewRequest(http.MethodGet, "/api/items", nil)
+	traceRequest.Header.Set("Ocp-Apim-Trace", "true")
+	recorder = httptest.NewRecorder()
+	runtime.ServeHTTP(recorder, traceRequest)
+	traceID := strings.TrimPrefix(recorder.Header().Get("Ocp-Apim-Trace-Location"), "/_emulator/traces/")
+	trace, ok := runtime.GetTrace(traceID)
+	if !ok || len(trace.Events) < 1 || trace.Events[len(trace.Events)-1].Detail != "test info policy trace" {
+		t.Fatalf("policy trace = %+v, %v", trace, ok)
+	}
 
 	route.Plan.Inbound = nil
 	assertGatewayStatus(t, runtime, httptest.NewRequest(http.MethodGet, "/api/items", nil), http.StatusInternalServerError)

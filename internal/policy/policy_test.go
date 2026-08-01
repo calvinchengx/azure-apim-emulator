@@ -594,6 +594,14 @@ func TestValidateParametersPolicy(t *testing.T) {
 	if err := Execute(ignore.Inbound, state); err != nil || !state.Returned {
 		t.Fatalf("unspecified parameter = %+v, %v", state, err)
 	}
+	valueIgnore, err := Compile(`<policies><inbound><validate-parameters><parameter name="mode" action="ignore"><value>strict</value></parameter></validate-parameters></inbound></policies>`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state = &State{Request: httptest.NewRequest(http.MethodGet, "/?mode=loose", nil)}
+	if err := Execute(valueIgnore.Inbound, state); err != nil || state.Returned {
+		t.Fatalf("ignored parameter value = %+v, %v", state, err)
+	}
 	for _, value := range []string{
 		`<policies><inbound><validate-parameters specified-parameter-action="bad"/></inbound></policies>`,
 		`<policies><inbound><validate-parameters><parameter name="mode" action="bad"/></validate-parameters></inbound></policies>`,
@@ -710,6 +718,32 @@ func TestChoosePolicy(t *testing.T) {
 	}
 	if err := Execute(unsupportedPlan.Inbound, &State{Request: httptest.NewRequest(http.MethodGet, "/", nil)}); err == nil {
 		t.Fatal("unsupported choose condition accepted")
+	}
+	invalidComparison, err := Compile(`<policies><inbound><choose><when condition="@(true)"><set-variable name="x"><value>y</value></set-variable></when></choose></inbound></policies>`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	invalidComparison.Inbound[0].Branches[0].Condition = "context.Request.Method"
+	if err := Execute(invalidComparison.Inbound, &State{Request: httptest.NewRequest(http.MethodGet, "/", nil)}); err == nil {
+		t.Fatal("invalid choose comparison accepted")
+	}
+}
+
+func TestTracePolicy(t *testing.T) {
+	plan, err := Compile(`<policies><inbound><trace source="policy" severity="information"><message>hello</message></trace></inbound></policies>`, true)
+	if err != nil || len(plan.Inbound) != 1 || plan.Inbound[0].Kind != ActionTrace {
+		t.Fatalf("trace plan = %+v, %v", plan, err)
+	}
+	var phase, detail string
+	state := &State{Trace: func(gotPhase, gotDetail string) { phase, detail = gotPhase, gotDetail }}
+	if err := Execute(plan.Inbound, state); err != nil || phase != "policy" || detail != "policy information hello" {
+		t.Fatalf("trace event = %q %q, %v", phase, detail, err)
+	}
+	if err := Execute(plan.Inbound, &State{}); err != nil {
+		t.Fatalf("trace without sink = %v", err)
+	}
+	if _, err := Compile(`<policies><inbound><trace><unknown/></trace></inbound></policies>`, true); err == nil {
+		t.Fatal("invalid trace accepted")
 	}
 }
 

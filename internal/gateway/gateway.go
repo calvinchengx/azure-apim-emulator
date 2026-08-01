@@ -480,7 +480,7 @@ func (r *Runtime) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	cacheKey := service.Name + ":" + route.API.ID() + ":" + req.Method + ":" + req.URL.RequestURI()
-	state := &policy.State{Request: req, BackendURL: route.API.ServiceURL, Path: relative, Headers: make(http.Header), ValidateToken: r.policyTokenValidator, SendRequest: r.policySendRequest, RateLimit: r.rateLimit, CacheGet: r.cacheGet, CacheSet: r.cacheSet, CacheKey: cacheKey}
+	state := &policy.State{Request: req, BackendURL: route.API.ServiceURL, Path: relative, Headers: make(http.Header), ValidateToken: r.policyTokenValidator, SendRequest: r.policySendRequest, Trace: func(phase, detail string) { traceEvent(trace, phase, detail) }, RateLimit: r.rateLimit, CacheGet: r.cacheGet, CacheSet: r.cacheSet, CacheKey: cacheKey}
 	traceEvent(trace, "inbound", "")
 	if err := policy.Execute(route.Plan.Inbound, state); err != nil {
 		r.policyFailure(w, req, route.Plan, state, err)

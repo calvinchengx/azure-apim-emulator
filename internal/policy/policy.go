@@ -39,6 +39,7 @@ const (
 	ActionValidateParameters
 	ActionValidateClientCertificate
 	ActionChoose
+	ActionTrace
 	ActionSetBackend
 	ActionRewriteURI
 	ActionForward
@@ -87,6 +88,9 @@ type Action struct {
 	CertificateThumbprints  []string
 	Branches                []ChooseBranch
 	Otherwise               []Action
+	TraceSource             string
+	TraceSeverity           string
+	TraceMessage            string
 	Children                []Action
 	RetryCount              int
 	RetryInterval           time.Duration
@@ -145,6 +149,7 @@ type State struct {
 	Variables     map[string]string
 	ValidateToken func(string) error
 	SendRequest   func(*http.Request) (*http.Response, error)
+	Trace         func(string, string)
 	RateLimit     func(string, int, time.Duration) bool
 	CacheGet      func(string) (int, http.Header, string, bool)
 	CacheSet      func(string, int, http.Header, string, time.Duration)
@@ -618,6 +623,15 @@ func compileNode(item node, strict bool) (Action, bool, error) {
 			return Action{}, false, fmt.Errorf("choose requires at least one when branch")
 		}
 		return result, true, nil
+	case "trace":
+		message := ""
+		for _, child := range item.Children {
+			if child.Name != "message" {
+				return unsupported(item.Name + "/" + child.Name), true, nil
+			}
+			message = strings.TrimSpace(child.Text)
+		}
+		return Action{Kind: ActionTrace, TraceSource: item.Attrs["source"], TraceSeverity: item.Attrs["severity"], TraceMessage: message}, true, nil
 	case "set-backend-service":
 		value, backendID := item.Attrs["base-url"], item.Attrs["backend-id"]
 		if (value == "") == (backendID == "") || expression(value) || expression(backendID) {
@@ -1066,6 +1080,10 @@ func Execute(actions []Action, state *State) error {
 			}
 			if state.Returned {
 				return nil
+			}
+		case ActionTrace:
+			if state.Trace != nil {
+				state.Trace("policy", strings.TrimSpace(action.TraceSource+" "+action.TraceSeverity+" "+action.TraceMessage))
 			}
 		case ActionSetBackend:
 			state.BackendURL = action.Value
