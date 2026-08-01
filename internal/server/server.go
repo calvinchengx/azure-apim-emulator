@@ -24,19 +24,20 @@ const (
 
 // Server owns all emulator components.
 type Server struct {
-	Cfg                     *config.Config
-	Clock                   *clock.Clock
-	Store                   *store.Store
-	Gateway                 *gateway.Runtime
-	ARM                     *arm.Handler
-	mux                     *http.ServeMux
-	portalUpsertAPI         func(model.API) (model.API, error)
-	portalUpsertProduct     func(model.Product) (model.Product, error)
-	portalUpsertBackend     func(model.Backend) (model.Backend, error)
-	portalUpsertNamedValue  func(model.NamedValue) (model.NamedValue, error)
-	portalUpsertCertificate func(model.Certificate) (model.Certificate, error)
-	portalUpsertTag         func(model.Tag) (model.Tag, error)
-	portalUpsertGroup       func(model.Group) (model.Group, error)
+	Cfg                      *config.Config
+	Clock                    *clock.Clock
+	Store                    *store.Store
+	Gateway                  *gateway.Runtime
+	ARM                      *arm.Handler
+	mux                      *http.ServeMux
+	portalUpsertAPI          func(model.API) (model.API, error)
+	portalUpsertProduct      func(model.Product) (model.Product, error)
+	portalUpsertBackend      func(model.Backend) (model.Backend, error)
+	portalUpsertNamedValue   func(model.NamedValue) (model.NamedValue, error)
+	portalUpsertCertificate  func(model.Certificate) (model.Certificate, error)
+	portalUpsertTag          func(model.Tag) (model.Tag, error)
+	portalUpsertGroup        func(model.Group) (model.Group, error)
+	portalUpsertSubscription func(model.Subscription) (model.Subscription, error)
 }
 
 // New wires a server. Overrides are intended for in-process tests.
@@ -57,7 +58,7 @@ func New(cfg *config.Config, validator auth.RequestValidator, backendClient, jwk
 	if tokenValidator, ok := validator.(*auth.Validator); ok {
 		runtime.SetPolicyTokenValidator(tokenValidator.ValidateToken)
 	}
-	s := &Server{Cfg: cfg, Clock: ck, Store: st, Gateway: runtime, mux: http.NewServeMux(), portalUpsertAPI: st.UpsertAPI, portalUpsertProduct: st.UpsertProduct, portalUpsertBackend: st.UpsertBackend, portalUpsertNamedValue: st.UpsertNamedValue, portalUpsertCertificate: st.UpsertCertificate, portalUpsertTag: st.UpsertTag, portalUpsertGroup: st.UpsertGroup}
+	s := &Server{Cfg: cfg, Clock: ck, Store: st, Gateway: runtime, mux: http.NewServeMux(), portalUpsertAPI: st.UpsertAPI, portalUpsertProduct: st.UpsertProduct, portalUpsertBackend: st.UpsertBackend, portalUpsertNamedValue: st.UpsertNamedValue, portalUpsertCertificate: st.UpsertCertificate, portalUpsertTag: st.UpsertTag, portalUpsertGroup: st.UpsertGroup, portalUpsertSubscription: st.UpsertSubscription}
 	s.ARM = &arm.Handler{
 		Store: st, Auth: validator,
 		Activate:       func() error { return runtime.Activate(st, cfg.StrictPolicies) },
@@ -131,6 +132,8 @@ func (s *Server) register() {
 	s.mux.HandleFunc("PUT /_emulator/portal/api/tag", s.portalTag)
 	s.mux.HandleFunc("GET /_emulator/portal/api/group", s.portalGroup)
 	s.mux.HandleFunc("PUT /_emulator/portal/api/group", s.portalGroup)
+	s.mux.HandleFunc("GET /_emulator/portal/api/subscription", s.portalSubscription)
+	s.mux.HandleFunc("PUT /_emulator/portal/api/subscription", s.portalSubscription)
 	s.mux.HandleFunc("POST /_emulator/portal/api/faults", s.updateFault)
 	s.mux.HandleFunc("GET /_emulator/portal/api/policy", s.portalPolicy)
 	s.mux.HandleFunc("PUT /_emulator/portal/api/policy", s.portalPolicy)
@@ -572,6 +575,57 @@ func (s *Server) portalGroup(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"id": group.ID(), "name": group.Name, "displayName": group.DisplayName, "description": group.Description, "type": group.Type, "externalId": group.ExternalID, "builtIn": group.BuiltIn, "etag": group.ETag})
+}
+
+func (s *Server) portalSubscription(w http.ResponseWriter, r *http.Request) {
+	resourceID := strings.TrimSpace(r.URL.Query().Get("resourceId"))
+	if resourceID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "resourceId is required"})
+		return
+	}
+	subscription, err := s.Store.GetSubscription(resourceID)
+	if errors.Is(err, store.ErrNotFound) {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": "subscription not found"})
+		return
+	}
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	if r.Method == http.MethodPut {
+		var body struct {
+			DisplayName *string `json:"displayName"`
+			Scope       *string `json:"scope"`
+			State       *string `json:"state"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "malformed JSON"})
+			return
+		}
+		if body.DisplayName != nil {
+			subscription.DisplayName = strings.TrimSpace(*body.DisplayName)
+		}
+		if body.Scope != nil {
+			subscription.Scope = strings.TrimSpace(*body.Scope)
+		}
+		if body.State != nil {
+			subscription.State = strings.TrimSpace(*body.State)
+		}
+		if subscription.DisplayName == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "displayName cannot be empty"})
+			return
+		}
+		subscription, err = s.portalUpsertSubscription(subscription)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+			return
+		}
+		if err := s.Gateway.Activate(s.Store, s.Cfg.StrictPolicies); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"id": subscription.ID(), "name": subscription.Name, "displayName": subscription.DisplayName, "scope": subscription.Scope, "state": subscription.State, "etag": subscription.ETag})
 }
 
 func countAPIVersionSets(st *store.Store, id string) int {
