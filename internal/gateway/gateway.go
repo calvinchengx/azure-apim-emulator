@@ -399,8 +399,11 @@ func (r *Runtime) Activate(st *store.Store, strict bool) error {
 			}
 		}
 		plan := policyByScope[strings.ToLower(api.ID())]
+		servicePlan, hasServicePlan := policyByScope[strings.ToLower(api.ServiceID)]
 		if _, defined := policyByScope[strings.ToLower(api.ID())]; !defined {
-			plan = policyByScope[strings.ToLower(api.ServiceID)]
+			plan = servicePlan
+		} else if hasServicePlan {
+			plan = composeInheritedPlan(plan, servicePlan)
 		}
 		service.Routes = append(service.Routes, &Route{API: api, VersionSet: versionSet, Operations: operationsByAPI[strings.ToLower(api.ID())], Plan: plan, AcceptedKeys: keysByAPI[strings.ToLower(api.ID())], Diagnostics: diagnostics[strings.ToLower(api.ID())]})
 	}
@@ -410,6 +413,27 @@ func (r *Runtime) Activate(st *store.Store, strict bool) error {
 	r.current.Store(snapshot)
 	r.eventStore.Store(st)
 	return nil
+}
+
+func composeInheritedPlan(child, parent policy.Plan) policy.Plan {
+	return policy.Plan{
+		Inbound:  composeInheritedActions(child.Inbound, parent.Inbound),
+		Backend:  composeInheritedActions(child.Backend, parent.Backend),
+		Outbound: composeInheritedActions(child.Outbound, parent.Outbound),
+		OnError:  composeInheritedActions(child.OnError, parent.OnError),
+	}
+}
+
+func composeInheritedActions(child, parent []policy.Action) []policy.Action {
+	result := make([]policy.Action, 0, len(child)+len(parent))
+	for _, action := range child {
+		if action.Kind == policy.ActionBase {
+			result = append(result, parent...)
+		} else {
+			result = append(result, action)
+		}
+	}
+	return result
 }
 
 func resolveBackendReferences(plan *policy.Plan, backends map[string]model.Backend) error {

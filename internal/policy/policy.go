@@ -51,6 +51,7 @@ const (
 	ActionJSONToXML
 	ActionXMLToJSON
 	ActionJSONP
+	ActionBase
 	ActionCacheLookupValue
 	ActionCacheStoreValue
 	ActionCacheRemoveValue
@@ -332,12 +333,9 @@ func compileRoot(root node, strict bool) (Plan, error) {
 func compileNodes(nodes []node, strict bool) ([]Action, error) {
 	var actions []Action
 	for _, item := range nodes {
-		action, include, err := compileNode(item, strict)
+		action, _, err := compileNode(item, strict)
 		if err != nil {
 			return nil, err
-		}
-		if !include {
-			continue
 		}
 		if strict && action.Kind == ActionUnsupported {
 			return nil, fmt.Errorf("%w: <%s>", ErrUnsupported, action.Source)
@@ -350,7 +348,7 @@ func compileNodes(nodes []node, strict bool) ([]Action, error) {
 func compileNode(item node, strict bool) (Action, bool, error) {
 	switch item.Name {
 	case "base":
-		return Action{}, false, nil
+		return Action{Kind: ActionBase}, true, nil
 	case "set-header":
 		value := childText(item, "value")
 		if expression(value) {
@@ -860,6 +858,8 @@ func Execute(actions []Action, state *State) error {
 				target = state.Request.Header
 			}
 			setHeader(target, Header{Name: action.Name, Value: action.Value, Action: action.Action})
+		case ActionBase:
+			// Base markers are expanded by the gateway scope composer.
 		case ActionSetQueryParameter:
 			if state.Request == nil {
 				return fmt.Errorf("set-query-parameter requires a request")
@@ -1299,10 +1299,7 @@ func Execute(actions []Action, state *State) error {
 			if err := xml.Unmarshal(value, &document); err != nil {
 				return err
 			}
-			jsonValue, err := json.Marshal(map[string]any{document.Name: xmlNodeJSON(document)})
-			if err != nil {
-				return err
-			}
+			jsonValue, _ := json.Marshal(map[string]any{document.Name: xmlNodeJSON(document)})
 			state.Response.Body = io.NopCloser(strings.NewReader(string(jsonValue)))
 		case ActionJSONP:
 			if state.Response == nil || state.Request == nil || state.Request.URL == nil {
@@ -1415,9 +1412,7 @@ func jsonValueXML(name string, value any) (string, error) {
 		case nil:
 		default:
 			value := fmt.Sprint(typed)
-			if err := xml.EscapeText(&builder, []byte(value)); err != nil {
-				return err
-			}
+			_ = xml.EscapeText(&builder, []byte(value))
 		}
 		builder.WriteString("</" + tag + ">")
 		return nil

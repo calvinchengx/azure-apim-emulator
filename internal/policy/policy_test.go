@@ -987,7 +987,7 @@ func TestXMLToJSONPolicy(t *testing.T) {
 	if err != nil || len(plan.Outbound) != 1 || plan.Outbound[0].Kind != ActionXMLToJSON {
 		t.Fatalf("xml-to-json plan = %+v, %v", plan, err)
 	}
-	response := &http.Response{Body: io.NopCloser(strings.NewReader(`<root><name>Ada</name><item>one</item><item>two</item><nested><ok>true</ok></nested></root>`))}
+	response := &http.Response{Body: io.NopCloser(strings.NewReader(`<root><name>Ada</name><item>one</item><item>two</item><item>three</item><nested><ok>true</ok></nested></root>`))}
 	state := &State{Response: response}
 	if err := Execute(plan.Outbound, state); err != nil {
 		t.Fatal(err)
@@ -1001,7 +1001,7 @@ func TestXMLToJSONPolicy(t *testing.T) {
 		t.Fatalf("xml-to-json body = %q, %v", body, err)
 	}
 	root := document["root"].(map[string]any)
-	if root["name"] != "Ada" || len(root["item"].([]any)) != 2 || root["nested"].(map[string]any)["ok"] != "true" {
+	if root["name"] != "Ada" || len(root["item"].([]any)) != 3 || root["nested"].(map[string]any)["ok"] != "true" {
 		t.Fatalf("xml-to-json document = %#v", document)
 	}
 	if err := Execute(plan.Outbound, &State{Request: httptest.NewRequest(http.MethodGet, "/", nil)}); err == nil {
