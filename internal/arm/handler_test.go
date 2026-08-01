@@ -1868,6 +1868,10 @@ func TestAPIVersionSetDocumentFallbacks(t *testing.T) {
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"description":"hydrated"`) {
 		t.Fatalf("legacy version-set PATCH = %d %s", response.Code, response.Body.String())
 	}
+	response = request(t, handler, http.MethodPatch, path, `{"properties":{"versionQueryName":null}}`)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"versionQueryName":""`) {
+		t.Fatalf("legacy version-set null query name = %d %s", response.Code, response.Body.String())
+	}
 
 	wire := apiVersionSetWire(model.APIVersionSet{Name: "invalid", Document: map[string]any{"properties": "invalid"}})
 	if _, ok := wire["properties"].(map[string]any); !ok {

@@ -33,6 +33,7 @@ const (
 	ActionCacheLookup
 	ActionCacheStore
 	ActionValidateStatus
+	ActionValidateContent
 	ActionSetBackend
 	ActionRewriteURI
 	ActionForward
@@ -71,6 +72,9 @@ type Action struct {
 	CacheDuration time.Duration
 	StatusMin     int
 	StatusMax     int
+	ContentMax    int64
+	ContentAction string
+	ContentTypes  []string
 	Children      []Action
 	RetryCount    int
 	RetryInterval time.Duration
@@ -441,6 +445,32 @@ func compileNode(item node, strict bool) (Action, bool, error) {
 			return Action{}, false, fmt.Errorf("invalid validate-status-code range")
 		}
 		return Action{Kind: ActionValidateStatus, StatusMin: min, StatusMax: max, Action: strings.ToLower(item.Attrs["unspecified-code-action"]), FailedCode: http.StatusBadGateway, Value: item.Attrs["errors-variable-name"]}, true, nil
+	case "validate-content":
+		maxSize := int64(0)
+		if value := item.Attrs["max-size"]; value != "" {
+			if _, err := fmt.Sscanf(value, "%d", &maxSize); err != nil || maxSize < 0 {
+				return Action{}, false, fmt.Errorf("invalid validate-content max-size")
+			}
+		}
+		sizeAction := strings.ToLower(item.Attrs["size-exceeded-action"])
+		if sizeAction == "" {
+			sizeAction = "prevent"
+		}
+		if sizeAction != "prevent" && sizeAction != "ignore" {
+			return Action{}, false, fmt.Errorf("invalid validate-content size action")
+		}
+		contentTypes := []string{}
+		for _, child := range item.Children {
+			if child.Name != "content" || strings.TrimSpace(child.Attrs["type"]) == "" {
+				return unsupported(item.Name + "/" + child.Name), true, nil
+			}
+			actionType := strings.ToLower(child.Attrs["action"])
+			if actionType != "" && actionType != "prevent" && actionType != "ignore" {
+				return Action{}, false, fmt.Errorf("invalid validate-content content action")
+			}
+			contentTypes = append(contentTypes, strings.ToLower(strings.TrimSpace(child.Attrs["type"])))
+		}
+		return Action{Kind: ActionValidateContent, ContentMax: maxSize, ContentAction: sizeAction, ContentTypes: contentTypes, FailedCode: http.StatusBadRequest}, true, nil
 	case "set-backend-service":
 		value, backendID := item.Attrs["base-url"], item.Attrs["backend-id"]
 		if (value == "") == (backendID == "") || expression(value) || expression(backendID) {
@@ -730,6 +760,42 @@ func Execute(actions []Action, state *State) error {
 					}
 					state.Variables[action.Value] = fmt.Sprintf("%d", state.Response.StatusCode)
 				}
+				return nil
+			}
+		case ActionValidateContent:
+			var headers http.Header
+			var body io.ReadCloser
+			if state.Response != nil {
+				headers, body = state.Response.Header, state.Response.Body
+			} else if state.Request != nil {
+				headers, body = state.Request.Header, state.Request.Body
+			} else {
+				return fmt.Errorf("validate-content requires a request or response")
+			}
+			value, err := io.ReadAll(body)
+			if err != nil {
+				return err
+			}
+			if state.Response != nil {
+				state.Response.Body = io.NopCloser(strings.NewReader(string(value)))
+			} else {
+				state.Request.Body = io.NopCloser(strings.NewReader(string(value)))
+				state.Request.ContentLength = int64(len(value))
+			}
+			failed := (action.ContentMax > 0 && int64(len(value)) > action.ContentMax)
+			if len(action.ContentTypes) > 0 {
+				contentType := strings.ToLower(strings.Split(headers.Get("Content-Type"), ";")[0])
+				matched := false
+				for _, allowed := range action.ContentTypes {
+					if contentType == allowed {
+						matched = true
+						break
+					}
+				}
+				failed = failed || !matched
+			}
+			if failed && action.ContentAction != "ignore" {
+				state.Returned, state.StatusCode, state.Body = true, action.FailedCode, "content validation failed"
 				return nil
 			}
 		case ActionSetBackend:

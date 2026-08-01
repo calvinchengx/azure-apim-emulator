@@ -461,6 +461,53 @@ func TestValidateStatusCodePolicy(t *testing.T) {
 	}
 }
 
+func TestValidateContentPolicy(t *testing.T) {
+	plan, err := Compile(`<policies><inbound><validate-content max-size="4" size-exceeded-action="prevent"><content type="application/json"/></validate-content></inbound></policies>`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{}"))
+	request.Header.Set("Content-Type", "application/json")
+	state := &State{Request: request}
+	if err := Execute(plan.Inbound, state); err != nil || state.Returned {
+		t.Fatalf("valid content = %+v, %v", state, err)
+	}
+	value, _ := io.ReadAll(request.Body)
+	if string(value) != "{}" {
+		t.Fatalf("body replay = %q", value)
+	}
+	request = httptest.NewRequest(http.MethodPost, "/", strings.NewReader("toolong"))
+	request.Header.Set("Content-Type", "text/plain")
+	state = &State{Request: request}
+	if err := Execute(plan.Inbound, state); err != nil || !state.Returned || state.StatusCode != http.StatusBadRequest {
+		t.Fatalf("invalid content = %+v, %v", state, err)
+	}
+	ignore, err := Compile(`<policies><outbound><validate-content max-size="1" size-exceeded-action="ignore"/></outbound></policies>`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state = &State{Response: &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("long"))}}
+	if err := Execute(ignore.Outbound, state); err != nil || state.Returned {
+		t.Fatalf("ignored content = %+v, %v", state, err)
+	}
+	for _, value := range []string{`<policies><inbound><validate-content max-size="bad"/></inbound></policies>`, `<policies><inbound><validate-content size-exceeded-action="bad"/></inbound></policies>`, `<policies><inbound><validate-content><unknown/></validate-content></inbound></policies>`} {
+		if _, err := Compile(value, true); err == nil {
+			t.Fatalf("invalid content policy accepted: %s", value)
+		}
+	}
+	if _, err := Compile(`<policies><inbound><validate-content><content type="application/json" action="bad"/></validate-content></inbound></policies>`, true); err == nil {
+		t.Fatal("invalid content action accepted")
+	}
+	if err := Execute(plan.Inbound, &State{}); err == nil {
+		t.Fatal("content validation without request accepted")
+	}
+	badBody := &State{Request: httptest.NewRequest(http.MethodPost, "/", nil)}
+	badBody.Request.Body = errorBody{}
+	if err := Execute(plan.Inbound, badBody); err == nil {
+		t.Fatal("content body read error lost")
+	}
+}
+
 type errorBody struct{}
 
 func (errorBody) Read([]byte) (int, error) { return 0, errors.New("body read failed") }
