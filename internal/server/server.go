@@ -108,6 +108,8 @@ func (s *Server) register() {
 	s.mux.HandleFunc("GET /_emulator/portal/api/parity", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"p1": map[string]any{"status": "in-progress", "verified": true}, "coverage": "100.0%"})
 	})
+	s.mux.HandleFunc("GET /_emulator/portal/api/faults", func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, http.StatusOK, s.Gateway.FaultsSnapshot()) })
+	s.mux.HandleFunc("POST /_emulator/portal/api/faults", s.updateFault)
 	s.mux.HandleFunc("GET /_emulator/portal/api/policy", s.portalPolicy)
 	s.mux.HandleFunc("PUT /_emulator/portal/api/policy", s.portalPolicy)
 	s.mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -137,7 +139,31 @@ func (s *Server) portalStatus(w http.ResponseWriter, _ *http.Request) {
 		"clock":     map[string]any{"offset": offset, "frozen": frozen, "now": now},
 		"snapshot":  s.Gateway.SnapshotSummary(),
 		"resources": resources,
+		"faults":    s.Gateway.FaultsSnapshot(),
 	})
+}
+
+func (s *Server) updateFault(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Service   string `json:"service"`
+		Backend   string `json:"backend"`
+		Status    int    `json:"status"`
+		DelayMS   int    `json:"delayMs"`
+		Error     bool   `json:"error"`
+		Remaining int    `json:"remaining"`
+		Body      string `json:"body"`
+		Clear     bool   `json:"clear"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.Service) == "" || strings.TrimSpace(body.Backend) == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "service and backend are required"})
+		return
+	}
+	fault := gateway.Fault{Status: body.Status, DelayMS: body.DelayMS, Error: body.Error, Remaining: body.Remaining, Body: body.Body}
+	if body.Clear {
+		fault = gateway.Fault{}
+	}
+	s.Gateway.SetFault(body.Service, body.Backend, fault)
+	writeJSON(w, http.StatusOK, s.Gateway.FaultsSnapshot())
 }
 
 func (s *Server) portalPolicy(w http.ResponseWriter, r *http.Request) {

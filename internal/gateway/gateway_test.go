@@ -330,6 +330,70 @@ func TestGatewayCircuitBreakerOpenPath(t *testing.T) {
 	}
 }
 
+func TestGatewayFaultControls(t *testing.T) {
+	calls := 0
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("backend"))
+	}))
+	defer backend.Close()
+	runtime := New("emulator", backend.Client())
+	route := &Route{API: model.API{Name: "api", Path: "api", ServiceURL: backend.URL}, Operations: []model.Operation{{Method: http.MethodGet, URLTemplate: "/"}}}
+	runtime.current.Store(&Snapshot{Services: map[string]*Service{"emulator": {Name: "emulator", Routes: []*Route{route}}}})
+	runtime.SetFault("emulator", "", Fault{Status: http.StatusBadGateway, Body: "injected", Remaining: 1})
+	first := httptest.NewRecorder()
+	runtime.ServeHTTP(first, httptest.NewRequest(http.MethodGet, "/api", nil))
+	second := httptest.NewRecorder()
+	runtime.ServeHTTP(second, httptest.NewRequest(http.MethodGet, "/api", nil))
+	if first.Code != http.StatusBadGateway || first.Body.String() != "injected" || second.Code != http.StatusOK || calls != 1 {
+		t.Fatalf("fault responses = %d/%q, %d, calls %d", first.Code, first.Body.String(), second.Code, calls)
+	}
+	if len(runtime.FaultsSnapshot()) != 0 {
+		t.Fatal("one-shot fault was not removed")
+	}
+	runtime.SetFault("emulator", "", Fault{Error: true})
+	failed := httptest.NewRecorder()
+	runtime.ServeHTTP(failed, httptest.NewRequest(http.MethodGet, "/api", nil))
+	if failed.Code != http.StatusInternalServerError || !strings.Contains(failed.Body.String(), "injected backend fault") {
+		t.Fatalf("error fault = %d %s", failed.Code, failed.Body.String())
+	}
+	runtime.SetFault("emulator", "", Fault{})
+	runtime.SetFault("emulator", "*", Fault{DelayMS: 1, Remaining: 2})
+	if fault, ok := runtime.takeFault("emulator", "named"); !ok || fault.DelayMS != 1 {
+		t.Fatalf("wildcard fault = %+v %v", fault, ok)
+	}
+	if _, ok := runtime.takeFault("emulator", "named"); !ok {
+		t.Fatal("remaining wildcard fault disappeared early")
+	}
+	if _, ok := runtime.takeFault("emulator", "named"); ok {
+		t.Fatal("expired wildcard fault remained")
+	}
+	withBody := httptest.NewRecorder()
+	runtime.serveInjectedFault(withBody, httptest.NewRequest(http.MethodGet, "/", nil), policy.Plan{Outbound: []policy.Action{{Kind: policy.ActionSetBody, Body: "rewritten"}}}, &policy.State{Headers: make(http.Header)}, Fault{Status: http.StatusOK, DelayMS: 1})
+	if withBody.Code != http.StatusOK || withBody.Body.String() != "rewritten" {
+		t.Fatalf("injected body = %d %q", withBody.Code, withBody.Body.String())
+	}
+	returned := httptest.NewRecorder()
+	runtime.serveInjectedFault(returned, httptest.NewRequest(http.MethodGet, "/", nil), policy.Plan{Outbound: []policy.Action{{Kind: policy.ActionReturnResponse, StatusCode: http.StatusAccepted, Body: "returned"}}}, &policy.State{Headers: make(http.Header)}, Fault{Status: http.StatusOK})
+	if returned.Code != http.StatusAccepted || returned.Body.String() != "returned" {
+		t.Fatalf("injected return = %d %q", returned.Code, returned.Body.String())
+	}
+	broken := httptest.NewRecorder()
+	runtime.serveInjectedFault(broken, httptest.NewRequest(http.MethodGet, "/", nil), policy.Plan{Outbound: []policy.Action{{Kind: policy.ActionUnsupported, Source: "broken"}}}, &policy.State{Headers: make(http.Header)}, Fault{Status: http.StatusOK})
+	if broken.Code != http.StatusInternalServerError {
+		t.Fatalf("injected policy failure = %d", broken.Code)
+	}
+	defaultStatus := httptest.NewRecorder()
+	runtime.serveInjectedFault(defaultStatus, httptest.NewRequest(http.MethodGet, "/", nil), policy.Plan{}, &policy.State{Headers: make(http.Header)}, Fault{})
+	if defaultStatus.Code != http.StatusServiceUnavailable {
+		t.Fatalf("default injected status = %d", defaultStatus.Code)
+	}
+	if hosts := customHostnames(map[string]any{"properties": map[string]any{"hostnameConfigurations": []any{"invalid", map[string]any{"hostName": "portal.example"}}}}); !hosts["portal.example"] {
+		t.Fatalf("custom host extraction = %#v", hosts)
+	}
+}
+
 func TestGatewayOperationAndSubscriptionRejections(t *testing.T) {
 	runtime := New("emulator", nil)
 	route := &Route{API: model.API{Name: "api", Path: "api", SubscriptionRequired: true}, Operations: []model.Operation{{Method: http.MethodGet, URLTemplate: "/"}}, AcceptedKeys: map[string]bool{"valid": true}}

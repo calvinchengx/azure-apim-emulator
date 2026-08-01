@@ -37,7 +37,7 @@ Snapshot date: 2026-08-01
 | canonical diagnostic ARM documents | implemented | P1 | atomic service/API-scope lossless persistence, recursive complex-setting PATCH, indexed explicit-null/default synchronization, authoritative identity/type projection, logger validation and revision inheritance, exact aggregate coverage, and official Go SDK correlation/operation-name/pipeline/sampling witness; full telemetry schema and Azure differential fixture pending |
 | policy XML/inheritance | partial | P0-P2 | API-scope XML round-trip/compiler, service-scoped `{{named-value}}` substitution including secrets, last-known-good activation, structured traces, query-parameter/variable/body/method mutations, CORS, `check-header`, `validate-jwt` through the Entra validator, `ip-filter`, injected `send-request`, and retry execution; broader scope inheritance pending |
 | policy inventory | planned | P1-P2 | generated reference audit |
-| operator portal | partial | P1 | embedded status/snapshot/parity dashboard, trace navigation, controllable clock surface, persisted service/API summaries, and policy read/update editor using canonical validation/activation; fault injection and broader resource editors pending |
+| operator portal | partial | P1 | embedded status/snapshot/parity dashboard, trace navigation, controllable clock surface, persisted service/API summaries, policy read/update editor using canonical validation/activation, and deterministic backend fault injection; broader resource editors pending |
 | C# expression member inventory | planned | P2 | .NET vectors and Azure differential fuzzing |
 | developer portal | planned | P3 | portal API fixtures and Playwright journeys |
 | workspaces | planned | P4 | SDK/RBAC/isolation scenarios |

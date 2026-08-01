@@ -42,7 +42,7 @@ part of the identity expansion.
 - Core policy families: routing, mutation, control flow, auth, limits, cache, validation, send-request, transforms, and tracing.
   Literal query/body/variable/method mutations, CORS response/preflight handling, `check-header`, `validate-jwt` backed by the configured Entra validator, `ip-filter` validation, and injected `send-request` calls are implemented; the remaining families are still open.
 - Operator portal for resources, snapshots, traces, clock, faults, and parity.
-  The embedded operator portal now exposes runtime status, active snapshot, parity status, trace navigation, controllable clock state, persisted service/API summaries, and policy read/update editing under `/_emulator/portal/`; fault controls and broader resource editors remain open.
+  The embedded operator portal now exposes runtime status, active snapshot, parity status, trace navigation, controllable clock state, persisted service/API summaries, policy read/update editing, and deterministic backend fault controls under `/_emulator/portal/`; broader resource editors remain open.
 
 Exit: common APIM application-development and CI workflows run offline with
 official SDKs and documented policies.

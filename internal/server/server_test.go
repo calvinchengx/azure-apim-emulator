@@ -138,7 +138,7 @@ func TestControlAndDispatchEndpoints(t *testing.T) {
 	}
 	withValidator.Close()
 
-	for _, path := range []string{"/health", "/_emulator/clock", "/_emulator/portal/api/status", "/_emulator/portal/api/snapshot", "/_emulator/portal/api/parity"} {
+	for _, path := range []string{"/health", "/_emulator/clock", "/_emulator/portal/api/status", "/_emulator/portal/api/snapshot", "/_emulator/portal/api/parity", "/_emulator/portal/api/faults"} {
 		recorder := httptest.NewRecorder()
 		srv.Handler().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, path, nil))
 		if recorder.Code != http.StatusOK || recorder.Header().Get("Content-Type") != "application/json; charset=utf-8" {
@@ -149,6 +149,21 @@ func TestControlAndDispatchEndpoints(t *testing.T) {
 	srv.Handler().ServeHTTP(status, httptest.NewRequest(http.MethodGet, "/_emulator/portal/api/status", nil))
 	if !strings.Contains(status.Body.String(), `"name":"emulator"`) {
 		t.Fatalf("portal resource summary = %s", status.Body.String())
+	}
+	fault := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(fault, httptest.NewRequest(http.MethodPost, "/_emulator/portal/api/faults", strings.NewReader(`{"service":"emulator","backend":"default","status":503,"remaining":1}`)))
+	if fault.Code != http.StatusOK || !strings.Contains(fault.Body.String(), "emulator/default") {
+		t.Fatalf("fault update = %d %s", fault.Code, fault.Body.String())
+	}
+	badFault := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(badFault, httptest.NewRequest(http.MethodPost, "/_emulator/portal/api/faults", strings.NewReader("{")))
+	if badFault.Code != http.StatusBadRequest {
+		t.Fatalf("bad fault = %d", badFault.Code)
+	}
+	clearFault := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(clearFault, httptest.NewRequest(http.MethodPost, "/_emulator/portal/api/faults", strings.NewReader(`{"service":"emulator","backend":"default","clear":true}`)))
+	if clearFault.Code != http.StatusOK || strings.Contains(clearFault.Body.String(), "emulator/default") {
+		t.Fatalf("fault clear = %d %s", clearFault.Code, clearFault.Body.String())
 	}
 	scope := "/subscriptions/test/resourceGroups/test/providers/Microsoft.ApiManagement/service/emulator/apis/portal"
 	missingPolicy := httptest.NewRecorder()

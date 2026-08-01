@@ -81,6 +81,17 @@ type Runtime struct {
 	breakers             map[string]circuitState
 	policyTokenValidator func(string) error
 	policySendRequest    func(*http.Request) (*http.Response, error)
+	faultMu              sync.Mutex
+	faults               map[string]Fault
+}
+
+// Fault is a deterministic operator-injected backend outcome.
+type Fault struct {
+	Status    int    `json:"status,omitempty"`
+	DelayMS   int    `json:"delayMs,omitempty"`
+	Error     bool   `json:"error,omitempty"`
+	Remaining int    `json:"remaining,omitempty"`
+	Body      string `json:"body,omitempty"`
 }
 
 type circuitState struct {
@@ -118,7 +129,7 @@ func New(defaultService string, client *http.Client) *Runtime {
 	if client == nil {
 		client = http.DefaultClient
 	}
-	r := &Runtime{defaultService: defaultService, client: client, policySendRequest: client.Do, traces: map[string]Trace{}, breakers: map[string]circuitState{}}
+	r := &Runtime{defaultService: defaultService, client: client, policySendRequest: client.Do, traces: map[string]Trace{}, breakers: map[string]circuitState{}, faults: map[string]Fault{}}
 	r.current.Store(&Snapshot{Services: map[string]*Service{}})
 	return r
 }
@@ -126,6 +137,55 @@ func New(defaultService string, client *http.Client) *Runtime {
 // SetPolicyTokenValidator configures the validator used by gateway JWT policies.
 func (r *Runtime) SetPolicyTokenValidator(validate func(string) error) {
 	r.policyTokenValidator = validate
+}
+
+func faultKey(service, backend string) string {
+	return strings.ToLower(strings.TrimSpace(service) + "/" + strings.TrimSpace(backend))
+}
+
+// SetFault installs a fault; an empty fault clears it.
+func (r *Runtime) SetFault(service, backend string, fault Fault) {
+	r.faultMu.Lock()
+	defer r.faultMu.Unlock()
+	key := faultKey(service, backend)
+	if fault.Status == 0 && fault.DelayMS == 0 && !fault.Error && fault.Body == "" {
+		delete(r.faults, key)
+		return
+	}
+	r.faults[key] = fault
+}
+
+func (r *Runtime) FaultsSnapshot() map[string]Fault {
+	r.faultMu.Lock()
+	defer r.faultMu.Unlock()
+	result := make(map[string]Fault, len(r.faults))
+	for key, fault := range r.faults {
+		result[key] = fault
+	}
+	return result
+}
+
+func (r *Runtime) takeFault(service, backend string) (Fault, bool) {
+	r.faultMu.Lock()
+	defer r.faultMu.Unlock()
+	key := faultKey(service, backend)
+	fault, ok := r.faults[key]
+	if !ok {
+		key = faultKey(service, "*")
+		fault, ok = r.faults[key]
+	}
+	if !ok {
+		return Fault{}, false
+	}
+	if fault.Remaining > 0 {
+		fault.Remaining--
+		if fault.Remaining == 0 {
+			delete(r.faults, key)
+		} else {
+			r.faults[key] = fault
+		}
+	}
+	return fault, true
 }
 
 // Activate compiles all stored resources and atomically publishes them.
@@ -400,6 +460,10 @@ func (r *Runtime) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		r.policyFailure(w, req, route.Plan, state, fmt.Errorf("backend circuit breaker is open"))
 		return
 	}
+	if fault, ok := r.takeFault(service.Name, state.BackendID); ok {
+		r.serveInjectedFault(w, req, route.Plan, state, fault)
+		return
+	}
 	response, err := forwardWithRetry(client, req, state.BackendURL, state.Path, route.Plan.Backend)
 	r.recordCircuit(service, state.BackendID, response, err, time.Now())
 	if err != nil {
@@ -411,6 +475,37 @@ func (r *Runtime) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	traceEvent(trace, "outbound", "")
 	if err := policy.Execute(route.Plan.Outbound, state); err != nil {
 		r.policyFailure(w, req, route.Plan, state, err)
+		return
+	}
+	if state.Returned {
+		writePolicyResponse(w, state)
+		return
+	}
+	copyHeaders(w.Header(), response.Header)
+	copyHeaders(w.Header(), state.Headers)
+	w.WriteHeader(response.StatusCode)
+	if state.BodySet {
+		_, _ = io.WriteString(w, state.Body)
+	} else {
+		writeGatewayBody(w, response)
+	}
+}
+
+func (r *Runtime) serveInjectedFault(w http.ResponseWriter, req *http.Request, plan policy.Plan, state *policy.State, fault Fault) {
+	if fault.DelayMS > 0 {
+		time.Sleep(time.Duration(fault.DelayMS) * time.Millisecond)
+	}
+	if fault.Error {
+		r.policyFailure(w, req, plan, state, fmt.Errorf("injected backend fault"))
+		return
+	}
+	response := &http.Response{StatusCode: fault.Status, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(fault.Body))}
+	if response.StatusCode == 0 {
+		response.StatusCode = http.StatusServiceUnavailable
+	}
+	state.Response = response
+	if err := policy.Execute(plan.Outbound, state); err != nil {
+		r.policyFailure(w, req, plan, state, err)
 		return
 	}
 	if state.Returned {
