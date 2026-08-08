@@ -21,8 +21,8 @@ import (
 )
 
 const (
-	testSubscription = "11111111-1111-1111-1111-111111111111"
-	testServiceID    = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/test-rg/providers/Microsoft.ApiManagement/service/emulator"
+	testSubscription = "2fb9babf-9c3b-43d2-9c89-4cba46a6d5ed"
+	testServiceID    = "/subscriptions/2fb9babf-9c3b-43d2-9c89-4cba46a6d5ed/resourceGroups/test-rg/providers/Microsoft.ApiManagement/service/emulator"
 )
 
 func TestManagementToGatewayVerticalSlice(t *testing.T) {
