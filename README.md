@@ -1,5 +1,11 @@
 # azure-apim-emulator
 
+[![version](https://img.shields.io/github/v/release/calvinchengx/azure-apim-emulator?label=version)](https://github.com/calvinchengx/azure-apim-emulator/releases/latest)
+[![CI](https://github.com/calvinchengx/azure-apim-emulator/actions/workflows/ci.yml/badge.svg)](https://github.com/calvinchengx/azure-apim-emulator/actions/workflows/ci.yml)
+[![Docs](https://github.com/calvinchengx/azure-apim-emulator/actions/workflows/docs-site.yml/badge.svg)](https://calvinchengx.github.io/azure-apim-emulator/)
+[![CodeQL](https://github.com/calvinchengx/azure-apim-emulator/actions/workflows/codeql.yml/badge.svg)](https://github.com/calvinchengx/azure-apim-emulator/actions/workflows/codeql.yml)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+
 A clean-room, local emulator of the complete publicly observable Azure API
 Management product. The implementation will be a low-memory Go service with
 an embedded portal, real integration with `entra-emulator` and
