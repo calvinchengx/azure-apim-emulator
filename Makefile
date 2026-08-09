@@ -15,16 +15,16 @@ test-differential:
 	go test -count=1 -v ./e2e/differential
 
 setup-sdks:
-	npm install --prefix e2e/javascript
-	python3 -m venv e2e/python/.venv
-	e2e/python/.venv/bin/python -m pip install -r e2e/python/requirements.txt
+	pnpm install --frozen-lockfile
+	uv venv e2e/python/.venv
+	uv pip install --python e2e/python/.venv/bin/python -r e2e/python/requirements.txt
 	dotnet restore e2e/dotnet/Witness.csproj
 
 test-sdks:
 	APIM_RUN_EXTERNAL_SDK_TESTS=1 go test -count=1 -v ./e2e/sdk
 
 docs:
-	mkdocs build --strict
+	pnpm --filter azure-apim-emulator-docs build
 
 verify: build test test-coverage
 	go vet ./...
