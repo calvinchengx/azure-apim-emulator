@@ -27,7 +27,7 @@ type Config struct {
 func FromEnvPartial() *Config {
 	return &Config{
 		Addr:             envOr("APIM_ADDR", ":8445"),
-		DataDir:          os.Getenv("APIM_DATA_DIR"),
+		DataDir:          envDefault("APIM_DATA_DIR", DefaultDataDir),
 		DefaultService:   envOr("APIM_DEFAULT_SERVICE", "emulator"),
 		Location:         envOr("APIM_LOCATION", "local"),
 		DisableTLS:       boolEnv("APIM_DISABLE_TLS"),
@@ -67,6 +67,23 @@ func (c *Config) Finish() error {
 		c.EntraJWKSURL = base + "/discovery/v2.0/keys"
 	}
 	return nil
+}
+
+// DefaultDataDir is where state lands when APIM_DATA_DIR is not set at all.
+// The family persists by default: an emulator that forgets its services on
+// restart is a surprise.
+const DefaultDataDir = "./data"
+
+// envDefault distinguishes UNSET from SET-EMPTY, which envOr cannot: unset
+// takes the default, while an explicit empty value is honoured as empty. For
+// DataDir that is the difference between persisting and running in memory,
+// and the compose files use the empty form so a throwaway stack leaves no
+// SQLite file in a container layer about to be deleted.
+func envDefault(key, def string) string {
+	if v, ok := os.LookupEnv(key); ok {
+		return v
+	}
+	return def
 }
 
 func envOr(key, fallback string) string {
