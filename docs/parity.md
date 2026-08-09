@@ -6,6 +6,12 @@ added as implementation inventories are generated.
 
 Snapshot date: 2026-08-01
 
+Every row graded **implemented** or **sdk-verified** names its witness in
+[`docs/witnesses.json`](witnesses.json), and `scripts/check_witnesses.py
+--strict` fails CI if a witness stops existing — a green row whose evidence
+was renamed away is a claim the reader cannot audit. Rows graded *partial* or
+*planned* are exempt: they claim nothing yet.
+
 | Capability track | State | Target phase | Verification witness |
 |---|---|---:|---|
 | process/config/TLS/store/clock | implemented | P0 | Go tests, GoReleaser matrix, container and Compose smoke tests |
