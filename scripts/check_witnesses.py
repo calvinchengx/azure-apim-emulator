@@ -9,6 +9,15 @@ than no claim, because the reader cannot see it rotted. This binds the two:
   * every green ledger row must appear in docs/witnesses.json;
   * every witness it names must still exist in the tree.
 
+Witness kinds are ranked, because they are not equal evidence:
+
+  ci:<job>    a CI job driving a packaged external client over a network
+  sdk:<Test>  a Go test in which MICROSOFT'S OWN client does the talking —
+              armapimanagement over ARM's wire — third-party evidence, but
+              in-process, so it ranks below ci:
+  go:<Test>   a Go test using our own client: our reading of the contract on
+              both ends of the wire
+
 Rows graded `partial` or `planned` claim nothing yet and are exempt — the
 point is to hold the green rows to account, not to demand evidence for work
 that is honestly labelled unfinished.
@@ -85,11 +94,11 @@ def main():
             continue
         for w in witnesses:
             kind, _, name = w.partition(":")
-            if kind == "go" and name not in tests:
+            if kind in ("go", "sdk") and name not in tests:
                 errors.append(f"{cap!r} -> {w} (no such Go test)")
             elif kind == "ci" and name not in jobs:
                 errors.append(f"{cap!r} -> {w} (no such CI job)")
-            elif kind not in ("go", "ci"):
+            elif kind not in ("go", "sdk", "ci"):
                 errors.append(f"{cap!r} -> {w} (unknown witness kind {kind!r})")
 
     known = {c for c, _ in rows}
@@ -97,6 +106,7 @@ def main():
 
     print(f"green claims: {len(green)}")
     print(f"  witnessed        : {len(green) - len([e for e in errors if 'names no witness' in e])}")
+    print(f"  sdk: witnesses   : {sum(1 for ws in manifest.values() for w in ws if w.startswith('sdk:'))}")
     print(f"  go: witnesses    : {sum(1 for ws in manifest.values() for w in ws if w.startswith('go:'))}")
     print(f"  ci: witnesses    : {sum(1 for ws in manifest.values() for w in ws if w.startswith('ci:'))}")
     print(f"  partial/planned  : {len(rows) - len(green)} (exempt — they claim nothing yet)")

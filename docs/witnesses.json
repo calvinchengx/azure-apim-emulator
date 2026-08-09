@@ -7,7 +7,8 @@
     "row whose test was renamed or deleted is a lie the reader cannot see.",
     "",
     "Witness kinds:",
-    "  go:TestName  a Go test in this repo; the checker asserts it still exists",
+    "  go:TestName  a Go test in this repo using OUR client; asserted to exist",
+    "  sdk:TestName Microsoft's own client (armapimanagement) does the talking",
     "  ci:job-id    a CI job name in .github/workflows; asserted to still exist",
     "",
     "'partial' and 'planned' rows are deliberately NOT required to carry a witness",
@@ -43,6 +44,6 @@
     "canonical diagnostic ARM documents": ["go:TestDiagnosticEmissionAndSampling", "go:TestDiagnosticWriterCapabilities"],
     "operator portal": ["go:TestControlAndDispatchEndpoints"],
     "WebSocket/SSE": ["go:TestWebSocketGatewayTunnel", "go:TestWebSocketRequestDetection", "go:TestWriteGatewayBodyFlushesSSE"],
-    "Entra ARM authentication": ["go:TestGoManagementSDKAuthenticatesThroughEntraEmulator", "go:TestJWKSFailuresAndTLSClient"]
+    "Entra ARM authentication": ["sdk:TestGoManagementSDKAuthenticatesThroughEntraEmulator", "go:TestJWKSFailuresAndTLSClient"]
   }
 }
