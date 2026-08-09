@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"mime"
+	"net"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -1417,6 +1418,36 @@ func (h *Handler) apiResource(w http.ResponseWriter, r *http.Request, api model.
 
 const maxImportBytes = 4 << 20
 
+// guardImportHost mitigates SSRF on the linked-import feature: it blocks
+// fetching an API definition from a link-local / cloud-metadata address (the
+// classic target, e.g. 169.254.169.254), while still allowing loopback and
+// private hosts, which are normal when importing from a nearby backend during
+// local development. It resolves the host and rejects if any resolved address
+// is link-local, multicast, or unspecified. (Import-from-link is a first-class
+// Azure APIM feature that inherently fetches an operator-supplied URL; this
+// removes the dangerous targets without disabling the feature.)
+func guardImportHost(host string) error {
+	if host == "" {
+		return errors.New("linked API definition URL has no host")
+	}
+	var ips []net.IP
+	if literal := net.ParseIP(host); literal != nil {
+		ips = []net.IP{literal}
+	} else {
+		resolved, err := net.LookupIP(host)
+		if err != nil {
+			return fmt.Errorf("linked API definition host %q could not be resolved", host)
+		}
+		ips = resolved
+	}
+	for _, ip := range ips {
+		if ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsMulticast() || ip.IsUnspecified() {
+			return errors.New("linked API definition host is not allowed (link-local or metadata address)")
+		}
+	}
+	return nil
+}
+
 func (h *Handler) resolveImport(r *http.Request, format, value string) (string, string, error) {
 	linked := format == "openapi-link" || format == "openapi+json-link" || format == "swagger-link-json"
 	if !linked {
@@ -1431,6 +1462,9 @@ func (h *Handler) resolveImport(r *http.Request, format, value string) (string, 
 	sourceURL, err := url.Parse(value)
 	if err != nil || (sourceURL.Scheme != "http" && sourceURL.Scheme != "https") || sourceURL.Host == "" {
 		return "", "", errors.New("linked API definition must be an absolute HTTP or HTTPS URL")
+	}
+	if err := guardImportHost(sourceURL.Hostname()); err != nil {
+		return "", "", err
 	}
 	client := h.ImportClient
 	if client == nil {

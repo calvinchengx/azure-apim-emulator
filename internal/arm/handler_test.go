@@ -1244,6 +1244,40 @@ func TestOpenAPIImportExportAndLinkedImport(t *testing.T) {
 	}
 }
 
+func TestLinkedImportBlocksMetadataSSRF(t *testing.T) {
+	handler, st := testHandler(t)
+	seedService(t, st)
+	request := httptest.NewRequest(http.MethodPut, basePath+"/apis/a"+apiQuery, nil)
+
+	reached := false
+	handler.ImportClient = &http.Client{Transport: testRoundTripFunc(func(*http.Request) (*http.Response, error) {
+		reached = true
+		return nil, errors.New("import request must not escape the guard")
+	})}
+	for _, blocked := range []string{
+		"http://169.254.169.254/latest/meta-data/", // cloud metadata (IPv4 link-local)
+		"http://[fe80::1]/openapi",                 // IPv6 link-local
+		"http://0.0.0.0/openapi",                   // unspecified
+	} {
+		if _, _, err := handler.resolveImport(request, "openapi-link", blocked); err == nil {
+			t.Errorf("SSRF guard allowed blocked host %q", blocked)
+		}
+	}
+	if reached {
+		t.Fatal("a blocked import reached the network — the guard runs before the fetch")
+	}
+
+	// A loopback backend — the normal local-development case — stays allowed.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"openapi":"3.0.0","info":{"title":"A"},"paths":{}}`))
+	}))
+	defer server.Close()
+	handler.ImportClient = server.Client()
+	if _, _, err := handler.resolveImport(request, "openapi-link", server.URL); err != nil {
+		t.Fatalf("loopback import should be allowed: %v", err)
+	}
+}
+
 func TestOpenAPIImportTransportAndExportFailures(t *testing.T) {
 	handler, st := testHandler(t)
 	seedService(t, st)
