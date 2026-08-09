@@ -1427,6 +1427,10 @@ const maxImportBytes = 4 << 20
 // is link-local, multicast, or unspecified. (Import-from-link is a first-class
 // Azure APIM feature that inherently fetches an operator-supplied URL; this
 // removes the dangerous targets without disabling the feature.)
+// lookupIP resolves a hostname to IPs; a package var so tests can drive the
+// resolution-failure branch deterministically without depending on real DNS.
+var lookupIP = net.LookupIP
+
 func guardImportHost(host string) error {
 	if host == "" {
 		return errors.New("linked API definition URL has no host")
@@ -1435,7 +1439,7 @@ func guardImportHost(host string) error {
 	if literal := net.ParseIP(host); literal != nil {
 		ips = []net.IP{literal}
 	} else {
-		resolved, err := net.LookupIP(host)
+		resolved, err := lookupIP(host)
 		if err != nil {
 			return fmt.Errorf("linked API definition host %q could not be resolved", host)
 		}
@@ -1465,24 +1469,28 @@ func importAddressBlocked(ip net.IP) bool {
 // hook runs after resolution, immediately before connect, on the real
 // destination IP — so it closes that gap regardless of what DNS returns.
 func newImportClient() *http.Client {
-	dialer := &net.Dialer{
-		Timeout: 10 * time.Second,
-		Control: func(_, address string, _ syscall.RawConn) error {
-			host, _, err := net.SplitHostPort(address)
-			if err != nil {
-				return err
-			}
-			ip := net.ParseIP(host)
-			if ip == nil || importAddressBlocked(ip) {
-				return errors.New("linked API definition host is not allowed (link-local or metadata address)")
-			}
-			return nil
-		},
-	}
+	dialer := &net.Dialer{Timeout: 10 * time.Second, Control: importDialControl}
 	return &http.Client{
 		Timeout:   10 * time.Second,
 		Transport: &http.Transport{DialContext: dialer.DialContext},
 	}
+}
+
+// importDialControl is the net.Dialer.Control hook for the import client: it
+// runs on the resolved destination immediately before connect and refuses a
+// blocked SSRF target, closing the DNS-rebind gap. Split out (rather than an
+// inline closure) so every branch is directly testable — a real dial always
+// supplies host:port, so the malformed-address path is otherwise unreachable.
+func importDialControl(_, address string, _ syscall.RawConn) error {
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		return err
+	}
+	ip := net.ParseIP(host)
+	if ip == nil || importAddressBlocked(ip) {
+		return errors.New("linked API definition host is not allowed (link-local or metadata address)")
+	}
+	return nil
 }
 
 func (h *Handler) resolveImport(r *http.Request, format, value string) (string, string, error) {

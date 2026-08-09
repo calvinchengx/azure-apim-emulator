@@ -1318,10 +1318,66 @@ func TestImportClientDialerBlocksMetadata(t *testing.T) {
 	_ = resp.Body.Close()
 }
 
+func TestImportDialControl(t *testing.T) {
+	// Malformed address (no port) — the defensive SplitHostPort error path a
+	// real dial never reaches.
+	if err := importDialControl("tcp", "no-port-here", nil); err == nil {
+		t.Error("malformed dial address should error")
+	}
+	// A blocked target, and a non-IP host (ParseIP nil), are refused.
+	if err := importDialControl("tcp", "169.254.169.254:80", nil); err == nil {
+		t.Error("metadata address should be blocked at dial")
+	}
+	if err := importDialControl("tcp", "not-an-ip:80", nil); err == nil {
+		t.Error("unparseable dial host should be blocked")
+	}
+	// A loopback backend — the normal local-dev case — is allowed to connect.
+	if err := importDialControl("tcp", "127.0.0.1:8080", nil); err != nil {
+		t.Errorf("loopback dial should be allowed: %v", err)
+	}
+}
+
+func TestGuardImportHostEdges(t *testing.T) {
+	if err := guardImportHost(""); err == nil {
+		t.Error("empty host should error")
+	}
+	// IP literals skip resolution.
+	if err := guardImportHost("127.0.0.1"); err != nil {
+		t.Errorf("loopback literal should be allowed: %v", err)
+	}
+	if err := guardImportHost("169.254.169.254"); err == nil {
+		t.Error("metadata literal should be blocked")
+	}
+
+	// Hostnames go through the (injected) resolver — both outcomes, without
+	// depending on real DNS.
+	orig := lookupIP
+	defer func() { lookupIP = orig }()
+
+	lookupIP = func(string) ([]net.IP, error) { return nil, errors.New("nxdomain") }
+	if err := guardImportHost("backend.example"); err == nil {
+		t.Error("unresolvable host should error")
+	}
+	lookupIP = func(string) ([]net.IP, error) { return []net.IP{net.ParseIP("169.254.169.254")}, nil }
+	if err := guardImportHost("rebind.example"); err == nil {
+		t.Error("host resolving to a metadata address should be blocked")
+	}
+	lookupIP = func(string) ([]net.IP, error) { return []net.IP{net.ParseIP("10.0.0.5")}, nil }
+	if err := guardImportHost("backend.example"); err != nil {
+		t.Errorf("host resolving to a private address should be allowed: %v", err)
+	}
+}
+
 func TestOpenAPIImportTransportAndExportFailures(t *testing.T) {
 	handler, st := testHandler(t)
 	seedService(t, st)
 	request := httptest.NewRequest(http.MethodPut, basePath+"/apis/a"+apiQuery, nil)
+	// Resolve test hostnames to loopback so the SSRF host guard admits them and
+	// the transport/read error paths below are exercised (not short-circuited by
+	// a real-DNS lookup of the reserved example.test name).
+	origLookup := lookupIP
+	defer func() { lookupIP = origLookup }()
+	lookupIP = func(string) ([]net.IP, error) { return []net.IP{net.IPv4(127, 0, 0, 1)}, nil }
 	if _, _, err := handler.resolveImport(request, "openapi+json", strings.Repeat("x", maxImportBytes+1)); err == nil {
 		t.Fatal("oversized inline import succeeded")
 	}
