@@ -42,14 +42,17 @@ jobs:
         shell: bash
         run: for f in scripts/*.sh; do sh -n "$f"; done
 
-      - name: Recipes expand on this OS
+      # EVERY target, not a chosen few. `make -n setup-sdks` is what would
+      # have caught a hard-coded .venv/bin/python — a path that does not
+      # exist on Windows — in a recipe no Windows job ever expanded.
+      - name: Every recipe expands on this OS
         shell: bash
         run: |
-          make -n up
-          make -n down
-          make -n status
-          make -n doctor
-          make -n build
+          set -euo pipefail
+          for t in $(make -rpn 2>/dev/null | awk -F: '/^[a-z][a-z-]*:/ && !/=/ {print $1}' | sort -u); do
+            echo "--- make -n $t"
+            make -n "$t" >/dev/null
+          done
 
       - name: make build
         shell: bash

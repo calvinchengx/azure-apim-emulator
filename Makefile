@@ -31,7 +31,9 @@ test-differential:
 setup-sdks:
 	pnpm install --frozen-lockfile
 	uv venv e2e/python/.venv
-	uv pip install --python e2e/python/.venv/bin/python -r e2e/python/requirements.txt
+	# A venv DIRECTORY, not an interpreter path: uv resolves bin/python vs
+	# Scripts/python.exe itself, so this line works on Windows too.
+	uv pip install --python e2e/python/.venv -r e2e/python/requirements.txt
 	dotnet restore e2e/dotnet/Witness.csproj
 
 test-sdks:

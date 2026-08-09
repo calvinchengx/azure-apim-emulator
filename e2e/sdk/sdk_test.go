@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/calvinchengx/azure-apim-emulator/pkg/emulator"
@@ -45,8 +46,8 @@ func TestOfficialManagementSDKs(t *testing.T) {
 		args    []string
 		dir     string
 	}{
-		{"javascript", "npm", []string{"test"}, filepath.Join(root, "e2e", "javascript")},
-		{"python", filepath.Join(root, "e2e", "python", ".venv", "bin", "python"), []string{"witness.py"}, filepath.Join(root, "e2e", "python")},
+		{"javascript", "pnpm", []string{"test"}, filepath.Join(root, "e2e", "javascript")},
+		{"python", venvPython(root), []string{"witness.py"}, filepath.Join(root, "e2e", "python")},
 		{"dotnet", "dotnet", []string{"run", "--project", "Witness.csproj"}, filepath.Join(root, "e2e", "dotnet")},
 	}
 	for _, test := range tests {
@@ -61,4 +62,16 @@ func TestOfficialManagementSDKs(t *testing.T) {
 			t.Logf("%s", output)
 		})
 	}
+}
+
+// venvPython locates the interpreter inside the witness virtualenv. Windows
+// puts it in Scripts\python.exe; every other platform in bin/python. Hard-coding
+// the POSIX path made this suite unrunnable on Windows even though every other
+// witness works there.
+func venvPython(root string) string {
+	venv := filepath.Join(root, "e2e", "python", ".venv")
+	if runtime.GOOS == "windows" {
+		return filepath.Join(venv, "Scripts", "python.exe")
+	}
+	return filepath.Join(venv, "bin", "python")
 }
