@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/calvinchengx/azure-apim-emulator/internal/auth"
@@ -1441,11 +1442,47 @@ func guardImportHost(host string) error {
 		ips = resolved
 	}
 	for _, ip := range ips {
-		if ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsMulticast() || ip.IsUnspecified() {
+		if importAddressBlocked(ip) {
 			return errors.New("linked API definition host is not allowed (link-local or metadata address)")
 		}
 	}
 	return nil
+}
+
+// importAddressBlocked reports whether an IP is a forbidden SSRF target for the
+// linked-import fetch: link-local (169.254.0.0/16, fe80::/10 — covers the
+// 169.254.169.254 cloud-metadata endpoint), multicast, or the unspecified
+// address. Loopback and private ranges stay allowed, since importing from a
+// nearby backend is normal in local development.
+func importAddressBlocked(ip net.IP) bool {
+	return ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsMulticast() || ip.IsUnspecified()
+}
+
+// newImportClient builds the HTTP client used to fetch linked API definitions.
+// guardImportHost checks the host before the request, but that is a
+// time-of-check/time-of-use gap: DNS can rebind between the check and the
+// dial, resolving to a blocked address on the actual connection. The Control
+// hook runs after resolution, immediately before connect, on the real
+// destination IP — so it closes that gap regardless of what DNS returns.
+func newImportClient() *http.Client {
+	dialer := &net.Dialer{
+		Timeout: 10 * time.Second,
+		Control: func(_, address string, _ syscall.RawConn) error {
+			host, _, err := net.SplitHostPort(address)
+			if err != nil {
+				return err
+			}
+			ip := net.ParseIP(host)
+			if ip == nil || importAddressBlocked(ip) {
+				return errors.New("linked API definition host is not allowed (link-local or metadata address)")
+			}
+			return nil
+		},
+	}
+	return &http.Client{
+		Timeout:   10 * time.Second,
+		Transport: &http.Transport{DialContext: dialer.DialContext},
+	}
 }
 
 func (h *Handler) resolveImport(r *http.Request, format, value string) (string, string, error) {
@@ -1468,7 +1505,7 @@ func (h *Handler) resolveImport(r *http.Request, format, value string) (string, 
 	}
 	client := h.ImportClient
 	if client == nil {
-		client = &http.Client{Timeout: 10 * time.Second}
+		client = newImportClient()
 	}
 	request, _ := http.NewRequestWithContext(r.Context(), http.MethodGet, sourceURL.String(), nil)
 	response, err := client.Do(request)

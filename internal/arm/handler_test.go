@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -1276,6 +1277,45 @@ func TestLinkedImportBlocksMetadataSSRF(t *testing.T) {
 	if _, _, err := handler.resolveImport(request, "openapi-link", server.URL); err != nil {
 		t.Fatalf("loopback import should be allowed: %v", err)
 	}
+}
+
+func TestImportAddressBlocked(t *testing.T) {
+	cases := map[string]bool{
+		"169.254.169.254": true,  // cloud metadata (IPv4 link-local)
+		"169.254.1.1":     true,  // link-local
+		"fe80::1":         true,  // IPv6 link-local
+		"224.0.0.1":       true,  // multicast
+		"0.0.0.0":         true,  // unspecified
+		"127.0.0.1":       false, // loopback — allowed (local dev)
+		"10.0.0.5":        false, // private — allowed
+		"93.184.216.34":   false, // public — allowed
+	}
+	for ip, want := range cases {
+		if got := importAddressBlocked(net.ParseIP(ip)); got != want {
+			t.Errorf("importAddressBlocked(%s) = %v, want %v", ip, got, want)
+		}
+	}
+}
+
+// TestImportClientDialerBlocksMetadata verifies the connect-time guard: even if
+// guardImportHost is bypassed (e.g. DNS rebinding resolving to a blocked IP
+// after the pre-check), the dialer's Control hook refuses the connection.
+func TestImportClientDialerBlocksMetadata(t *testing.T) {
+	client := newImportClient()
+	if _, err := client.Get("http://169.254.169.254/latest/meta-data/"); err == nil {
+		t.Fatal("import client dialed the cloud-metadata address; connect-time guard failed")
+	}
+
+	// Loopback (the normal local-dev backend) still connects.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("ok"))
+	}))
+	defer server.Close()
+	resp, err := newImportClient().Get(server.URL)
+	if err != nil {
+		t.Fatalf("import client should reach a loopback backend: %v", err)
+	}
+	_ = resp.Body.Close()
 }
 
 func TestOpenAPIImportTransportAndExportFailures(t *testing.T) {
