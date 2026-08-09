@@ -4,7 +4,13 @@ This is the live top-level ledger. Detailed generated operation, policy,
 expression-member, portal-workflow, protocol, tier, and gateway matrices will be
 added as implementation inventories are generated.
 
-Snapshot date: 2026-08-01
+Snapshot date: 2026-08-09
+
+The date is when the grades were last **re-verified**, not merely edited: the
+Go suite green at 100% statement coverage, `go vet` clean, and
+`scripts/check_witnesses.py --strict` confirming every row graded
+`implemented` or `sdk-verified` names a witness that still exists. Re-stamp it
+only after doing that, or it becomes a claim of its own that nobody checked.
 
 Every row graded **implemented** or **sdk-verified** names its witness in
 [`docs/witnesses.json`](witnesses.json), and `scripts/check_witnesses.py
