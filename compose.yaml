@@ -1,18 +1,46 @@
+# The pair: entra-emulator issues the tokens, this emulator validates them —
+# the same trust relationship the rest of the family composes. `make up`.
+#
+# apim builds FROM SOURCE here rather than pulling its own release: `make up`
+# must test the code in the checkout, not the last thing GoReleaser shipped
+# (the family learned this in entra#40 when a release gate passed against a
+# stale image). entra IS pulled pinned — it is a dependency, not the thing
+# under test.
+#
+# Auth is ON, as in every family pair. For the auth-less single-process dev
+# loop the README documents:
+#   APIM_DISABLE_AUTH=true go run ./cmd/azure-apim-emulator --disable-tls
 services:
+  entra-emulator:
+    image: ghcr.io/calvinchengx/entra-emulator:${ENTRA_EMULATOR_VERSION:-0.4.1}
+    environment:
+      ORIGIN_MODE: compat
+      PUBLIC_ORIGIN: "https://entra-emulator:8443"
+    ports:
+      - "${ENTRA_PORT:-8443}:8443"
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/entra-emulator", "healthcheck"]
+      interval: 5s
+      timeout: 2s
+      retries: 10
+
   azure-apim-emulator:
     build: .
+    depends_on:
+      entra-emulator:
+        condition: service_healthy
     environment:
-      APIM_DISABLE_AUTH: "true"
+      APIM_ENTRA_ISSUER: "https://entra-emulator:8443/6f89cf12-978b-4d23-ac18-9ef0c127cf87/v2.0"
+      APIM_ENTRA_JWKS_URL: "https://entra-emulator:8443/6f89cf12-978b-4d23-ac18-9ef0c127cf87/discovery/v2.0/keys"
+      APIM_ENTRA_TLS_INSECURE: "true"
       APIM_DEFAULT_SERVICE: emulator
+      # In-memory: nothing outlives `docker compose down`. To persist, set
+      # this back to /data and add:  volumes: ["apim-data:/data"]
+      APIM_DATA_DIR: ""
     ports:
-      - "8445:8445"
-    volumes:
-      - apim-data:/data
+      - "${APIM_PORT:-8446}:8445" # host 8446: arm-emulator holds 8445 family-wide
     healthcheck:
       test: ["CMD", "/usr/local/bin/azure-apim-emulator", "healthcheck"]
       interval: 5s
       timeout: 3s
       retries: 10
-
-volumes:
-  apim-data:

@@ -1,4 +1,18 @@
-.PHONY: build docs test test-coverage test-differential test-sdks setup-sdks verify
+# Thin wrappers over the docker compose pair (entra + apim). The compose file
+# is the source of truth; these exist so the everyday cycle is one word each,
+# the same way the whole emulator family is driven.
+#
+# Windows: recipes run under sh.exe (Git for Windows). GNU Make falls back to
+# cmd.exe when it cannot find a shell, and cmd cannot run a line of this.
+ifeq ($(OS),Windows_NT)
+  SHELL := sh.exe
+  .SHELLFLAGS := -c
+endif
+
+COMPOSE = docker compose -f compose.yaml
+
+.PHONY: build docs test test-coverage test-differential test-sdks setup-sdks verify \
+        up down clean status doctor ps logs
 
 build:
 	go build ./...
@@ -28,3 +42,24 @@ docs:
 
 verify: build test test-coverage
 	go vet ./...
+
+up: ## Start the pair (entra pinned + apim built from source)
+	$(COMPOSE) up -d --build --wait
+
+down:
+	$(COMPOSE) down
+
+clean:
+	$(COMPOSE) down -v
+
+status: ## Is the pair actually usable? (non-zero exit if not)
+	@sh scripts/status.sh
+
+doctor: ## Check the toolchain this Makefile needs
+	@sh scripts/doctor.sh
+
+ps:
+	$(COMPOSE) ps
+
+logs:
+	$(COMPOSE) logs -f --tail 100

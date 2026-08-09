@@ -9,7 +9,13 @@ permissions:
   contents: write
 
 jobs:
+  # The release gate: the same cross-OS make-targets run every push gets.
+  # A tag whose Makefile or compose is broken must not ship.
+  make-targets:
+    uses: ./.github/workflows/make-targets.yml
+
   goreleaser:
+    needs: make-targets
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7

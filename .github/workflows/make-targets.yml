@@ -1,0 +1,70 @@
+name: Make targets
+
+# The Makefile is the documented entry point, so it gets the same cross-OS
+# guarantee the Go tests have — the failures this catches (CRLF shebangs,
+# Windows' python3 Store stub, Make falling back to cmd.exe, unquoted
+# variables) are platform-specific and invisible on Linux.
+#
+# Docker coverage is Linux-only by necessity: macOS runners have no daemon,
+# Windows runners run only Windows containers. There the container targets
+# are checked for correct EXPANSION (make -n), which still catches the
+# variable and quoting bug classes.
+
+on:
+  workflow_call: # release.yml gates on this
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  make-targets:
+    name: make targets (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: 1.25.11
+          cache: true
+
+      - name: Install GNU Make (Windows only)
+        if: runner.os == 'Windows'
+        run: choco install make --no-progress -y
+
+      - name: Shell scripts parse
+        shell: bash
+        run: for f in scripts/*.sh; do sh -n "$f"; done
+
+      - name: Recipes expand on this OS
+        shell: bash
+        run: |
+          make -n up
+          make -n down
+          make -n status
+          make -n doctor
+          make -n build
+
+      - name: make build
+        shell: bash
+        run: make build
+
+      - name: make up / status / down (Linux only — the one OS with Docker)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          make up
+          make status
+          make down
+
+      - name: Diagnose on failure
+        if: failure() && runner.os == 'Linux'
+        shell: bash
+        run: docker compose -f compose.yaml logs --no-color --tail 200 || true
