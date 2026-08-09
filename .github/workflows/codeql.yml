@@ -1,0 +1,71 @@
+# CodeQL — advanced (in-repo) setup, replacing the repo's Default setup.
+#
+# Scoped to FIRST-PARTY code only:
+#   - go                    the emulator (root module)
+#   - javascript-typescript the docs website
+#   - actions               these workflows
+#
+# Deliberately NOT scanned: python, csharp, javascript — those exist only as
+# external-SDK witness harnesses under e2e/. They are Microsoft's clients
+# driven by a few lines of our glue; scanning them reports on code we neither
+# author nor ship, and autobuild would need a restore/build of each. The docs
+# website is Astro, which is code we do ship, so it is scanned.
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '31 7 * * 1' # weekly, Monday 07:31 UTC
+
+# Superseding a PR run is free money. Superseding a main run is not: a cancelled
+# CodeQL job still uploads its SARIF, flagged `unsuccessful execution` with zero
+# results, and that errored analysis becomes the newest one for its category —
+# which is what the code-scanning tool status page then reports. So main runs to
+# completion; only PR pushes cancel.
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      security-events: write
+      packages: read
+      actions: read
+      contents: read
+    strategy:
+      fail-fast: false # one language's failure must not hide the others
+      matrix:
+        include:
+          - language: go
+            build-mode: autobuild
+          - language: javascript-typescript
+            build-mode: none
+          - language: actions
+            build-mode: none
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      # Pin the Go toolchain so autobuild compiles the root module cleanly.
+      - if: matrix.language == 'go'
+        uses: actions/setup-go@v7
+        with:
+          go-version: '1.25'
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4.37.3
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v4.37.3
+        with:
+          category: '/language:${{ matrix.language }}'

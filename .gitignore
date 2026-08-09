@@ -26,7 +26,6 @@ vendor/
 # Node projects
 node_modules/
 website/dist/
-site/
 website/src/content/docs/
 portal/test-results/
 portal/playwright-report/

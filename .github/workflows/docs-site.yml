@@ -1,0 +1,80 @@
+name: Docs site
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docs/**'
+      - 'website/**'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - 'package.json'
+      - '.github/workflows/docs-site.yml'
+  # Pull requests build the site as a check: the docs generator shells out to
+  # git for the parity versions, so a PR that breaks it should fail here rather
+  # than after merge. Build only: the deploy job is skipped below.
+  pull_request:
+    paths:
+      - 'docs/**'
+      - 'website/**'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - 'package.json'
+      - '.github/workflows/docs-site.yml'
+  workflow_dispatch:
+
+# Allow the deploy job to publish to GitHub Pages.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One in-flight deploy at a time; don't cancel a running publish.
+#
+# PR builds get their OWN group, per ref. They must not share the deploy group:
+# GitHub keeps at most one PENDING run per concurrency group and cancels the
+# older one when a newer arrives, so while runners are saturated a steady
+# arrival of PR builds cancels the queued main-branch run over and over and the
+# site never publishes. This repo demonstrated it: a Dependabot batch cancelled
+# the deploys for two consecutive main pushes, with no error anywhere to say so
+# — a cancelled run reads exactly like a harmless supersession.
+#
+# PR builds also cancel their own predecessors (only the newest matters);
+# deploys never cancel a running publish.
+concurrency:
+  group: ${{ github.event_name == 'pull_request' && format('pages-pr-{0}', github.ref) || 'pages' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    name: Build Starlight site
+    runs-on: ubuntu-latest
+    steps:
+      # Shallow is fine: unlike the other family sites, this one generates no
+      # per-release parity snapshots yet, so nothing reads the tag history.
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter azure-apim-emulator-docs build
+      - uses: actions/upload-pages-artifact@v5
+        if: github.event_name != 'pull_request'
+        with:
+          path: website/dist
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build
+    # PRs get the build as a check only. Deploying from a PR ref would be
+    # rejected by the github-pages environment regardless.
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5

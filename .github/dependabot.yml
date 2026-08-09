@@ -1,0 +1,70 @@
+version: 2
+
+# Managed, grouped dependency updates.
+#
+# This repo has an unusual stake in staying current: the real Microsoft SDKs
+# ARE the parity witnesses. A stale @azure/arm-apimanagement is not just an old
+# dependency, it is a witness testifying about an old wire contract — so each
+# SDK suite gets its own grouped PR, and each such PR is a re-run of the
+# witness suite against the newest clients Microsoft ships. A red one is a real
+# parity signal, not upgrade noise.
+updates:
+  # The emulator itself, plus the Go witness suite in the same module.
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      azure-sdk:
+        patterns: ['github.com/Azure/azure-sdk-for-go/*']
+      go:
+        patterns: ['*']
+        exclude-patterns: ['github.com/Azure/azure-sdk-for-go/*']
+
+  # The JavaScript witness suite: one PR moves every @azure/* client together,
+  # so CI proves the emulator against a self-consistent SDK set.
+  - package-ecosystem: npm
+    directory: /e2e/javascript
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    groups:
+      e2e-js:
+        patterns: ['*']
+
+  # The Python witness suite.
+  - package-ecosystem: pip
+    directory: /e2e/python
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    groups:
+      e2e-python:
+        patterns: ['*']
+
+  # The .NET witness suite.
+  - package-ecosystem: nuget
+    directory: /e2e/dotnet
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    groups:
+      e2e-dotnet:
+        patterns: ['*']
+
+  # These workflows. Grouped, because a partial actions bump is how a matrix
+  # ends up half on one major and half on another.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    groups:
+      actions:
+        patterns: ['*']
+
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
