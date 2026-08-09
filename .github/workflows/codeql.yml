@@ -1,15 +1,15 @@
 # CodeQL — advanced (in-repo) setup, replacing the repo's Default setup.
 #
 # Scoped to FIRST-PARTY code only:
-#   - go       the emulator (root module)
-#   - actions  these workflows
+#   - go                    the emulator (root module)
+#   - javascript-typescript the docs website
+#   - actions               these workflows
 #
 # Deliberately NOT scanned: python, csharp, javascript — those exist only as
 # external-SDK witness harnesses under e2e/. They are Microsoft's clients
 # driven by a few lines of our glue; scanning them reports on code we neither
-# author nor ship, and autobuild would need a restore/build of each. When the
-# docs site lands as Astro, javascript-typescript joins this matrix, because
-# that is code we do ship.
+# author nor ship, and autobuild would need a restore/build of each. The docs
+# website is Astro, which is code we do ship, so it is scanned.
 name: CodeQL
 
 on:
@@ -45,6 +45,8 @@ jobs:
         include:
           - language: go
             build-mode: autobuild
+          - language: javascript-typescript
+            build-mode: none
           - language: actions
             build-mode: none
     steps:
