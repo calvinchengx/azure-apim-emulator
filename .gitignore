@@ -9,6 +9,8 @@ data/
 /dist/
 /bin/
 cover.out
+# make test-coverage writes this raw profile, then folds it into cover.out
+cover.raw
 e2e/javascript/node_modules/
 e2e/python/.venv/
 e2e/dotnet/bin/
