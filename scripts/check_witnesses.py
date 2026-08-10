@@ -52,11 +52,30 @@ def ledger_rows():
 
 
 def go_tests():
+    """Every runnable test name, top-level and subtest.
+
+    Subtests count as names in their own right, and deliberately so: one
+    thousand-line test driving twenty resource families is a single witness
+    covering twenty claims, which is exactly the bundling this checker exists
+    to expose. Naming `TestX/tag` binds the tag claim to the block that
+    actually asserts tag behavior, and `go test -run 'TestX/tag'` runs it.
+    """
     names = set()
     for path in ROOT.rglob("*_test.go"):
         if "node_modules" in path.parts or "/build/" in str(path):
             continue
-        names.update(re.findall(r"^func (Test[A-Za-z0-9_]+)", path.read_text(), re.M))
+        parent = None
+        for line in path.read_text().splitlines():
+            top = re.match(r"^func (Test[A-Za-z0-9_]+)", line)
+            if top:
+                parent = top.group(1)
+                names.add(parent)
+                continue
+            sub = re.search(r"""\bt\.Run\(["`]([^"`]+)["`]""", line)
+            if sub and parent:
+                # go test rewrites spaces to underscores when it names a
+                # subtest, so the manifest must cite the rewritten form.
+                names.add(f"{parent}/{sub.group(1).replace(' ', '_')}")
     return names
 
 
@@ -110,6 +129,20 @@ def main():
     print(f"  go: witnesses    : {sum(1 for ws in manifest.values() for w in ws if w.startswith('go:'))}")
     print(f"  ci: witnesses    : {sum(1 for ws in manifest.values() for w in ws if w.startswith('ci:'))}")
     print(f"  partial/planned  : {len(rows) - len(green)} (exempt — they claim nothing yet)")
+
+    # A witness carrying many claims is where over-crediting hides: the name
+    # looks like evidence for each row, but one failure mode inside it is all
+    # that any of them really proves. Surfaced, not failed, because a genuinely
+    # broad witness (a CI job running four SDK suites) is legitimate.
+    carrying = {}
+    for cap in green:
+        for w in manifest.get(cap, []):
+            carrying.setdefault(w, []).append(cap)
+    heavy = sorted(((w, c) for w, c in carrying.items() if len(c) > 3), key=lambda x: -len(x[1]))
+    if heavy:
+        print("\nWitnesses carrying many claims (check none is over-credited):")
+        for w, covered in heavy:
+            print(f"  {w}: {len(covered)} claims")
 
     if dangling:
         print("\nManifest entries matching no ledger row:")
