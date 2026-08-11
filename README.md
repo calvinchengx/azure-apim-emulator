@@ -108,6 +108,10 @@ stable contract.
 - `azure-keyvault-emulator` supplies Key Vault-backed named values and certificates.
 - `fabric-emulator` can be placed behind the gateway as a realistic protected backend.
 
+To run them together, see [**azure-emulators**](https://github.com/calvinchengx/azure-emulators): a composition-only
+repo holding the family `docker-compose.yml`, the shared issuer wiring, and the
+pinned image versions the members are tested against.
+
 ## License intent
 
 Apache-2.0, matching the emulator family. Implementation will be clean-room,
