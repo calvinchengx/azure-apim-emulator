@@ -47,6 +47,10 @@ make test-differential
 The default listener is `http://localhost:8445` in this development mode. ARM
 requests use `management.azure.localhost`; gateway requests use
 `{service}.azure-api.localhost` or plain localhost for the seeded service.
+Note: 8445 is also `arm-emulator`'s port in the family compose (see
+[azure-emulators](https://github.com/calvinchengx/azure-emulators)), which is
+why that compose maps this service to 8446 instead. Running this dev binary
+next to a containerised `arm-emulator` will collide on 8445.
 `make test-coverage` enforces 100% aggregate statement coverage across the
 current Go implementation. Run the full build, race, coverage, and vet suite
 with `make verify`.
@@ -107,6 +111,8 @@ stable contract.
   gateway, portal, and managed-identity flows.
 - `azure-keyvault-emulator` supplies Key Vault-backed named values and certificates.
 - `fabric-emulator` can be placed behind the gateway as a realistic protected backend.
+- `arm-emulator` is deliberately not a dependency: this emulator serves its own
+  `Microsoft.ApiManagement` ARM surface rather than calling out to arm-emulator's.
 
 To run them together, see [**azure-emulators**](https://github.com/calvinchengx/azure-emulators): a composition-only
 repo holding the family `docker-compose.yml`, the shared issuer wiring, and the
