@@ -241,11 +241,18 @@ func (h *Handler) applyCollectionSelectors(values []any, query url.Values, rt ro
 			}
 			properties := resourceProperties(resource)
 			if _, present := properties["isKeyVaultRefreshFailed"]; !present {
-				properties["isKeyVaultRefreshFailed"] = false
+				properties["isKeyVaultRefreshFailed"] = keyVaultRefreshFailed(properties)
 			}
 		}
 	}
 	return values, nil
+}
+
+func keyVaultRefreshFailed(properties map[string]any) bool {
+	keyVault, _ := properties["keyVault"].(map[string]any)
+	status, _ := keyVault["lastStatus"].(map[string]any)
+	code, _ := status["code"].(string)
+	return code != "" && !strings.EqualFold(code, "Success")
 }
 
 func (h *Handler) filterProductsByTag(values []any, want string) ([]any, error) {

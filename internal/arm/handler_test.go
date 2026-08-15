@@ -1,6 +1,7 @@
 package arm
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -23,6 +24,7 @@ import (
 
 	"github.com/calvinchengx/azure-apim-emulator/internal/auth"
 	"github.com/calvinchengx/azure-apim-emulator/internal/clock"
+	"github.com/calvinchengx/azure-apim-emulator/internal/keyvault"
 	"github.com/calvinchengx/azure-apim-emulator/internal/model"
 	"github.com/calvinchengx/azure-apim-emulator/internal/store"
 	"software.sslmate.com/src/go-pkcs12"
@@ -462,8 +464,9 @@ func TestCollectionSelectors(t *testing.T) {
 	projected, err := handler.applyCollectionSelectors([]any{
 		map[string]any{"properties": map[string]any{"isKeyVaultRefreshFailed": true}},
 		map[string]any{"properties": map[string]any{}},
+		map[string]any{"properties": map[string]any{"keyVault": map[string]any{"lastStatus": map[string]any{"code": "NotFound"}}}},
 	}, url.Values{"isKeyVaultRefreshFailed": {"true"}}, route{Tail: []string{"namedValues"}})
-	if err != nil || projected[1].(map[string]any)["properties"].(map[string]any)["isKeyVaultRefreshFailed"] != false {
+	if err != nil || projected[1].(map[string]any)["properties"].(map[string]any)["isKeyVaultRefreshFailed"] != false || projected[2].(map[string]any)["properties"].(map[string]any)["isKeyVaultRefreshFailed"] != true {
 		t.Fatalf("Key Vault projection = %#v, %v", projected, err)
 	}
 	if _, err := handler.applyCollectionSelectors([]any{"scalar"}, url.Values{"isKeyVaultRefreshFailed": {"true"}}, route{Tail: []string{"certificates"}}); err == nil {
@@ -2845,6 +2848,111 @@ func TestAPISchemaDocumentFallback(t *testing.T) {
 	}
 }
 
+func TestKeyVaultRetrieval(t *testing.T) {
+	handler, st := testHandler(t)
+	seedService(t, st)
+	pfx := testPKCS12(t, "")
+	secrets := mapSecrets{
+		"https://vault.test/secrets/token":  {Value: "rotated"},
+		"https://vault.test/secrets/client": {Value: pfx, ContentType: "application/x-pkcs12"},
+		"https://vault.test/secrets/bad":    {Value: "not-a-certificate"},
+	}
+	handler.Secrets = secrets
+	namedPath := basePath + "/namedValues/vault-token" + apiQuery
+	assertStatus(t, handler, http.MethodPut, namedPath, `{"properties":{"displayName":"VaultToken","secret":true,"keyVault":{"secretIdentifier":"https://vault.test/secrets/token","identityClientId":"identity"}}}`, http.StatusCreated)
+	listed := request(t, handler, http.MethodPost, basePath+"/namedValues/vault-token/listValue"+apiQuery, "")
+	if listed.Code != http.StatusOK || !strings.Contains(listed.Body.String(), `"value":"rotated"`) {
+		t.Fatalf("retrieved named value = %d %s", listed.Code, listed.Body.String())
+	}
+	secrets["https://vault.test/secrets/token"] = keyvault.Secret{Value: "again"}
+	refreshed := request(t, handler, http.MethodPost, basePath+"/namedValues/vault-token/refreshSecret"+apiQuery, "")
+	if refreshed.Code != http.StatusOK || !strings.Contains(refreshed.Body.String(), `"code":"Success"`) {
+		t.Fatalf("named value refresh = %d %s", refreshed.Code, refreshed.Body.String())
+	}
+	delete(secrets, "https://vault.test/secrets/token")
+	failed := request(t, handler, http.MethodPost, basePath+"/namedValues/vault-token/refreshSecret"+apiQuery, "")
+	if failed.Code != http.StatusOK || !strings.Contains(failed.Body.String(), `"code":"NotFound"`) {
+		t.Fatalf("named value last-known-good = %d %s", failed.Code, failed.Body.String())
+	}
+	kept := request(t, handler, http.MethodPost, basePath+"/namedValues/vault-token/listValue"+apiQuery, "")
+	if !strings.Contains(kept.Body.String(), `"value":"again"`) {
+		t.Fatalf("named value last-known-good value = %s", kept.Body.String())
+	}
+	failedList := request(t, handler, http.MethodGet, basePath+"/namedValues"+apiQuery+"&isKeyVaultRefreshFailed=true", "")
+	if !strings.Contains(failedList.Body.String(), `"isKeyVaultRefreshFailed":true`) {
+		t.Fatalf("failed named-value projection = %s", failedList.Body.String())
+	}
+
+	certPath := basePath + "/certificates/vault-client" + apiQuery
+	created := request(t, handler, http.MethodPut, certPath, `{"properties":{"keyVault":{"secretIdentifier":"https://vault.test/secrets/client"}}}`)
+	if created.Code != http.StatusCreated || !strings.Contains(created.Body.String(), `"code":"Success"`) || !strings.Contains(created.Body.String(), `"CN=client.test"`) {
+		t.Fatalf("retrieved certificate = %d %s", created.Code, created.Body.String())
+	}
+	delete(secrets, "https://vault.test/secrets/client")
+	certFailed := request(t, handler, http.MethodPost, basePath+"/certificates/vault-client/refreshSecret"+apiQuery, "")
+	if certFailed.Code != http.StatusOK || !strings.Contains(certFailed.Body.String(), `"code":"NotFound"`) || !strings.Contains(certFailed.Body.String(), `"CN=client.test"`) {
+		t.Fatalf("certificate last-known-good = %d %s", certFailed.Code, certFailed.Body.String())
+	}
+	assertStatus(t, handler, http.MethodPut, basePath+"/certificates/bad-vault"+apiQuery, `{"properties":{"keyVault":{"secretIdentifier":"https://vault.test/secrets/bad"}}}`, http.StatusCreated)
+	gotBad, err := st.GetCertificate(serviceModel().ID() + "/certificates/bad-vault")
+	if err != nil || gotBad.KeyVaultStatusCode != "Error" || len(gotBad.Data) != 0 {
+		t.Fatalf("invalid certificate secret = %+v, %v", gotBad, err)
+	}
+
+	handler.Activate = func() error { return errors.New("activation") }
+	assertStatus(t, handler, http.MethodPost, basePath+"/namedValues/vault-token/refreshSecret"+apiQuery, "", http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPost, basePath+"/certificates/vault-client/refreshSecret"+apiQuery, "", http.StatusBadRequest)
+	handler.Activate = nil
+
+	if result := keyVaultWire("https://vault/secrets/name", "id", "", "", time.Time{}); result["lastStatus"] != nil {
+		t.Fatalf("empty lastStatus wire = %#v", result)
+	}
+	if decode := decodeKeyVaultCertificate("not-base64"); string(decode) != "not-base64" {
+		t.Fatalf("raw certificate decode = %q", decode)
+	}
+	if (&Handler{}).keyVaultNow().IsZero() {
+		t.Fatal("nil-store clock")
+	}
+	if _, ok := (&Handler{ImportClient: http.DefaultClient}).secretRetriever().(keyvault.HTTP); !ok {
+		t.Fatal("default secret retriever")
+	}
+
+	dir := t.TempDir()
+	broken, err := store.Open(dir, clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer broken.Close()
+	seedService(t, broken)
+	if _, err := broken.UpsertNamedValue(model.NamedValue{ServiceID: serviceModel().ID(), Name: "broken", DisplayName: "Broken", KeyVaultSecretID: "https://vault.test/secrets/token"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := broken.UpsertCertificate(model.Certificate{ServiceID: serviceModel().ID(), Name: "broken", KeyVaultSecretID: "https://vault.test/secrets/client"}); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", filepath.Join(dir, "azure-apim-emulator.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`CREATE TRIGGER reject_nv_write BEFORE INSERT ON named_values BEGIN SELECT RAISE(FAIL, 'rejected'); END;
+		CREATE TRIGGER reject_cert_write BEFORE INSERT ON certificates BEGIN SELECT RAISE(FAIL, 'rejected'); END`); err != nil {
+		t.Fatal(err)
+	}
+	brokenHandler := &Handler{Store: broken, Auth: auth.AllowAll{}, Secrets: mapSecrets{"https://vault.test/secrets/token": {Value: "x"}, "https://vault.test/secrets/client": {Value: pfx}}}
+	assertStatus(t, brokenHandler, http.MethodPost, basePath+"/namedValues/broken/refreshSecret"+apiQuery, "", http.StatusConflict)
+	assertStatus(t, brokenHandler, http.MethodPost, basePath+"/certificates/broken/refreshSecret"+apiQuery, "", http.StatusConflict)
+}
+
+type mapSecrets map[string]keyvault.Secret
+
+func (m mapSecrets) GetSecret(_ context.Context, id string) (keyvault.Secret, error) {
+	if secret, ok := m[id]; ok {
+		return secret, nil
+	}
+	return keyvault.Secret{}, &keyvault.StatusError{Code: "NotFound", Message: "missing", Status: http.StatusNotFound}
+}
+
 func testPKCS12(t *testing.T, password string) string {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -2958,6 +3066,7 @@ func TestClosedStoreWriteErrors(t *testing.T) {
 	assertStatus(t, handler, http.MethodDelete, basePath+"/apiVersionSets/v"+apiQuery, "", http.StatusConflict)
 	assertStatus(t, handler, http.MethodGet, basePath+"/namedValues"+apiQuery, "", http.StatusConflict)
 	assertStatus(t, handler, http.MethodPut, basePath+"/namedValues/v"+apiQuery, `{"properties":{"displayName":"V","value":"value"}}`, http.StatusConflict)
+	assertStatus(t, handler, http.MethodPost, basePath+"/namedValues/v/refreshSecret"+apiQuery, "", http.StatusConflict)
 	assertStatus(t, handler, http.MethodDelete, basePath+"/namedValues/v"+apiQuery, "", http.StatusConflict)
 	assertStatus(t, handler, http.MethodGet, basePath+"/backends"+apiQuery, "", http.StatusConflict)
 	assertStatus(t, handler, http.MethodPut, basePath+"/backends/v"+apiQuery, `{"properties":{"url":"https://backend","protocol":"http"}}`, http.StatusConflict)
@@ -2987,6 +3096,7 @@ func TestClosedStoreWriteErrors(t *testing.T) {
 	assertStatus(t, handler, http.MethodDelete, basePath+"/documentations/guide"+apiQuery, "", http.StatusConflict)
 	assertStatus(t, handler, http.MethodGet, basePath+"/certificates"+apiQuery, "", http.StatusConflict)
 	assertStatus(t, handler, http.MethodPut, basePath+"/certificates/v"+apiQuery, `{"properties":{"keyVault":{"secretIdentifier":"https://vault/secret"}}}`, http.StatusConflict)
+	assertStatus(t, handler, http.MethodPost, basePath+"/certificates/v/refreshSecret"+apiQuery, "", http.StatusConflict)
 	assertStatus(t, handler, http.MethodDelete, basePath+"/certificates/v"+apiQuery, "", http.StatusConflict)
 	assertStatus(t, handler, http.MethodGet, basePath+"/apis/a/schemas"+apiQuery, "", http.StatusConflict)
 	assertStatus(t, handler, http.MethodPut, basePath+"/apis/a/schemas/s"+apiQuery, `{"properties":{"contentType":"application/json","document":{}}}`, http.StatusConflict)
