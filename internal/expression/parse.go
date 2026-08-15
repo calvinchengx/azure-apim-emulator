@@ -6,14 +6,36 @@ import (
 	"strings"
 )
 
+// Env is the identifier binding used during evaluation. A nil Env can still
+// evaluate context-free expressions; identifiers fail as unbound.
+type Env struct {
+	Bindings map[string]Value
+}
+
 // Expr is a compiled policy expression.
 type Expr interface {
-	eval() (Value, error)
+	eval(*Env) (Value, error)
 }
 
 type literalExpr struct{ value Value }
 
-func (e literalExpr) eval() (Value, error) { return e.value, nil }
+func (e literalExpr) eval(*Env) (Value, error) { return e.value, nil }
+
+type identExpr struct{ name string }
+
+type memberExpr struct {
+	recv Expr
+	name string
+}
+
+type indexExpr struct {
+	recv, key Expr
+}
+
+type callExpr struct {
+	recv Expr
+	args []Expr
+}
 
 type unaryExpr struct {
 	op TokenKind
@@ -29,9 +51,8 @@ type ternaryExpr struct {
 	cond, then, els Expr
 }
 
-// Parse lexes and compiles a context-free APIM expression. Statement blocks,
-// identifiers, member access, calls, and indexing remain unsupported so they
-// cannot be silently skipped.
+// Parse lexes and compiles an APIM expression. Statement blocks remain
+// unsupported so they cannot be silently skipped.
 func Parse(source string) (Expr, Form, error) {
 	tokens, form, err := Lex(source)
 	if err != nil {
@@ -53,11 +74,16 @@ func Parse(source string) (Expr, Form, error) {
 
 // Eval parses and evaluates a context-free APIM expression.
 func Eval(source string) (Value, error) {
+	return EvalEnv(source, nil)
+}
+
+// EvalEnv parses and evaluates an expression against identifier bindings.
+func EvalEnv(source string, env *Env) (Value, error) {
 	expr, _, err := Parse(source)
 	if err != nil {
 		return Null(), err
 	}
-	return expr.eval()
+	return expr.eval(env)
 }
 
 type parser struct {
@@ -153,15 +179,78 @@ func (p *parser) unary() (Expr, error) {
 		}
 		return unaryExpr{op: op, x: x}, nil
 	default:
-		return p.primary()
+		return p.postfix()
 	}
 }
 
-func (p *parser) primary() (Expr, error) {
+func (p *parser) postfix() (Expr, error) {
+	expr, err := p.atom()
+	if err != nil {
+		return nil, err
+	}
+	for {
+		switch p.peek().Kind {
+		case TokenDot:
+			p.take()
+			if p.peek().Kind != TokenIdent {
+				return nil, fmt.Errorf("expected member name")
+			}
+			expr = memberExpr{recv: expr, name: p.take().Lexeme}
+		case TokenLBracket:
+			p.take()
+			key, err := p.ternary()
+			if err != nil {
+				return nil, err
+			}
+			if p.peek().Kind != TokenRBracket {
+				return nil, fmt.Errorf("expected ']'")
+			}
+			p.take()
+			expr = indexExpr{recv: expr, key: key}
+		case TokenLParen:
+			p.take()
+			args, err := p.arguments()
+			if err != nil {
+				return nil, err
+			}
+			expr = callExpr{recv: expr, args: args}
+		default:
+			return expr, nil
+		}
+	}
+}
+
+func (p *parser) arguments() ([]Expr, error) {
+	if p.peek().Kind == TokenRParen {
+		p.take()
+		return nil, nil
+	}
+	var args []Expr
+	for {
+		arg, err := p.ternary()
+		if err != nil {
+			return nil, err
+		}
+		args = append(args, arg)
+		switch p.peek().Kind {
+		case TokenComma:
+			p.take()
+		case TokenRParen:
+			p.take()
+			return args, nil
+		default:
+			return nil, fmt.Errorf("expected ')'")
+		}
+	}
+}
+
+func (p *parser) atom() (Expr, error) {
 	token := p.take()
 	switch token.Kind {
 	case TokenTrue, TokenFalse, TokenNull, TokenNumber, TokenString:
 		return literalExpr{value: token.Literal}, nil
+	case TokenIdent:
+		return identExpr{name: token.Lexeme}, nil
 	case TokenLParen:
 		expr, err := p.ternary()
 		if err != nil {
@@ -179,8 +268,55 @@ func (p *parser) primary() (Expr, error) {
 	}
 }
 
-func (e unaryExpr) eval() (Value, error) {
-	value, err := e.x.eval()
+func (e identExpr) eval(env *Env) (Value, error) {
+	if env == nil {
+		return Null(), fmt.Errorf("unbound identifier %s", e.name)
+	}
+	value, ok := env.Bindings[e.name]
+	if !ok {
+		return Null(), fmt.Errorf("unbound identifier %s", e.name)
+	}
+	return value, nil
+}
+
+func (e memberExpr) eval(env *Env) (Value, error) {
+	recv, err := e.recv.eval(env)
+	if err != nil {
+		return Null(), err
+	}
+	return recv.member(e.name)
+}
+
+func (e indexExpr) eval(env *Env) (Value, error) {
+	recv, err := e.recv.eval(env)
+	if err != nil {
+		return Null(), err
+	}
+	key, err := e.key.eval(env)
+	if err != nil {
+		return Null(), err
+	}
+	return recv.index(key)
+}
+
+func (e callExpr) eval(env *Env) (Value, error) {
+	recv, err := e.recv.eval(env)
+	if err != nil {
+		return Null(), err
+	}
+	args := make([]Value, len(e.args))
+	for i, arg := range e.args {
+		value, err := arg.eval(env)
+		if err != nil {
+			return Null(), err
+		}
+		args[i] = value
+	}
+	return recv.call(args)
+}
+
+func (e unaryExpr) eval(env *Env) (Value, error) {
+	value, err := e.x.eval(env)
 	if err != nil {
 		return Null(), err
 	}
@@ -207,15 +343,15 @@ func (e unaryExpr) eval() (Value, error) {
 	}
 }
 
-func (e binaryExpr) eval() (Value, error) {
+func (e binaryExpr) eval(env *Env) (Value, error) {
 	if e.op == TokenAnd || e.op == TokenOr {
-		return e.evalLogic()
+		return e.evalLogic(env)
 	}
-	left, err := e.left.eval()
+	left, err := e.left.eval(env)
 	if err != nil {
 		return Null(), err
 	}
-	right, err := e.right.eval()
+	right, err := e.right.eval(env)
 	if err != nil {
 		return Null(), err
 	}
@@ -264,8 +400,8 @@ func (e binaryExpr) eval() (Value, error) {
 	}
 }
 
-func (e binaryExpr) evalLogic() (Value, error) {
-	left, err := e.left.eval()
+func (e binaryExpr) evalLogic(env *Env) (Value, error) {
+	left, err := e.left.eval(env)
 	if err != nil {
 		return Null(), err
 	}
@@ -279,7 +415,7 @@ func (e binaryExpr) evalLogic() (Value, error) {
 	if e.op == TokenOr && truth {
 		return Bool(true), nil
 	}
-	right, err := e.right.eval()
+	right, err := e.right.eval(env)
 	if err != nil {
 		return Null(), err
 	}
@@ -290,8 +426,8 @@ func (e binaryExpr) evalLogic() (Value, error) {
 	return Bool(next), nil
 }
 
-func (e ternaryExpr) eval() (Value, error) {
-	cond, err := e.cond.eval()
+func (e ternaryExpr) eval(env *Env) (Value, error) {
+	cond, err := e.cond.eval(env)
 	if err != nil {
 		return Null(), err
 	}
@@ -300,9 +436,9 @@ func (e ternaryExpr) eval() (Value, error) {
 		return Null(), fmt.Errorf("conditional requires a boolean")
 	}
 	if truth {
-		return e.then.eval()
+		return e.then.eval(env)
 	}
-	return e.els.eval()
+	return e.els.eval(env)
 }
 
 func add(left, right Value) (Value, error) {

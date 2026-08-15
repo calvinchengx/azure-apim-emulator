@@ -114,6 +114,16 @@ func TestEvalAndParseErrors(t *testing.T) {
 		"@(-(1 / 0))",
 		"@((1 / 0) + 1)",
 		"@(1 + (1 / 0))",
+		"@(1.)",
+		"@(a[)",
+		"@(a[1)",
+		"@(a[1 2])",
+		"@(a(1)",
+		"@(a(1 2))",
+		"@(a(1,))",
+		"@((1 / 0).ToString())",
+		"@(true.ToString((1 / 0)))",
+		"@((1 / 0)[0])",
 	} {
 		if _, err := Eval(source); err == nil {
 			t.Fatalf("accepted %s", source)
@@ -132,11 +142,14 @@ func TestEvalInternalBranches(t *testing.T) {
 	if empty.peek().Kind != TokenEOF || empty.take().Kind != TokenEOF {
 		t.Fatal("empty parser should yield EOF")
 	}
-	if _, err := (binaryExpr{op: TokenDot, left: literalExpr{value: Int(1)}, right: literalExpr{value: Int(2)}}).eval(); err == nil {
+	if _, err := (binaryExpr{op: TokenDot, left: literalExpr{value: Int(1)}, right: literalExpr{value: Int(2)}}).eval(nil); err == nil {
 		t.Fatal("unsupported operator accepted")
 	}
-	if _, err := (unaryExpr{op: TokenMinus, x: literalExpr{value: String("x")}}).eval(); err == nil {
+	if _, err := (unaryExpr{op: TokenMinus, x: literalExpr{value: String("x")}}).eval(nil); err == nil {
 		t.Fatal("unary minus on string accepted")
+	}
+	if _, err := (identExpr{name: "x"}).eval(&Env{}); err == nil {
+		t.Fatal("empty env identifier accepted")
 	}
 }
 

@@ -11,6 +11,7 @@
 package expression
 
 import (
+	"fmt"
 	"math"
 	"strconv"
 )
@@ -165,6 +166,63 @@ func formatDouble(value float64) string {
 	default:
 		return strconv.FormatFloat(value, 'G', -1, 64)
 	}
+}
+
+type memberHost interface {
+	member(string) (Value, error)
+}
+
+type indexHost interface {
+	index(Value) (Value, error)
+}
+
+type callHost interface {
+	call([]Value) (Value, error)
+}
+
+type funcValue struct {
+	fn func([]Value) (Value, error)
+}
+
+func (f funcValue) call(args []Value) (Value, error) { return f.fn(args) }
+
+func (v Value) member(name string) (Value, error) {
+	if host, ok := v.obj.(memberHost); v.kind == KindObject && ok {
+		return host.member(name)
+	}
+	switch name {
+	case "ToString":
+		return Object(funcValue{fn: func(args []Value) (Value, error) {
+			if len(args) != 0 {
+				return Null(), fmt.Errorf("ToString takes no arguments")
+			}
+			return String(v.String()), nil
+		}}), nil
+	case "Length":
+		if v.kind != KindString {
+			return Null(), fmt.Errorf("Length requires a string")
+		}
+		return Int(int64(len(v.str))), nil
+	default:
+		if v.IsNull() {
+			return Null(), fmt.Errorf("member access on null")
+		}
+		return Null(), fmt.Errorf("unknown member %s", name)
+	}
+}
+
+func (v Value) index(key Value) (Value, error) {
+	if host, ok := v.obj.(indexHost); v.kind == KindObject && ok {
+		return host.index(key)
+	}
+	return Null(), fmt.Errorf("value is not indexable")
+}
+
+func (v Value) call(args []Value) (Value, error) {
+	if host, ok := v.obj.(callHost); v.kind == KindObject && ok {
+		return host.call(args)
+	}
+	return Null(), fmt.Errorf("value is not callable")
 }
 
 // equal implements C# equality. Numbers compare across Int and Double, strings

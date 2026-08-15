@@ -83,12 +83,13 @@ APIM expressions use C# 7-style forms:
 - `@(expression)` for a single expression
 - `@{ statements; return value; }` for a multi-statement block
 
-The lexer tokenizes `@(expression)` and `@{ statements }` wrappers, C# literals,
-identifiers, comments, and the phase-1 operator set. The parser/evaluator now
-run context-free expressions: literals, grouping, unary/binary arithmetic,
-string concatenation (including null-as-empty and `ToString` on the other
-operand), comparisons, boolean short-circuit, and ternary. Statement blocks,
-identifiers, member access, calls, indexing, and the binder remain open.
+The lexer tokenizes `@(expression)` and `@{ statements }` wrappers, C# literals
+(including APIM-policy single-quoted strings), identifiers, comments, and the
+phase-1 operator set. The evaluator runs context-free expressions and binds
+`context` for `choose` conditions: request method/URL/headers/IP, policy
+variables, member access, indexing, and calls (`ToString`, `Length`,
+`GetValueOrDefault`, `ContainsKey`). Statement blocks, the remaining context
+members, mutation-policy evaluation, and the public allowlist remain open.
 
 The pure-Go engine has these stages:
 
