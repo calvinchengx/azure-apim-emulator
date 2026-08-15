@@ -73,9 +73,9 @@ func requiresIfMatch(rt route, method string) bool {
 	if len(rt.Tail) == 2 {
 		resource := rt.Tail[0]
 		if method == http.MethodPatch {
-			return oneOf(resource, "apis", "apiVersionSets", "namedValues", "backends", "tags", "groups", "users", "loggers", "diagnostics", "products", "subscriptions")
+			return oneOf(resource, "apis", "apiVersionSets", "namedValues", "backends", "caches", "identityProviders", "openidConnectProviders", "authorizationServers", "tags", "groups", "users", "loggers", "diagnostics", "products", "subscriptions")
 		}
-		return oneOf(resource, "apis", "apiVersionSets", "namedValues", "backends", "certificates", "tags", "groups", "users", "policyFragments", "loggers", "diagnostics", "products", "subscriptions")
+		return oneOf(resource, "apis", "apiVersionSets", "namedValues", "backends", "caches", "identityProviders", "openidConnectProviders", "authorizationServers", "certificates", "tags", "groups", "users", "policyFragments", "loggers", "diagnostics", "products", "subscriptions")
 	}
 	if len(rt.Tail) != 4 || !equal(rt.Tail[0], "apis") {
 		return false

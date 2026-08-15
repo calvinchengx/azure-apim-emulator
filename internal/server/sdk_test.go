@@ -180,6 +180,22 @@ func TestGoManagementSDKConfiguresProtectedGateway(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	cacheClient, err := armapimanagement.NewCacheClient(defaultSubscription, credential, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identityProviderClient, err := armapimanagement.NewIdentityProviderClient(defaultSubscription, credential, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	openIDConnectProviderClient, err := armapimanagement.NewOpenIDConnectProviderClient(defaultSubscription, credential, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	authorizationServerClient, err := armapimanagement.NewAuthorizationServerClient(defaultSubscription, credential, options)
+	if err != nil {
+		t.Fatal(err)
+	}
 	loggerClient, err := armapimanagement.NewLoggerClient(defaultSubscription, credential, options)
 	if err != nil {
 		t.Fatal(err)
@@ -789,6 +805,142 @@ func TestGoManagementSDKConfiguresProtectedGateway(t *testing.T) {
 			t.Fatal(err)
 		}
 		if _, err := schemaClient.Delete(ctx, defaultResourceGroup, "emulator", "go-sdk-full", "temporary", "*", nil); err != nil {
+			t.Fatal(err)
+		}
+	})
+	t.Run("cache", func(t *testing.T) {
+		connectionString, useFromLocation := "apim.redis.cache.windows.net:6380,password=local,ssl=True,abortConnect=False", "default"
+		description, resourceID := "Go SDK cache", "/subscriptions/"+defaultSubscription+"/resourceGroups/"+defaultResourceGroup+"/providers/Microsoft.Cache/redis/go-sdk"
+		createdCache, err := cacheClient.CreateOrUpdate(ctx, defaultResourceGroup, "emulator", "default", armapimanagement.CacheContract{
+			Properties: &armapimanagement.CacheContractProperties{ConnectionString: &connectionString, UseFromLocation: &useFromLocation, Description: &description, ResourceID: &resourceID},
+		}, nil)
+		if err != nil || createdCache.ID == nil || createdCache.Properties == nil || createdCache.Properties.UseFromLocation == nil || *createdCache.Properties.UseFromLocation != useFromLocation {
+			t.Fatalf("cache create = %+v, %v", createdCache, err)
+		}
+		if got, err := cacheClient.Get(ctx, defaultResourceGroup, "emulator", "default", nil); err != nil || got.Properties == nil || got.Properties.Description == nil || *got.Properties.Description != description || got.Properties.ConnectionString == nil || *got.Properties.ConnectionString == connectionString || !strings.HasPrefix(*got.Properties.ConnectionString, "{{Cache-ConnectionString-") {
+			t.Fatalf("cache GET = %+v, %v", got, err)
+		}
+		if entityTag, err := cacheClient.GetEntityTag(ctx, defaultResourceGroup, "emulator", "default", nil); err != nil || entityTag.ETag == nil {
+			t.Fatalf("cache ETag = %+v, %v", entityTag, err)
+		}
+		if page, err := cacheClient.NewListByServicePager(defaultResourceGroup, "emulator", nil).NextPage(ctx); err != nil || len(page.Value) != 1 {
+			t.Fatalf("cache page = %+v, %v", page, err)
+		}
+		updatedDescription := "Updated Go SDK cache"
+		if updated, err := cacheClient.Update(ctx, defaultResourceGroup, "emulator", "default", "*", armapimanagement.CacheUpdateParameters{Properties: &armapimanagement.CacheUpdateProperties{Description: &updatedDescription}}, nil); err != nil || updated.Properties == nil || updated.Properties.Description == nil || *updated.Properties.Description != updatedDescription {
+			t.Fatalf("cache update = %+v, %v", updated, err)
+		}
+		if _, err := cacheClient.CreateOrUpdate(ctx, defaultResourceGroup, "emulator", "westus", armapimanagement.CacheContract{Properties: &armapimanagement.CacheContractProperties{ConnectionString: &connectionString, UseFromLocation: &useFromLocation}}, nil); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := cacheClient.Delete(ctx, defaultResourceGroup, "emulator", "westus", "*", nil); err != nil {
+			t.Fatal(err)
+		}
+	})
+	t.Run("identity-provider", func(t *testing.T) {
+		clientID, clientSecret := "facebook-app", "facebook-secret"
+		created, err := identityProviderClient.CreateOrUpdate(ctx, defaultResourceGroup, "emulator", armapimanagement.IdentityProviderTypeFacebook, armapimanagement.IdentityProviderCreateContract{
+			Properties: &armapimanagement.IdentityProviderCreateContractProperties{ClientID: &clientID, ClientSecret: &clientSecret},
+		}, nil)
+		if err != nil || created.ID == nil || created.Properties == nil || created.Properties.ClientID == nil || *created.Properties.ClientID != clientID || created.Properties.ClientSecret != nil {
+			t.Fatalf("identity provider create = %+v, %v", created, err)
+		}
+		if got, err := identityProviderClient.Get(ctx, defaultResourceGroup, "emulator", armapimanagement.IdentityProviderTypeFacebook, nil); err != nil || got.Properties == nil || got.Properties.ClientID == nil || *got.Properties.ClientID != clientID || got.Properties.ClientSecret != nil || got.Properties.Type == nil || *got.Properties.Type != armapimanagement.IdentityProviderTypeFacebook {
+			t.Fatalf("identity provider GET = %+v, %v", got, err)
+		}
+		if entityTag, err := identityProviderClient.GetEntityTag(ctx, defaultResourceGroup, "emulator", armapimanagement.IdentityProviderTypeFacebook, nil); err != nil || entityTag.ETag == nil {
+			t.Fatalf("identity provider ETag = %+v, %v", entityTag, err)
+		}
+		if page, err := identityProviderClient.NewListByServicePager(defaultResourceGroup, "emulator", nil).NextPage(ctx); err != nil || len(page.Value) != 1 {
+			t.Fatalf("identity provider page = %+v, %v", page, err)
+		}
+		if secrets, err := identityProviderClient.ListSecrets(ctx, defaultResourceGroup, "emulator", armapimanagement.IdentityProviderTypeFacebook, nil); err != nil || secrets.ClientSecret == nil || *secrets.ClientSecret != clientSecret {
+			t.Fatalf("identity provider secrets = %+v, %v", secrets, err)
+		}
+		updatedClientID := "updated-facebook-app"
+		if updated, err := identityProviderClient.Update(ctx, defaultResourceGroup, "emulator", armapimanagement.IdentityProviderTypeFacebook, "*", armapimanagement.IdentityProviderUpdateParameters{Properties: &armapimanagement.IdentityProviderUpdateProperties{ClientID: &updatedClientID}}, nil); err != nil || updated.Properties == nil || updated.Properties.ClientID == nil || *updated.Properties.ClientID != updatedClientID || updated.Properties.ClientSecret != nil {
+			t.Fatalf("identity provider update = %+v, %v", updated, err)
+		}
+		b2cID, b2cSecret, authority := "b2c-app", "b2c-secret", "login.microsoftonline.com"
+		if _, err := identityProviderClient.CreateOrUpdate(ctx, defaultResourceGroup, "emulator", armapimanagement.IdentityProviderTypeAADB2C, armapimanagement.IdentityProviderCreateContract{
+			Properties: &armapimanagement.IdentityProviderCreateContractProperties{ClientID: &b2cID, ClientSecret: &b2cSecret, Authority: &authority},
+		}, nil); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := identityProviderClient.Delete(ctx, defaultResourceGroup, "emulator", armapimanagement.IdentityProviderTypeAADB2C, "*", nil); err != nil {
+			t.Fatal(err)
+		}
+	})
+	t.Run("openid-connect-provider", func(t *testing.T) {
+		displayName, metadataEndpoint, clientID, clientSecret := "Go SDK OIDC", "https://issuer.example/.well-known/openid-configuration", "oidc-app", "oidc-secret"
+		created, err := openIDConnectProviderClient.CreateOrUpdate(ctx, defaultResourceGroup, "emulator", "go-sdk-oidc", armapimanagement.OpenidConnectProviderContract{
+			Properties: &armapimanagement.OpenidConnectProviderContractProperties{DisplayName: &displayName, MetadataEndpoint: &metadataEndpoint, ClientID: &clientID, ClientSecret: &clientSecret},
+		}, nil)
+		if err != nil || created.ID == nil || created.Properties == nil || created.Properties.DisplayName == nil || *created.Properties.DisplayName != displayName || created.Properties.ClientSecret != nil {
+			t.Fatalf("openid connect provider create = %+v, %v", created, err)
+		}
+		if got, err := openIDConnectProviderClient.Get(ctx, defaultResourceGroup, "emulator", "go-sdk-oidc", nil); err != nil || got.Properties == nil || got.Properties.ClientID == nil || *got.Properties.ClientID != clientID || got.Properties.ClientSecret != nil || got.Properties.MetadataEndpoint == nil || *got.Properties.MetadataEndpoint != metadataEndpoint {
+			t.Fatalf("openid connect provider GET = %+v, %v", got, err)
+		}
+		if entityTag, err := openIDConnectProviderClient.GetEntityTag(ctx, defaultResourceGroup, "emulator", "go-sdk-oidc", nil); err != nil || entityTag.ETag == nil {
+			t.Fatalf("openid connect provider ETag = %+v, %v", entityTag, err)
+		}
+		if page, err := openIDConnectProviderClient.NewListByServicePager(defaultResourceGroup, "emulator", nil).NextPage(ctx); err != nil || len(page.Value) != 1 {
+			t.Fatalf("openid connect provider page = %+v, %v", page, err)
+		}
+		if secrets, err := openIDConnectProviderClient.ListSecrets(ctx, defaultResourceGroup, "emulator", "go-sdk-oidc", nil); err != nil || secrets.ClientSecret == nil || *secrets.ClientSecret != clientSecret {
+			t.Fatalf("openid connect provider secrets = %+v, %v", secrets, err)
+		}
+		updatedName := "Updated Go SDK OIDC"
+		if updated, err := openIDConnectProviderClient.Update(ctx, defaultResourceGroup, "emulator", "go-sdk-oidc", "*", armapimanagement.OpenidConnectProviderUpdateContract{Properties: &armapimanagement.OpenidConnectProviderUpdateContractProperties{DisplayName: &updatedName}}, nil); err != nil || updated.Properties == nil || updated.Properties.DisplayName == nil || *updated.Properties.DisplayName != updatedName || updated.Properties.ClientSecret != nil {
+			t.Fatalf("openid connect provider update = %+v, %v", updated, err)
+		}
+		if _, err := openIDConnectProviderClient.CreateOrUpdate(ctx, defaultResourceGroup, "emulator", "temporary", armapimanagement.OpenidConnectProviderContract{
+			Properties: &armapimanagement.OpenidConnectProviderContractProperties{DisplayName: &displayName, MetadataEndpoint: &metadataEndpoint, ClientID: &clientID},
+		}, nil); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := openIDConnectProviderClient.Delete(ctx, defaultResourceGroup, "emulator", "temporary", "*", nil); err != nil {
+			t.Fatal(err)
+		}
+	})
+	t.Run("authorization-server", func(t *testing.T) {
+		displayName, authorizationEndpoint, registrationEndpoint, clientID, clientSecret := "Go SDK OAuth", "https://auth.example/authorize", "https://auth.example/apps", "oauth-app", "oauth-secret"
+		grantType := armapimanagement.GrantTypeAuthorizationCode
+		created, err := authorizationServerClient.CreateOrUpdate(ctx, defaultResourceGroup, "emulator", "go-sdk-oauth", armapimanagement.AuthorizationServerContract{
+			Properties: &armapimanagement.AuthorizationServerContractProperties{
+				DisplayName: &displayName, AuthorizationEndpoint: &authorizationEndpoint, ClientRegistrationEndpoint: &registrationEndpoint,
+				ClientID: &clientID, ClientSecret: &clientSecret, GrantTypes: []*armapimanagement.GrantType{&grantType},
+			},
+		}, nil)
+		if err != nil || created.ID == nil || created.Properties == nil || created.Properties.DisplayName == nil || *created.Properties.DisplayName != displayName || created.Properties.ClientSecret != nil {
+			t.Fatalf("authorization server create = %+v, %v", created, err)
+		}
+		if got, err := authorizationServerClient.Get(ctx, defaultResourceGroup, "emulator", "go-sdk-oauth", nil); err != nil || got.Properties == nil || got.Properties.ClientID == nil || *got.Properties.ClientID != clientID || got.Properties.ClientSecret != nil {
+			t.Fatalf("authorization server GET = %+v, %v", got, err)
+		}
+		if entityTag, err := authorizationServerClient.GetEntityTag(ctx, defaultResourceGroup, "emulator", "go-sdk-oauth", nil); err != nil || entityTag.ETag == nil {
+			t.Fatalf("authorization server ETag = %+v, %v", entityTag, err)
+		}
+		if page, err := authorizationServerClient.NewListByServicePager(defaultResourceGroup, "emulator", nil).NextPage(ctx); err != nil || len(page.Value) != 1 {
+			t.Fatalf("authorization server page = %+v, %v", page, err)
+		}
+		if secrets, err := authorizationServerClient.ListSecrets(ctx, defaultResourceGroup, "emulator", "go-sdk-oauth", nil); err != nil || secrets.ClientSecret == nil || *secrets.ClientSecret != clientSecret {
+			t.Fatalf("authorization server secrets = %+v, %v", secrets, err)
+		}
+		updatedName := "Updated Go SDK OAuth"
+		if updated, err := authorizationServerClient.Update(ctx, defaultResourceGroup, "emulator", "go-sdk-oauth", "*", armapimanagement.AuthorizationServerUpdateContract{Properties: &armapimanagement.AuthorizationServerUpdateContractProperties{DisplayName: &updatedName}}, nil); err != nil || updated.Properties == nil || updated.Properties.DisplayName == nil || *updated.Properties.DisplayName != updatedName || updated.Properties.ClientSecret != nil {
+			t.Fatalf("authorization server update = %+v, %v", updated, err)
+		}
+		if _, err := authorizationServerClient.CreateOrUpdate(ctx, defaultResourceGroup, "emulator", "temporary", armapimanagement.AuthorizationServerContract{
+			Properties: &armapimanagement.AuthorizationServerContractProperties{
+				DisplayName: &displayName, AuthorizationEndpoint: &authorizationEndpoint, ClientRegistrationEndpoint: &registrationEndpoint,
+				ClientID: &clientID, GrantTypes: []*armapimanagement.GrantType{&grantType},
+			},
+		}, nil); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := authorizationServerClient.Delete(ctx, defaultResourceGroup, "emulator", "temporary", "*", nil); err != nil {
 			t.Fatal(err)
 		}
 	})

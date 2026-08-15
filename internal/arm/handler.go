@@ -96,6 +96,14 @@ func (h *Handler) dispatch(w http.ResponseWriter, r *http.Request, parsed route)
 		h.namedValue(w, r, parsed)
 	case "backends":
 		h.backend(w, r, parsed)
+	case "caches":
+		h.cache(w, r, parsed)
+	case "identityProviders":
+		h.identityProvider(w, r, parsed)
+	case "openidConnectProviders":
+		h.openIDConnectProvider(w, r, parsed)
+	case "authorizationServers":
+		h.authorizationServer(w, r, parsed)
 	case "certificates":
 		h.certificate(w, r, parsed)
 	case "tags":
@@ -2192,6 +2200,886 @@ func clearNullBackendProperties(value *model.Backend, patch map[string]any) {
 	}
 }
 
+type cachePayload struct {
+	Properties struct {
+		ConnectionString *string `json:"connectionString"`
+		UseFromLocation  *string `json:"useFromLocation"`
+		Description      *string `json:"description"`
+		ResourceID       *string `json:"resourceId"`
+	} `json:"properties"`
+}
+
+func (h *Handler) cache(w http.ResponseWriter, r *http.Request, rt route) {
+	service := model.Service{SubscriptionID: rt.SubscriptionID, ResourceGroup: rt.ResourceGroup, Name: rt.ServiceName}
+	if len(rt.Tail) == 1 {
+		if r.Method != http.MethodGet {
+			methodNotAllowed(w)
+			return
+		}
+		values, err := h.Store.ListCaches(service.ID())
+		if err != nil {
+			h.storeError(w, err, service.ID())
+			return
+		}
+		resources := make([]map[string]any, 0, len(values))
+		for _, value := range values {
+			resources = append(resources, cacheWire(value))
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"value": resources, "count": len(resources)})
+		return
+	}
+	if len(rt.Tail) != 2 {
+		writeError(w, http.StatusNotFound, "ResourceNotFound", "The requested cache resource was not found.", r.URL.Path)
+		return
+	}
+	value := model.Cache{ServiceID: service.ID(), Name: rt.Tail[1]}
+	switch r.Method {
+	case http.MethodGet, http.MethodHead:
+		got, err := h.Store.GetCache(value.ID())
+		if err != nil {
+			h.storeError(w, err, value.ID())
+			return
+		}
+		if r.Method == http.MethodHead {
+			w.Header().Set("ETag", got.ETag)
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		writeResource(w, http.StatusOK, cacheWire(got), got.ETag)
+	case http.MethodPut, http.MethodPatch:
+		existing, existingErr := h.Store.GetCache(value.ID())
+		if existingErr != nil && !errors.Is(existingErr, store.ErrNotFound) {
+			h.storeError(w, existingErr, value.ID())
+			return
+		}
+		if r.Method == http.MethodPatch {
+			if existingErr != nil {
+				h.storeError(w, existingErr, value.ID())
+				return
+			}
+			value = existing
+		}
+		var body cachePayload
+		var document map[string]any
+		if err := decodeDocument(r, &body, &document); err != nil {
+			writeError(w, http.StatusBadRequest, "InvalidRequestContent", err.Error(), "")
+			return
+		}
+		if r.Method == http.MethodPatch {
+			if value.Document == nil {
+				value.Document = cacheWire(value)
+			}
+			mergeObject(value.Document, document)
+			clearNullCacheProperties(&value, document)
+		} else {
+			value.Document = document
+		}
+		cleanResourceDocument(value.Document)
+		sanitizeCacheDocument(value.Document)
+		applyCachePayload(&value, body)
+		if err := validateCache(value, r.Method == http.MethodPut); err != nil {
+			writeError(w, http.StatusBadRequest, "ValidationError", err.Error(), "properties")
+			return
+		}
+		got, err := h.Store.UpsertCache(value)
+		if err != nil {
+			h.storeError(w, err, value.ID())
+			return
+		}
+		status := http.StatusOK
+		if r.Method == http.MethodPut && errors.Is(existingErr, store.ErrNotFound) {
+			status = http.StatusCreated
+		}
+		writeResource(w, status, cacheWire(got), got.ETag)
+	case http.MethodDelete:
+		if err := h.Store.DeleteCache(value.ID()); err != nil && !errors.Is(err, store.ErrNotFound) {
+			h.storeError(w, err, value.ID())
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	default:
+		methodNotAllowed(w)
+	}
+}
+
+func applyCachePayload(value *model.Cache, body cachePayload) {
+	if body.Properties.ConnectionString != nil {
+		value.ConnectionString = *body.Properties.ConnectionString
+	}
+	if body.Properties.UseFromLocation != nil {
+		value.UseFromLocation = *body.Properties.UseFromLocation
+	}
+	if body.Properties.Description != nil {
+		value.Description = *body.Properties.Description
+	}
+	if body.Properties.ResourceID != nil {
+		value.ResourceID = *body.Properties.ResourceID
+	}
+	if strings.EqualFold(value.UseFromLocation, "default") {
+		value.UseFromLocation = "default"
+	}
+}
+
+func clearNullCacheProperties(value *model.Cache, document map[string]any) {
+	properties, _ := document["properties"].(map[string]any)
+	if field, present := properties["description"]; present && field == nil {
+		value.Description = ""
+	}
+	if field, present := properties["resourceId"]; present && field == nil {
+		value.ResourceID = ""
+	}
+}
+
+func validateCache(value model.Cache, creating bool) error {
+	if creating && value.ConnectionString == "" {
+		return errors.New("connectionString is required")
+	}
+	if creating && value.UseFromLocation == "" {
+		return errors.New("useFromLocation is required")
+	}
+	if value.ConnectionString == "" {
+		return errors.New("connectionString cannot be empty")
+	}
+	if value.UseFromLocation == "" {
+		return errors.New("useFromLocation cannot be empty")
+	}
+	if len(value.ConnectionString) > 300 {
+		return errors.New("connectionString must be at most 300 characters")
+	}
+	if len(value.UseFromLocation) > 256 {
+		return errors.New("useFromLocation must be at most 256 characters")
+	}
+	if len(value.Description) > 2000 {
+		return errors.New("description must be at most 2000 characters")
+	}
+	if len(value.ResourceID) > 2000 {
+		return errors.New("resourceId must be at most 2000 characters")
+	}
+	return nil
+}
+
+func sanitizeCacheDocument(document map[string]any) {
+	if document == nil {
+		return
+	}
+	delete(document, "connectionString")
+	properties, _ := document["properties"].(map[string]any)
+	delete(properties, "connectionString")
+}
+
+type identityProviderPayload struct {
+	Properties struct {
+		Type                     *string   `json:"type"`
+		ClientID                 *string   `json:"clientId"`
+		ClientSecret             *string   `json:"clientSecret"`
+		Authority                *string   `json:"authority"`
+		SigninTenant             *string   `json:"signinTenant"`
+		SignupPolicyName         *string   `json:"signupPolicyName"`
+		SigninPolicyName         *string   `json:"signinPolicyName"`
+		ProfileEditingPolicyName *string   `json:"profileEditingPolicyName"`
+		PasswordResetPolicyName  *string   `json:"passwordResetPolicyName"`
+		AllowedTenants           *[]string `json:"allowedTenants"`
+		ClientLibrary            *string   `json:"clientLibrary"`
+	} `json:"properties"`
+}
+
+var identityProviderNames = map[string]string{
+	"facebook":  "facebook",
+	"google":    "google",
+	"microsoft": "microsoft",
+	"twitter":   "twitter",
+	"aad":       "aad",
+	"aadb2c":    "aadB2C",
+}
+
+func canonicalizeIdentityProviderName(name string) (string, bool) {
+	canonical, ok := identityProviderNames[strings.ToLower(name)]
+	return canonical, ok
+}
+
+func (h *Handler) identityProvider(w http.ResponseWriter, r *http.Request, rt route) {
+	service := model.Service{SubscriptionID: rt.SubscriptionID, ResourceGroup: rt.ResourceGroup, Name: rt.ServiceName}
+	if len(rt.Tail) == 1 {
+		if r.Method != http.MethodGet {
+			methodNotAllowed(w)
+			return
+		}
+		values, err := h.Store.ListIdentityProviders(service.ID())
+		if err != nil {
+			h.storeError(w, err, service.ID())
+			return
+		}
+		resources := make([]map[string]any, 0, len(values))
+		for _, value := range values {
+			resources = append(resources, identityProviderWire(value))
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"value": resources, "count": len(resources)})
+		return
+	}
+	if len(rt.Tail) < 2 || len(rt.Tail) > 3 {
+		writeError(w, http.StatusNotFound, "ResourceNotFound", "The requested identity provider resource was not found.", r.URL.Path)
+		return
+	}
+	name, ok := canonicalizeIdentityProviderName(rt.Tail[1])
+	if !ok {
+		writeError(w, http.StatusBadRequest, "ValidationError", "identityProviderName must be facebook, google, microsoft, twitter, aad, or aadB2C.", "identityProviderName")
+		return
+	}
+	value := model.IdentityProvider{ServiceID: service.ID(), Name: name}
+	if len(rt.Tail) == 3 {
+		h.identityProviderAction(w, r, value, rt.Tail[2])
+		return
+	}
+	switch r.Method {
+	case http.MethodGet, http.MethodHead:
+		got, err := h.Store.GetIdentityProvider(value.ID())
+		if err != nil {
+			h.storeError(w, err, value.ID())
+			return
+		}
+		if r.Method == http.MethodHead {
+			w.Header().Set("ETag", got.ETag)
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		writeResource(w, http.StatusOK, identityProviderWire(got), got.ETag)
+	case http.MethodPut, http.MethodPatch:
+		existing, existingErr := h.Store.GetIdentityProvider(value.ID())
+		if existingErr != nil && !errors.Is(existingErr, store.ErrNotFound) {
+			h.storeError(w, existingErr, value.ID())
+			return
+		}
+		if r.Method == http.MethodPatch {
+			if existingErr != nil {
+				h.storeError(w, existingErr, value.ID())
+				return
+			}
+			value = existing
+		}
+		var body identityProviderPayload
+		var document map[string]any
+		if err := decodeDocument(r, &body, &document); err != nil {
+			writeError(w, http.StatusBadRequest, "InvalidRequestContent", err.Error(), "")
+			return
+		}
+		if body.Properties.Type != nil {
+			canonical, typeOK := canonicalizeIdentityProviderName(*body.Properties.Type)
+			if !typeOK || canonical != value.Name {
+				writeError(w, http.StatusBadRequest, "ValidationError", "type must match the identity provider name.", "properties.type")
+				return
+			}
+		}
+		if r.Method == http.MethodPatch {
+			if value.Document == nil {
+				value.Document = identityProviderWire(value)
+			}
+			mergeObject(value.Document, document)
+			clearNullIdentityProviderProperties(&value, document)
+		} else {
+			value.Document = document
+		}
+		cleanResourceDocument(value.Document)
+		sanitizeIdentityProviderDocument(value.Document)
+		applyIdentityProviderPayload(&value, body)
+		if err := validateIdentityProvider(value, r.Method == http.MethodPut); err != nil {
+			writeError(w, http.StatusBadRequest, "ValidationError", err.Error(), "properties")
+			return
+		}
+		got, err := h.Store.UpsertIdentityProvider(value)
+		if err != nil {
+			h.storeError(w, err, value.ID())
+			return
+		}
+		status := http.StatusOK
+		if r.Method == http.MethodPut && errors.Is(existingErr, store.ErrNotFound) {
+			status = http.StatusCreated
+		}
+		writeResource(w, status, identityProviderWire(got), got.ETag)
+	case http.MethodDelete:
+		if err := h.Store.DeleteIdentityProvider(value.ID()); err != nil && !errors.Is(err, store.ErrNotFound) {
+			h.storeError(w, err, value.ID())
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	default:
+		methodNotAllowed(w)
+	}
+}
+
+func (h *Handler) identityProviderAction(w http.ResponseWriter, r *http.Request, value model.IdentityProvider, action string) {
+	if r.Method != http.MethodPost {
+		methodNotAllowed(w)
+		return
+	}
+	if !equal(action, "listSecrets") {
+		writeError(w, http.StatusNotFound, "ResourceNotFound", "The requested identity provider action was not found.", r.URL.Path)
+		return
+	}
+	got, err := h.Store.GetIdentityProvider(value.ID())
+	if err != nil {
+		h.storeError(w, err, value.ID())
+		return
+	}
+	writeResource(w, http.StatusOK, map[string]any{"clientSecret": got.ClientSecret}, got.ETag)
+}
+
+func applyIdentityProviderPayload(value *model.IdentityProvider, body identityProviderPayload) {
+	if body.Properties.ClientID != nil {
+		value.ClientID = *body.Properties.ClientID
+	}
+	if body.Properties.ClientSecret != nil {
+		value.ClientSecret = *body.Properties.ClientSecret
+	}
+	if body.Properties.Authority != nil {
+		value.Authority = *body.Properties.Authority
+	}
+	if body.Properties.SigninTenant != nil {
+		value.SigninTenant = *body.Properties.SigninTenant
+	}
+	if body.Properties.SignupPolicyName != nil {
+		value.SignupPolicyName = *body.Properties.SignupPolicyName
+	}
+	if body.Properties.SigninPolicyName != nil {
+		value.SigninPolicyName = *body.Properties.SigninPolicyName
+	}
+	if body.Properties.ProfileEditingPolicyName != nil {
+		value.ProfileEditingPolicyName = *body.Properties.ProfileEditingPolicyName
+	}
+	if body.Properties.PasswordResetPolicyName != nil {
+		value.PasswordResetPolicyName = *body.Properties.PasswordResetPolicyName
+	}
+	if body.Properties.AllowedTenants != nil {
+		value.AllowedTenants = append([]string(nil), *body.Properties.AllowedTenants...)
+	}
+}
+
+func clearNullIdentityProviderProperties(value *model.IdentityProvider, document map[string]any) {
+	properties, _ := document["properties"].(map[string]any)
+	if field, present := properties["authority"]; present && field == nil {
+		value.Authority = ""
+	}
+	if field, present := properties["signinTenant"]; present && field == nil {
+		value.SigninTenant = ""
+	}
+	if field, present := properties["signupPolicyName"]; present && field == nil {
+		value.SignupPolicyName = ""
+	}
+	if field, present := properties["signinPolicyName"]; present && field == nil {
+		value.SigninPolicyName = ""
+	}
+	if field, present := properties["profileEditingPolicyName"]; present && field == nil {
+		value.ProfileEditingPolicyName = ""
+	}
+	if field, present := properties["passwordResetPolicyName"]; present && field == nil {
+		value.PasswordResetPolicyName = ""
+	}
+	if field, present := properties["allowedTenants"]; present && field == nil {
+		value.AllowedTenants = []string{}
+	}
+}
+
+func validateIdentityProvider(value model.IdentityProvider, creating bool) error {
+	if creating && value.ClientID == "" {
+		return errors.New("clientId is required")
+	}
+	if creating && value.ClientSecret == "" {
+		return errors.New("clientSecret is required")
+	}
+	if value.ClientID == "" {
+		return errors.New("clientId cannot be empty")
+	}
+	if value.ClientSecret == "" {
+		return errors.New("clientSecret cannot be empty")
+	}
+	if library := identityProviderClientLibrary(value.Document); len(library) > 16 {
+		return errors.New("clientLibrary must be at most 16 characters")
+	}
+	return nil
+}
+
+func identityProviderClientLibrary(document map[string]any) string {
+	properties, _ := document["properties"].(map[string]any)
+	value, _ := properties["clientLibrary"].(string)
+	return value
+}
+
+func sanitizeIdentityProviderDocument(document map[string]any) {
+	if document == nil {
+		return
+	}
+	delete(document, "clientSecret")
+	properties, _ := document["properties"].(map[string]any)
+	delete(properties, "clientSecret")
+}
+
+type openIDConnectProviderPayload struct {
+	Properties struct {
+		DisplayName      *string `json:"displayName"`
+		Description      *string `json:"description"`
+		MetadataEndpoint *string `json:"metadataEndpoint"`
+		ClientID         *string `json:"clientId"`
+		ClientSecret     *string `json:"clientSecret"`
+	} `json:"properties"`
+}
+
+func (h *Handler) openIDConnectProvider(w http.ResponseWriter, r *http.Request, rt route) {
+	service := model.Service{SubscriptionID: rt.SubscriptionID, ResourceGroup: rt.ResourceGroup, Name: rt.ServiceName}
+	if len(rt.Tail) == 1 {
+		if r.Method != http.MethodGet {
+			methodNotAllowed(w)
+			return
+		}
+		values, err := h.Store.ListOpenIDConnectProviders(service.ID())
+		if err != nil {
+			h.storeError(w, err, service.ID())
+			return
+		}
+		resources := make([]map[string]any, 0, len(values))
+		for _, value := range values {
+			resources = append(resources, openIDConnectProviderWire(value))
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"value": resources, "count": len(resources)})
+		return
+	}
+	if len(rt.Tail) < 2 || len(rt.Tail) > 3 {
+		writeError(w, http.StatusNotFound, "ResourceNotFound", "The requested OpenID Connect provider resource was not found.", r.URL.Path)
+		return
+	}
+	value := model.OpenIDConnectProvider{ServiceID: service.ID(), Name: rt.Tail[1]}
+	if len(rt.Tail) == 3 {
+		h.openIDConnectProviderAction(w, r, value, rt.Tail[2])
+		return
+	}
+	switch r.Method {
+	case http.MethodGet, http.MethodHead:
+		got, err := h.Store.GetOpenIDConnectProvider(value.ID())
+		if err != nil {
+			h.storeError(w, err, value.ID())
+			return
+		}
+		if r.Method == http.MethodHead {
+			w.Header().Set("ETag", got.ETag)
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		writeResource(w, http.StatusOK, openIDConnectProviderWire(got), got.ETag)
+	case http.MethodPut, http.MethodPatch:
+		existing, existingErr := h.Store.GetOpenIDConnectProvider(value.ID())
+		if existingErr != nil && !errors.Is(existingErr, store.ErrNotFound) {
+			h.storeError(w, existingErr, value.ID())
+			return
+		}
+		if existingErr == nil {
+			value.Name = existing.Name
+		}
+		if r.Method == http.MethodPatch {
+			if existingErr != nil {
+				h.storeError(w, existingErr, value.ID())
+				return
+			}
+			value = existing
+		}
+		var body openIDConnectProviderPayload
+		var document map[string]any
+		if err := decodeDocument(r, &body, &document); err != nil {
+			writeError(w, http.StatusBadRequest, "InvalidRequestContent", err.Error(), "")
+			return
+		}
+		if r.Method == http.MethodPatch {
+			if value.Document == nil {
+				value.Document = openIDConnectProviderWire(value)
+			}
+			mergeObject(value.Document, document)
+			clearNullOpenIDConnectProviderProperties(&value, document)
+		} else {
+			value.Document = document
+		}
+		cleanResourceDocument(value.Document)
+		sanitizeOpenIDConnectProviderDocument(value.Document)
+		applyOpenIDConnectProviderPayload(&value, body)
+		if err := validateOpenIDConnectProvider(value, r.Method == http.MethodPut); err != nil {
+			writeError(w, http.StatusBadRequest, "ValidationError", err.Error(), "properties")
+			return
+		}
+		got, err := h.Store.UpsertOpenIDConnectProvider(value)
+		if err != nil {
+			h.storeError(w, err, value.ID())
+			return
+		}
+		status := http.StatusOK
+		if r.Method == http.MethodPut && errors.Is(existingErr, store.ErrNotFound) {
+			status = http.StatusCreated
+		}
+		writeResource(w, status, openIDConnectProviderWire(got), got.ETag)
+	case http.MethodDelete:
+		if err := h.Store.DeleteOpenIDConnectProvider(value.ID()); err != nil && !errors.Is(err, store.ErrNotFound) {
+			h.storeError(w, err, value.ID())
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	default:
+		methodNotAllowed(w)
+	}
+}
+
+func (h *Handler) openIDConnectProviderAction(w http.ResponseWriter, r *http.Request, value model.OpenIDConnectProvider, action string) {
+	if r.Method != http.MethodPost {
+		methodNotAllowed(w)
+		return
+	}
+	if !equal(action, "listSecrets") {
+		writeError(w, http.StatusNotFound, "ResourceNotFound", "The requested OpenID Connect provider action was not found.", r.URL.Path)
+		return
+	}
+	got, err := h.Store.GetOpenIDConnectProvider(value.ID())
+	if err != nil {
+		h.storeError(w, err, value.ID())
+		return
+	}
+	writeResource(w, http.StatusOK, map[string]any{"clientSecret": got.ClientSecret}, got.ETag)
+}
+
+func applyOpenIDConnectProviderPayload(value *model.OpenIDConnectProvider, body openIDConnectProviderPayload) {
+	if body.Properties.DisplayName != nil {
+		value.DisplayName = *body.Properties.DisplayName
+	}
+	if body.Properties.Description != nil {
+		value.Description = *body.Properties.Description
+	}
+	if body.Properties.MetadataEndpoint != nil {
+		value.MetadataEndpoint = *body.Properties.MetadataEndpoint
+	}
+	if body.Properties.ClientID != nil {
+		value.ClientID = *body.Properties.ClientID
+	}
+	if body.Properties.ClientSecret != nil {
+		value.ClientSecret = *body.Properties.ClientSecret
+	}
+}
+
+func clearNullOpenIDConnectProviderProperties(value *model.OpenIDConnectProvider, document map[string]any) {
+	properties, _ := document["properties"].(map[string]any)
+	if field, present := properties["description"]; present && field == nil {
+		value.Description = ""
+	}
+}
+
+func validateOpenIDConnectProvider(value model.OpenIDConnectProvider, creating bool) error {
+	if creating && value.DisplayName == "" {
+		return errors.New("displayName is required")
+	}
+	if creating && value.MetadataEndpoint == "" {
+		return errors.New("metadataEndpoint is required")
+	}
+	if creating && value.ClientID == "" {
+		return errors.New("clientId is required")
+	}
+	if value.DisplayName == "" {
+		return errors.New("displayName cannot be empty")
+	}
+	if len(value.DisplayName) > 50 {
+		return errors.New("displayName must be at most 50 characters")
+	}
+	if value.MetadataEndpoint == "" {
+		return errors.New("metadataEndpoint cannot be empty")
+	}
+	if value.ClientID == "" {
+		return errors.New("clientId cannot be empty")
+	}
+	return nil
+}
+
+func sanitizeOpenIDConnectProviderDocument(document map[string]any) {
+	if document == nil {
+		return
+	}
+	delete(document, "clientSecret")
+	properties, _ := document["properties"].(map[string]any)
+	delete(properties, "clientSecret")
+}
+
+type authorizationServerPayload struct {
+	Properties struct {
+		DisplayName                *string  `json:"displayName"`
+		Description                *string  `json:"description"`
+		AuthorizationEndpoint      *string  `json:"authorizationEndpoint"`
+		ClientRegistrationEndpoint *string  `json:"clientRegistrationEndpoint"`
+		ClientID                   *string  `json:"clientId"`
+		ClientSecret               *string  `json:"clientSecret"`
+		TokenEndpoint              *string  `json:"tokenEndpoint"`
+		DefaultScope               *string  `json:"defaultScope"`
+		ResourceOwnerUsername      *string  `json:"resourceOwnerUsername"`
+		ResourceOwnerPassword      *string  `json:"resourceOwnerPassword"`
+		SupportState               *bool    `json:"supportState"`
+		GrantTypes                 []string `json:"grantTypes"`
+	} `json:"properties"`
+}
+
+var authorizationServerGrantTypes = map[string]bool{
+	"authorizationCode":     true,
+	"implicit":              true,
+	"resourceOwnerPassword": true,
+	"clientCredentials":     true,
+}
+
+func (h *Handler) authorizationServer(w http.ResponseWriter, r *http.Request, rt route) {
+	service := model.Service{SubscriptionID: rt.SubscriptionID, ResourceGroup: rt.ResourceGroup, Name: rt.ServiceName}
+	if len(rt.Tail) == 1 {
+		if r.Method != http.MethodGet {
+			methodNotAllowed(w)
+			return
+		}
+		values, err := h.Store.ListAuthorizationServers(service.ID())
+		if err != nil {
+			h.storeError(w, err, service.ID())
+			return
+		}
+		resources := make([]map[string]any, 0, len(values))
+		for _, value := range values {
+			resources = append(resources, authorizationServerWire(value))
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"value": resources, "count": len(resources)})
+		return
+	}
+	if len(rt.Tail) < 2 || len(rt.Tail) > 3 {
+		writeError(w, http.StatusNotFound, "ResourceNotFound", "The requested authorization server resource was not found.", r.URL.Path)
+		return
+	}
+	value := model.AuthorizationServer{ServiceID: service.ID(), Name: rt.Tail[1]}
+	if len(rt.Tail) == 3 {
+		h.authorizationServerAction(w, r, value, rt.Tail[2])
+		return
+	}
+	switch r.Method {
+	case http.MethodGet, http.MethodHead:
+		got, err := h.Store.GetAuthorizationServer(value.ID())
+		if err != nil {
+			h.storeError(w, err, value.ID())
+			return
+		}
+		if r.Method == http.MethodHead {
+			w.Header().Set("ETag", got.ETag)
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		writeResource(w, http.StatusOK, authorizationServerWire(got), got.ETag)
+	case http.MethodPut, http.MethodPatch:
+		existing, existingErr := h.Store.GetAuthorizationServer(value.ID())
+		if existingErr != nil && !errors.Is(existingErr, store.ErrNotFound) {
+			h.storeError(w, existingErr, value.ID())
+			return
+		}
+		if existingErr == nil {
+			value.Name = existing.Name
+		}
+		if r.Method == http.MethodPatch {
+			if existingErr != nil {
+				h.storeError(w, existingErr, value.ID())
+				return
+			}
+			value = existing
+		}
+		var body authorizationServerPayload
+		var document map[string]any
+		if err := decodeDocument(r, &body, &document); err != nil {
+			writeError(w, http.StatusBadRequest, "InvalidRequestContent", err.Error(), "")
+			return
+		}
+		if r.Method == http.MethodPatch {
+			if value.Document == nil {
+				value.Document = authorizationServerWire(value)
+			}
+			mergeObject(value.Document, document)
+			clearNullAuthorizationServerProperties(&value, document)
+		} else {
+			value.Document = document
+		}
+		cleanResourceDocument(value.Document)
+		sanitizeAuthorizationServerDocument(value.Document)
+		applyAuthorizationServerPayload(&value, body)
+		if err := validateAuthorizationServer(value, r.Method == http.MethodPut); err != nil {
+			writeError(w, http.StatusBadRequest, "ValidationError", err.Error(), "properties")
+			return
+		}
+		got, err := h.Store.UpsertAuthorizationServer(value)
+		if err != nil {
+			h.storeError(w, err, value.ID())
+			return
+		}
+		status := http.StatusOK
+		if r.Method == http.MethodPut && errors.Is(existingErr, store.ErrNotFound) {
+			status = http.StatusCreated
+		}
+		writeResource(w, status, authorizationServerWire(got), got.ETag)
+	case http.MethodDelete:
+		if err := h.Store.DeleteAuthorizationServer(value.ID()); err != nil && !errors.Is(err, store.ErrNotFound) {
+			h.storeError(w, err, value.ID())
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	default:
+		methodNotAllowed(w)
+	}
+}
+
+func (h *Handler) authorizationServerAction(w http.ResponseWriter, r *http.Request, value model.AuthorizationServer, action string) {
+	if r.Method != http.MethodPost {
+		methodNotAllowed(w)
+		return
+	}
+	if !equal(action, "listSecrets") {
+		writeError(w, http.StatusNotFound, "ResourceNotFound", "The requested authorization server action was not found.", r.URL.Path)
+		return
+	}
+	got, err := h.Store.GetAuthorizationServer(value.ID())
+	if err != nil {
+		h.storeError(w, err, value.ID())
+		return
+	}
+	writeResource(w, http.StatusOK, map[string]any{
+		"clientSecret":          got.ClientSecret,
+		"resourceOwnerUsername": got.ResourceOwnerUsername,
+		"resourceOwnerPassword": got.ResourceOwnerPassword,
+	}, got.ETag)
+}
+
+func applyAuthorizationServerPayload(value *model.AuthorizationServer, body authorizationServerPayload) {
+	if body.Properties.DisplayName != nil {
+		value.DisplayName = *body.Properties.DisplayName
+	}
+	if body.Properties.Description != nil {
+		value.Description = *body.Properties.Description
+	}
+	if body.Properties.AuthorizationEndpoint != nil {
+		value.AuthorizationEndpoint = *body.Properties.AuthorizationEndpoint
+	}
+	if body.Properties.ClientRegistrationEndpoint != nil {
+		value.ClientRegistrationEndpoint = *body.Properties.ClientRegistrationEndpoint
+	}
+	if body.Properties.ClientID != nil {
+		value.ClientID = *body.Properties.ClientID
+	}
+	if body.Properties.ClientSecret != nil {
+		value.ClientSecret = *body.Properties.ClientSecret
+	}
+	if body.Properties.TokenEndpoint != nil {
+		value.TokenEndpoint = *body.Properties.TokenEndpoint
+	}
+	if body.Properties.DefaultScope != nil {
+		value.DefaultScope = *body.Properties.DefaultScope
+	}
+	if body.Properties.ResourceOwnerUsername != nil {
+		value.ResourceOwnerUsername = *body.Properties.ResourceOwnerUsername
+	}
+	if body.Properties.ResourceOwnerPassword != nil {
+		value.ResourceOwnerPassword = *body.Properties.ResourceOwnerPassword
+	}
+	if body.Properties.SupportState != nil {
+		value.SupportState = *body.Properties.SupportState
+	}
+	if body.Properties.GrantTypes != nil {
+		value.GrantTypes = append([]string(nil), body.Properties.GrantTypes...)
+	}
+}
+
+func clearNullAuthorizationServerProperties(value *model.AuthorizationServer, document map[string]any) {
+	properties, _ := document["properties"].(map[string]any)
+	if field, present := properties["description"]; present && field == nil {
+		value.Description = ""
+	}
+	if field, present := properties["tokenEndpoint"]; present && field == nil {
+		value.TokenEndpoint = ""
+	}
+	if field, present := properties["defaultScope"]; present && field == nil {
+		value.DefaultScope = ""
+	}
+	if field, present := properties["resourceOwnerUsername"]; present && field == nil {
+		value.ResourceOwnerUsername = ""
+	}
+	if field, present := properties["resourceOwnerPassword"]; present && field == nil {
+		value.ResourceOwnerPassword = ""
+	}
+	if field, present := properties["supportState"]; present && field == nil {
+		value.SupportState = false
+	}
+}
+
+func validateAuthorizationServer(value model.AuthorizationServer, creating bool) error {
+	if creating && value.DisplayName == "" {
+		return errors.New("displayName is required")
+	}
+	if creating && value.AuthorizationEndpoint == "" {
+		return errors.New("authorizationEndpoint is required")
+	}
+	if creating && value.ClientRegistrationEndpoint == "" {
+		return errors.New("clientRegistrationEndpoint is required")
+	}
+	if creating && value.ClientID == "" {
+		return errors.New("clientId is required")
+	}
+	if creating && len(value.GrantTypes) == 0 {
+		return errors.New("grantTypes is required")
+	}
+	if value.DisplayName == "" {
+		return errors.New("displayName cannot be empty")
+	}
+	if len(value.DisplayName) > 50 {
+		return errors.New("displayName must be at most 50 characters")
+	}
+	if value.AuthorizationEndpoint == "" {
+		return errors.New("authorizationEndpoint cannot be empty")
+	}
+	if value.ClientRegistrationEndpoint == "" {
+		return errors.New("clientRegistrationEndpoint cannot be empty")
+	}
+	if value.ClientID == "" {
+		return errors.New("clientId cannot be empty")
+	}
+	if len(value.GrantTypes) == 0 {
+		return errors.New("grantTypes cannot be empty")
+	}
+	for _, grant := range value.GrantTypes {
+		if !authorizationServerGrantTypes[grant] {
+			return errors.New("grantTypes must be authorizationCode, implicit, resourceOwnerPassword, or clientCredentials")
+		}
+	}
+	if methods := authorizationServerMethods(value.Document); len(methods) > 0 {
+		hasGET := false
+		for _, method := range methods {
+			if strings.EqualFold(method, http.MethodGet) {
+				hasGET = true
+				break
+			}
+		}
+		if !hasGET {
+			return errors.New("authorizationMethods must include GET")
+		}
+	}
+	return nil
+}
+
+func authorizationServerMethods(document map[string]any) []string {
+	properties, _ := document["properties"].(map[string]any)
+	raw, _ := properties["authorizationMethods"].([]any)
+	methods := make([]string, 0, len(raw))
+	for _, value := range raw {
+		method, _ := value.(string)
+		if method != "" {
+			methods = append(methods, method)
+		}
+	}
+	return methods
+}
+
+func sanitizeAuthorizationServerDocument(document map[string]any) {
+	if document == nil {
+		return
+	}
+	delete(document, "clientSecret")
+	properties, _ := document["properties"].(map[string]any)
+	delete(properties, "clientSecret")
+}
+
 type loggerPayload struct {
 	Properties struct {
 		LoggerType  *string           `json:"loggerType"`
@@ -3544,6 +4432,101 @@ func policyFragmentWire(v model.PolicyFragment, format string) map[string]any {
 	properties["provisioningState"] = v.ProvisioningState
 	return result
 }
+func cacheWire(v model.Cache) map[string]any {
+	result := cloneObject(v.Document)
+	result["id"], result["name"], result["type"] = v.ID(), v.Name, "Microsoft.ApiManagement/service/caches"
+	properties, ok := result["properties"].(map[string]any)
+	if !ok {
+		properties = map[string]any{}
+		result["properties"] = properties
+	}
+	properties["connectionString"] = cacheConnectionReference(v.ConnectionString)
+	properties["useFromLocation"] = v.UseFromLocation
+	properties["description"] = v.Description
+	properties["resourceId"] = v.ResourceID
+	properties["region"] = v.UseFromLocation
+	return result
+}
+
+func authorizationServerWire(v model.AuthorizationServer) map[string]any {
+	result := cloneObject(v.Document)
+	result["id"], result["name"], result["type"] = v.ID(), v.Name, "Microsoft.ApiManagement/service/authorizationServers"
+	delete(result, "clientSecret")
+	properties, ok := result["properties"].(map[string]any)
+	if !ok {
+		properties = map[string]any{}
+		result["properties"] = properties
+	}
+	delete(properties, "clientSecret")
+	grants := v.GrantTypes
+	if grants == nil {
+		grants = []string{}
+	}
+	properties["displayName"] = v.DisplayName
+	properties["description"] = v.Description
+	properties["authorizationEndpoint"] = v.AuthorizationEndpoint
+	properties["clientRegistrationEndpoint"] = v.ClientRegistrationEndpoint
+	properties["clientId"] = v.ClientID
+	properties["tokenEndpoint"] = v.TokenEndpoint
+	properties["defaultScope"] = v.DefaultScope
+	properties["resourceOwnerUsername"] = v.ResourceOwnerUsername
+	properties["resourceOwnerPassword"] = v.ResourceOwnerPassword
+	properties["supportState"] = v.SupportState
+	properties["grantTypes"] = grants
+	return result
+}
+
+func openIDConnectProviderWire(v model.OpenIDConnectProvider) map[string]any {
+	result := cloneObject(v.Document)
+	result["id"], result["name"], result["type"] = v.ID(), v.Name, "Microsoft.ApiManagement/service/openidConnectProviders"
+	delete(result, "clientSecret")
+	properties, ok := result["properties"].(map[string]any)
+	if !ok {
+		properties = map[string]any{}
+		result["properties"] = properties
+	}
+	delete(properties, "clientSecret")
+	properties["displayName"] = v.DisplayName
+	properties["description"] = v.Description
+	properties["metadataEndpoint"] = v.MetadataEndpoint
+	properties["clientId"] = v.ClientID
+	return result
+}
+
+func identityProviderWire(v model.IdentityProvider) map[string]any {
+	result := cloneObject(v.Document)
+	result["id"], result["name"], result["type"] = v.ID(), v.Name, "Microsoft.ApiManagement/service/identityProviders"
+	delete(result, "clientSecret")
+	properties, ok := result["properties"].(map[string]any)
+	if !ok {
+		properties = map[string]any{}
+		result["properties"] = properties
+	}
+	delete(properties, "clientSecret")
+	tenants := v.AllowedTenants
+	if tenants == nil {
+		tenants = []string{}
+	}
+	properties["type"] = v.Name
+	properties["clientId"] = v.ClientID
+	properties["allowedTenants"] = tenants
+	properties["authority"] = v.Authority
+	properties["signinTenant"] = v.SigninTenant
+	properties["signupPolicyName"] = v.SignupPolicyName
+	properties["signinPolicyName"] = v.SigninPolicyName
+	properties["profileEditingPolicyName"] = v.ProfileEditingPolicyName
+	properties["passwordResetPolicyName"] = v.PasswordResetPolicyName
+	return result
+}
+
+func cacheConnectionReference(value string) string {
+	if strings.HasPrefix(value, "{{") && strings.HasSuffix(value, "}}") {
+		return value
+	}
+	digest := sha256.Sum256([]byte(value))
+	return fmt.Sprintf("{{Cache-ConnectionString-%x}}", digest[:8])
+}
+
 func loggerWire(v model.Logger) map[string]any {
 	result := cloneObject(v.Document)
 	result["id"], result["name"], result["type"] = v.ID(), v.Name, "Microsoft.ApiManagement/service/loggers"
