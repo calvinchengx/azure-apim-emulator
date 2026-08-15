@@ -1011,22 +1011,48 @@ func compileValidateJWT(item node) (Action, bool, error) {
 }
 
 func compileValidateAzureADToken(item node) (Action, bool, error) {
-	if expression(item.Attrs["tenant-id"]) || expression(item.Attrs["header-name"]) || expression(item.Attrs["query-parameter-name"]) || expression(item.Attrs["token-value"]) || expression(item.Attrs["failed-validation-httpcode"]) || expression(item.Attrs["failed-validation-error-message"]) {
-		return unsupported(item.Name), true, nil
+	tenantID, err := compileValue(item.Attrs["tenant-id"])
+	if err != nil {
+		return Action{}, false, err
 	}
-	if strings.TrimSpace(item.Attrs["tenant-id"]) == "" || item.Attrs["token-value"] != "" {
+	headerName, err := compileValue(item.Attrs["header-name"])
+	if err != nil {
+		return Action{}, false, err
+	}
+	queryName, err := compileValue(item.Attrs["query-parameter-name"])
+	if err != nil {
+		return Action{}, false, err
+	}
+	tokenValue, err := compileValue(item.Attrs["token-value"])
+	if err != nil {
+		return Action{}, false, err
+	}
+	httpcode, err := compileValue(item.Attrs["failed-validation-httpcode"])
+	if err != nil {
+		return Action{}, false, err
+	}
+	message, err := compileValue(item.Attrs["failed-validation-error-message"])
+	if err != nil {
+		return Action{}, false, err
+	}
+	if strings.TrimSpace(tenantID) == "" || tokenValue != "" {
 		return unsupported(item.Name), true, nil
 	}
 	if len(item.Children) > 0 {
 		return unsupported(item.Name + "/" + item.Children[0].Name), true, nil
 	}
-	code := http.StatusUnauthorized
-	if value := item.Attrs["failed-validation-httpcode"]; value != "" {
-		if _, err := fmt.Sscanf(value, "%d", &code); err != nil {
+	action := Action{Kind: ActionValidateJWT, Name: headerName, Variable: queryName, Value: message, Body: tenantID, FailedCode: http.StatusUnauthorized}
+	if expression(httpcode) {
+		action.Reason = httpcode
+		action.FailedCode = 0
+	} else if httpcode != "" {
+		code := 0
+		if _, err := fmt.Sscanf(httpcode, "%d", &code); err != nil {
 			return Action{}, false, fmt.Errorf("invalid validate-azure-ad-token status")
 		}
+		action.FailedCode = code
 	}
-	return Action{Kind: ActionValidateJWT, Name: item.Attrs["header-name"], Variable: item.Attrs["query-parameter-name"], Value: item.Attrs["failed-validation-error-message"], FailedCode: code}, true, nil
+	return action, true, nil
 }
 
 func compileSendRequest(item node) (Action, bool, error) {
@@ -1319,8 +1345,39 @@ func Execute(actions []Action, state *State) error {
 			if state.Request == nil || state.ValidateToken == nil {
 				return fmt.Errorf("validate-jwt requires a configured token validator")
 			}
-			if state.ValidateToken(tokenFromRequest(state.Request, action)) != nil {
-				state.Returned, state.StatusCode, state.Body = true, action.FailedCode, action.Value
+			if action.Body != "" {
+				tenantID, err := evalValue(action.Body, state)
+				if err != nil {
+					return err
+				}
+				if strings.TrimSpace(tenantID) == "" {
+					return fmt.Errorf("validate-azure-ad-token requires a tenant-id")
+				}
+			}
+			headerName, err := evalValue(action.Name, state)
+			if err != nil {
+				return err
+			}
+			queryName, err := evalValue(action.Variable, state)
+			if err != nil {
+				return err
+			}
+			code := action.FailedCode
+			if action.Reason != "" {
+				evaluated, err := evalValue(action.Reason, state)
+				if err != nil {
+					return err
+				}
+				if _, err := fmt.Sscanf(evaluated, "%d", &code); err != nil || code < 100 || code > 599 {
+					return fmt.Errorf("invalid validate-azure-ad-token status")
+				}
+			}
+			message, err := evalValue(action.Value, state)
+			if err != nil {
+				return err
+			}
+			if state.ValidateToken(tokenFromRequest(state.Request, Action{Name: headerName, Variable: queryName})) != nil {
+				state.Returned, state.StatusCode, state.Body = true, code, message
 				return nil
 			}
 		case ActionIPFilter:

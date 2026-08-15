@@ -99,7 +99,9 @@ CORS allowed-origins/allowed-methods/allowed-headers/expose-headers/max-age,
 rate-limit/quota `counter-key`, authentication-basic /
 managed-identity / oauth2 / certificate attributes, `set-status`
 code/reason, `mock-response` status-code/content-type, `json-to-xml`
-root-element-name, and `jsonp` callback-parameter-name are implemented;
+root-element-name, `jsonp` callback-parameter-name, and
+`validate-azure-ad-token` tenant-id/header-name/query-parameter-name/
+failed-validation-httpcode/failed-validation-error-message are implemented;
 other statements, remaining context members, other expression-bearing
 fields, and the public allowlist remain open.
 

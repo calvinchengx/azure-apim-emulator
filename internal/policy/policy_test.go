@@ -1863,6 +1863,78 @@ func TestJSONTransformExpressionPolicies(t *testing.T) {
 	}
 }
 
+func TestAzureADTokenExpressionPolicies(t *testing.T) {
+	for _, value := range []string{
+		`<policies><inbound><validate-azure-ad-token tenant-id="@(1 + )"/></inbound></policies>`,
+		`<policies><inbound><validate-azure-ad-token tenant-id="tid" header-name="@(1 + )"/></inbound></policies>`,
+		`<policies><inbound><validate-azure-ad-token tenant-id="tid" query-parameter-name="@(1 + )"/></inbound></policies>`,
+		`<policies><inbound><validate-azure-ad-token tenant-id="tid" token-value="@(1 + )"/></inbound></policies>`,
+		`<policies><inbound><validate-azure-ad-token tenant-id="tid" failed-validation-httpcode="@(1 + )"/></inbound></policies>`,
+		`<policies><inbound><validate-azure-ad-token tenant-id="tid" failed-validation-error-message="@(1 + )"/></inbound></policies>`,
+	} {
+		if _, err := Compile(value, false); err == nil {
+			t.Fatalf("invalid entra expression accepted: %s", value)
+		}
+	}
+	for _, value := range []string{
+		`<policies><inbound><validate-azure-ad-token tenant-id="@(context.Request.Body)"/></inbound></policies>`,
+		`<policies><inbound><validate-azure-ad-token tenant-id="tid" header-name="@(context.Request.Body)"/></inbound></policies>`,
+		`<policies><inbound><validate-azure-ad-token tenant-id="tid" query-parameter-name="@(context.Request.Body)"/></inbound></policies>`,
+		`<policies><inbound><validate-azure-ad-token tenant-id="tid" failed-validation-httpcode="@(context.Request.Body)"/></inbound></policies>`,
+		`<policies><inbound><validate-azure-ad-token tenant-id="tid" failed-validation-error-message="@(context.Request.Body)"/></inbound></policies>`,
+	} {
+		compiled, err := Compile(value, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := Execute(compiled.Inbound, &State{Request: httptest.NewRequest(http.MethodGet, "/", nil), ValidateToken: func(string) error { return nil }}); err == nil {
+			t.Fatalf("unknown entra member accepted: %s", value)
+		}
+	}
+	for _, value := range []string{
+		`<policies><inbound><validate-azure-ad-token tenant-id="tid" failed-validation-httpcode="@(99)"/></inbound></policies>`,
+		`<policies><inbound><validate-azure-ad-token tenant-id="tid" failed-validation-httpcode="@(context.Variables['code'])"/></inbound></policies>`,
+	} {
+		compiled, err := Compile(value, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := Execute(compiled.Inbound, &State{Request: httptest.NewRequest(http.MethodGet, "/", nil), Variables: map[string]string{"code": "bad"}, ValidateToken: func(string) error { return nil }}); err == nil {
+			t.Fatalf("invalid evaluated entra status accepted: %s", value)
+		}
+	}
+	emptyTenant, err := Compile(`<policies><inbound><validate-azure-ad-token tenant-id="@(context.Variables['tenant'])"/></inbound></policies>`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := Execute(emptyTenant.Inbound, &State{Request: httptest.NewRequest(http.MethodGet, "/", nil), ValidateToken: func(string) error { return nil }}); err == nil {
+		t.Fatal("empty evaluated tenant-id accepted")
+	}
+	block, err := Compile(`<policies><inbound><validate-azure-ad-token tenant-id="@{ return context.Variables['tenant']; }" header-name="@{ return context.Variables['header']; }"/></inbound></policies>`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	request.Header.Set("X-Token", "Bearer good")
+	state := &State{Request: request, Variables: map[string]string{"tenant": "organizations", "header": "X-Token"}, ValidateToken: func(token string) error {
+		if token != "good" {
+			return errors.New("bad token")
+		}
+		return nil
+	}}
+	if err := Execute(block.Inbound, state); err != nil || state.Returned {
+		t.Fatalf("block entra expression = %+v, %v", state, err)
+	}
+	code, err := Compile(`<policies><inbound><validate-azure-ad-token tenant-id="tid" failed-validation-httpcode="@(403)" failed-validation-error-message="@(context.Variables['msg'])"/></inbound></policies>`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rejected := &State{Request: httptest.NewRequest(http.MethodGet, "/", nil), Variables: map[string]string{"msg": "aad rejected"}, ValidateToken: func(string) error { return errors.New("bad token") }}
+	if err := Execute(code.Inbound, rejected); err != nil || !rejected.Returned || rejected.StatusCode != http.StatusForbidden || rejected.Body != "aad rejected" {
+		t.Fatalf("literal entra status expression = %+v, %v", rejected, err)
+	}
+}
+
 func TestHeaderActionsAndDefaultResponse(t *testing.T) {
 	headers := http.Header{"X-Value": {"old"}}
 	setHeader(headers, Header{Name: "X-Value", Value: "appended", Action: "append"})
@@ -2008,6 +2080,27 @@ func TestIntegrationPolicies(t *testing.T) {
 	if tokenFromRequest(&http.Request{}, Action{Variable: "access_token"}) != "" {
 		t.Fatal("nil URL should yield an empty token")
 	}
+	expressed, err := Compile(`<policies><inbound><validate-azure-ad-token tenant-id="@(context.Variables['tenant'])" header-name="@(context.Variables['header'])" query-parameter-name="@(context.Variables['query'])" failed-validation-httpcode="@(context.Variables['code'])" failed-validation-error-message="@(context.Variables['msg'])"/></inbound></policies>`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	exprReq := httptest.NewRequest(http.MethodGet, "/?access_token=good", nil)
+	exprReq.Header.Set("X-Token", "Bearer ignored")
+	exprState := &State{Request: exprReq, Variables: map[string]string{"tenant": "organizations", "header": "X-Token", "query": "access_token", "code": "403", "msg": "aad rejected"}, ValidateToken: func(token string) error {
+		if token != "good" {
+			return errors.New("bad token")
+		}
+		return nil
+	}}
+	if err := Execute(expressed.Inbound, exprState); err != nil || exprState.Returned {
+		t.Fatalf("expressed entra token = %+v, %v", exprState, err)
+	}
+	exprReq.Header.Del("X-Token")
+	exprReq.URL.RawQuery = ""
+	exprState = &State{Request: exprReq, Variables: map[string]string{"tenant": "organizations", "header": "X-Token", "query": "access_token", "code": "403", "msg": "aad rejected"}, ValidateToken: func(string) error { return errors.New("bad token") }}
+	if err := Execute(expressed.Inbound, exprState); err != nil || !exprState.Returned || exprState.StatusCode != http.StatusForbidden || exprState.Body != "aad rejected" {
+		t.Fatalf("expressed entra rejection = %+v, %v", exprState, err)
+	}
 
 	cross, err := Compile(`<policies><inbound><cross-domain><cross-domain-policy><allow-http-request-headers-from domain="*" headers="*"/><site-control permitted-cross-domain-policies="all">note</site-control></cross-domain-policy></cross-domain></inbound></policies>`, true)
 	if err != nil || cross.Inbound[0].Kind != ActionReturnResponse || !strings.Contains(cross.Inbound[0].Body, `domain="*"`) || !strings.Contains(cross.Inbound[0].Body, ">note</site-control>") {
@@ -2082,13 +2175,8 @@ func TestIntegrationPolicies(t *testing.T) {
 		`<policies><inbound><send-one-way-request/></inbound></policies>`,
 		`<policies><inbound><send-one-way-request><set-url>https://hooks.example</set-url><authentication-certificate thumbprint="abc"/></send-one-way-request></inbound></policies>`,
 		`<policies><inbound><validate-azure-ad-token/></inbound></policies>`,
-		`<policies><inbound><validate-azure-ad-token tenant-id="@(tid)"/></inbound></policies>`,
-		`<policies><inbound><validate-azure-ad-token tenant-id="tid" header-name="@(X-Token)"/></inbound></policies>`,
-		`<policies><inbound><validate-azure-ad-token tenant-id="tid" query-parameter-name="@(access_token)"/></inbound></policies>`,
 		`<policies><inbound><validate-azure-ad-token tenant-id="tid" token-value="@(token)"/></inbound></policies>`,
 		`<policies><inbound><validate-azure-ad-token tenant-id="tid" token-value="raw"/></inbound></policies>`,
-		`<policies><inbound><validate-azure-ad-token tenant-id="tid" failed-validation-httpcode="@(403)"/></inbound></policies>`,
-		`<policies><inbound><validate-azure-ad-token tenant-id="tid" failed-validation-error-message="@(nope)"/></inbound></policies>`,
 		`<policies><inbound><validate-azure-ad-token tenant-id="tid"><client-application-ids><application-id>app</application-id></client-application-ids></validate-azure-ad-token></inbound></policies>`,
 		`<policies><inbound><redirect-content-urls><unknown/></redirect-content-urls></inbound></policies>`,
 	} {
