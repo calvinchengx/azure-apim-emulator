@@ -845,6 +845,14 @@ func TestChoosePolicy(t *testing.T) {
 	if err := Execute(blockPlan.Inbound, state); err != nil || state.Variables["picked"] != "block" {
 		t.Fatalf("block choose = %+v, %v", state, err)
 	}
+	statusPlan, err := Compile(`<policies><outbound><choose><when condition="@(context.Response.StatusCode >= 500)"><set-header name="X-Retry"><value>@(context.Response.StatusCode.ToString())</value></set-header></when></choose></outbound></policies>`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state = &State{Response: &http.Response{StatusCode: http.StatusBadGateway}, Headers: make(http.Header)}
+	if err := Execute(statusPlan.Outbound, state); err != nil || state.Headers.Get("X-Retry") != "502" {
+		t.Fatalf("response choose = %+v, %v", state, err)
+	}
 	pathPlan, err := Compile(`<policies><inbound><choose><when condition="@(context.Request.Url.Path == '/match')"><set-variable name="picked"><value>path</value></set-variable></when></choose></inbound></policies>`, true)
 	if err != nil {
 		t.Fatal(err)

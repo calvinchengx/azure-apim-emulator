@@ -6,29 +6,52 @@ import (
 	"net/http"
 )
 
-// RequestEnv binds the APIM `context` identifier from an HTTP request and
-// policy variables. A nil request still binds `context` so literal expressions
-// evaluate; member access on the missing request fails at the member.
-func RequestEnv(request *http.Request, variables map[string]string) *Env {
+// Context is the APIM `context` binding for one evaluation.
+type Context struct {
+	Request   *http.Request
+	Response  *http.Response
+	Variables map[string]string
+	LastError error
+}
+
+// Bind builds the identifier environment for an APIM context. Missing request,
+// response, or last-error values still bind `context` so literal expressions
+// evaluate; member access on a missing object fails at the member.
+func Bind(ctx Context) *Env {
 	return &Env{Bindings: map[string]Value{
-		"context": Object(&contextHost{request: request, variables: variables}),
+		"context": Object(&contextHost{ctx: ctx}),
 	}}
 }
 
+// RequestEnv binds request and variables only. Prefer Bind when response or
+// last-error members are required.
+func RequestEnv(request *http.Request, variables map[string]string) *Env {
+	return Bind(Context{Request: request, Variables: variables})
+}
+
 type contextHost struct {
-	request   *http.Request
-	variables map[string]string
+	ctx Context
 }
 
 func (c *contextHost) member(name string) (Value, error) {
 	switch name {
 	case "Request":
-		if c.request == nil {
+		if c.ctx.Request == nil {
 			return Null(), nil
 		}
-		return Object(&requestHost{request: c.request}), nil
+		return Object(&requestHost{request: c.ctx.Request}), nil
+	case "Response":
+		if c.ctx.Response == nil {
+			return Null(), nil
+		}
+		return Object(&responseHost{response: c.ctx.Response}), nil
 	case "Variables":
-		return Object(&mapHost{values: c.variables}), nil
+		return Object(&mapHost{values: c.ctx.Variables}), nil
+	case "LastError":
+		if c.ctx.LastError == nil {
+			return Null(), nil
+		}
+		return Object(&lastErrorHost{err: c.ctx.LastError}), nil
 	default:
 		return Null(), fmt.Errorf("unknown member %s", name)
 	}
@@ -51,6 +74,37 @@ func (r *requestHost) member(name string) (Value, error) {
 	default:
 		return Null(), fmt.Errorf("unknown member %s", name)
 	}
+}
+
+type responseHost struct {
+	response *http.Response
+}
+
+func (r *responseHost) member(name string) (Value, error) {
+	switch name {
+	case "StatusCode":
+		return Int(int64(r.response.StatusCode)), nil
+	case "StatusReason":
+		if r.response.Status != "" {
+			return String(r.response.Status), nil
+		}
+		return String(http.StatusText(r.response.StatusCode)), nil
+	case "Headers":
+		return Object(&headerHost{header: r.response.Header}), nil
+	default:
+		return Null(), fmt.Errorf("unknown member %s", name)
+	}
+}
+
+type lastErrorHost struct {
+	err error
+}
+
+func (e *lastErrorHost) member(name string) (Value, error) {
+	if name != "Message" {
+		return Null(), fmt.Errorf("unknown member %s", name)
+	}
+	return String(e.err.Error()), nil
 }
 
 type urlHost struct {

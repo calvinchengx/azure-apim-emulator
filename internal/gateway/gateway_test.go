@@ -124,6 +124,7 @@ func TestRoutingHelpers(t *testing.T) {
 }
 
 func TestRetryConditionMatches(t *testing.T) {
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
 	response := &http.Response{StatusCode: http.StatusServiceUnavailable}
 	for _, test := range []struct {
 		condition string
@@ -136,25 +137,26 @@ func TestRetryConditionMatches(t *testing.T) {
 		{"@(context.Response.StatusCode <= 503)", true},
 		{"@(context.Response.StatusCode > 500)", true},
 		{"@(context.Response.StatusCode < 500)", false},
-		{"@(context.Request.Method == 'GET')", false},
+		{"@(context.Request.Method == 'GET')", true},
+		{"@(context.Response.StatusCode)", false},
 	} {
-		if got := retryConditionMatches(test.condition, response, nil); got != test.want {
+		if got := retryConditionMatches(test.condition, request, response, nil); got != test.want {
 			t.Errorf("retryConditionMatches(%q) = %v, want %v", test.condition, got, test.want)
 		}
 	}
-	if retryConditionMatches("", &http.Response{StatusCode: http.StatusOK}, nil) {
+	if retryConditionMatches("", request, &http.Response{StatusCode: http.StatusOK}, nil) {
 		t.Fatal("successful response should not retry by default")
 	}
-	if retryConditionMatches("", nil, nil) {
+	if retryConditionMatches("", request, nil, nil) {
 		t.Fatal("nil response should not retry")
 	}
-	if !retryConditionMatches("@(context.LastError != null)", nil, errors.New("temporary")) {
+	if !retryConditionMatches("@(context.LastError != null)", request, nil, errors.New("temporary")) {
 		t.Fatal("last-error condition should retry request errors")
 	}
-	if !retryConditionMatches("", nil, errors.New("temporary")) {
+	if !retryConditionMatches("", request, nil, errors.New("temporary")) {
 		t.Fatal("unconditional retry should retry request errors")
 	}
-	if retryConditionMatches("@(context.Response.StatusCode >= 500)", nil, errors.New("temporary")) {
+	if retryConditionMatches("@(context.Response.StatusCode >= 500)", request, nil, errors.New("temporary")) {
 		t.Fatal("response condition should not retry request errors")
 	}
 }
