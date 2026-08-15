@@ -83,6 +83,10 @@ APIM expressions use C# 7-style forms:
 - `@(expression)` for a single expression
 - `@{ statements; return value; }` for a multi-statement block
 
+The lexer now tokenizes `@(expression)` and `@{ statements }` wrappers, C#
+literals, identifiers, comments, and the operator set used by phase 1. Parser,
+binder, and evaluator remain open.
+
 The pure-Go engine has these stages:
 
 ```text
