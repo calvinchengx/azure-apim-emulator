@@ -436,6 +436,7 @@ var collectionFilterContracts = map[string]filterContract{
 	"identityProviders":      {},
 	"openidConnectProviders": makeFilterContract([]string{"name", "displayName"}, nil),
 	"authorizationServers":   makeFilterContract([]string{"name", "displayName"}, nil),
+	"documentations":         makeFilterContract(nil, map[string]filterFieldRule{"name": {operators: []string{"eq"}, functions: []string{"contains"}}}),
 	"certificates":           makeFilterContract([]string{"name", "subject", "thumbprint"}, map[string]filterFieldRule{"expirationDate": comparisonRule("eq", "ne", "gt", "ge", "lt", "le")}),
 	"diagnostics":            makeFilterContract([]string{"name"}, nil),
 	"groups":                 makeFilterContract([]string{"name", "displayName", "description"}, map[string]filterFieldRule{"externalId": comparisonRule("eq")}),

@@ -496,6 +496,10 @@ func TestClosedStoreErrors(t *testing.T) {
 		"get authorization server":       func() error { _, err := st.GetAuthorizationServer("auth"); return err },
 		"list authorization servers":     func() error { _, err := st.ListAuthorizationServers("service"); return err },
 		"delete authorization server":    func() error { return st.DeleteAuthorizationServer("auth") },
+		"upsert documentation":           func() error { _, err := st.UpsertDocumentation(model.Documentation{}); return err },
+		"get documentation":              func() error { _, err := st.GetDocumentation("doc"); return err },
+		"list documentations":            func() error { _, err := st.ListDocumentations("service"); return err },
+		"delete documentation":           func() error { return st.DeleteDocumentation("doc") },
 		"upsert cache":                   func() error { _, err := st.UpsertCache(model.Cache{}); return err },
 		"get cache":                      func() error { _, err := st.GetCache("cache"); return err },
 		"list caches":                    func() error { _, err := st.ListCaches("service"); return err },
@@ -707,6 +711,12 @@ func TestScanFunctionsRejectMalformedRows(t *testing.T) {
 			`CREATE TABLE authorization_servers (id, service_id, name, display_name, description, authorization_endpoint, client_registration_endpoint, client_id, client_secret, token_endpoint, default_scope, resource_owner_username, resource_owner_password, support_state, grant_types_json, document_json, etag)`,
 			`INSERT INTO authorization_servers VALUES ('id', 'service', NULL, '', '', '', '', '', '', '', '', '', '', 0, '[]', '{}', '')`,
 			func(db *sql.DB) error { _, err := (&Store{db: db}).ListAuthorizationServers("service"); return err },
+		},
+		{
+			"documentations",
+			`CREATE TABLE documentations (id, service_id, name, title, content, document_json, etag)`,
+			`INSERT INTO documentations VALUES ('id', 'service', NULL, '', '', '{}', '')`,
+			func(db *sql.DB) error { _, err := (&Store{db: db}).ListDocumentations("service"); return err },
 		},
 		{
 			"caches",
@@ -1949,6 +1959,63 @@ func TestCertificateLifecycle(t *testing.T) {
 	}
 	if err := st.DeleteCertificate(certificate.ID()); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("second delete = %v", err)
+	}
+}
+
+func TestDocumentationLifecycle(t *testing.T) {
+	st, err := Open("", clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	service, err := st.UpsertService(model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "docs"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	article, err := st.UpsertDocumentation(model.Documentation{
+		ServiceID: service.ID(), Name: "guide", Title: "Guide", Content: "# Hello",
+		Document: map[string]any{"custom": true, "properties": map[string]any{"kept": true}},
+	})
+	if err != nil || article.ID() != service.ID()+"/documentations/guide" || article.ETag == "" || article.Document["custom"] != true {
+		t.Fatalf("upsert documentation = %+v, %v", article, err)
+	}
+	got, err := st.GetDocumentation(strings.ToUpper(article.ID()))
+	if err != nil || got.Title != "Guide" || got.Content != "# Hello" || got.Document["properties"].(map[string]any)["kept"] != true {
+		t.Fatalf("get documentation = %+v, %v", got, err)
+	}
+	values, err := st.ListDocumentations(strings.ToUpper(service.ID()))
+	if err != nil || len(values) != 1 {
+		t.Fatalf("list documentations = %+v, %v", values, err)
+	}
+	if _, err := st.GetDocumentation("missing"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing documentation = %v", err)
+	}
+	if err := st.DeleteDocumentation(article.ID()); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.DeleteDocumentation(article.ID()); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("second documentation delete = %v", err)
+	}
+}
+
+func TestDocumentationJSONFailures(t *testing.T) {
+	st, err := Open("", clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	bad := make(chan int)
+	if _, err := st.UpsertDocumentation(model.Documentation{Document: map[string]any{"bad": bad}}); err == nil {
+		t.Fatal("documentation document marshal succeeded")
+	}
+	if _, err := st.db.Exec(`PRAGMA foreign_keys = OFF`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.db.Exec(`INSERT INTO documentations VALUES ('doc', 'service', 'guide', '', '', '{', '')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.ListDocumentations("service"); err == nil {
+		t.Fatal("malformed documentation document accepted")
 	}
 }
 

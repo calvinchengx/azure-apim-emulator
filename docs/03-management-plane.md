@@ -209,6 +209,15 @@ stored resource name so a differently cased path does not fork the row. The
 official Go SDK witness verifies create, redacted GET, list, `listSecrets`,
 PATCH, and delete. OAuth policy runtime use remains assigned to later work.
 
+Documentation articles retain canonical documents with required `title` and
+optional markdown `content`. PUT create returns 201; updates preserve the
+stored resource name so a differently cased path does not fork the row. PATCH
+may update those fields and null-clears `content`. Collection `$filter`
+accepts only `name` with `eq` and `contains`. The official Go SDK
+`v1.1.1` surface has no documentation client, so the witnesses are the Go
+handler and store lifecycle tests. Azure differential fixtures remain
+assigned to later work.
+
 Loggers retain canonical documents while operational credentials remain in a
 separate indexed field. Handler and store boundaries strip duplicate credential
 fields from the canonical document, and ordinary create, GET, and list responses

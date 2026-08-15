@@ -204,6 +204,11 @@ CREATE TABLE IF NOT EXISTS policy_fragment_documents (
   fragment_id TEXT PRIMARY KEY REFERENCES policy_fragments(id) ON DELETE CASCADE,
   document_json TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS documentations (
+  id TEXT PRIMARY KEY, service_id TEXT NOT NULL REFERENCES services(id) ON DELETE CASCADE,
+  name TEXT NOT NULL, title TEXT NOT NULL, content TEXT NOT NULL,
+  document_json TEXT NOT NULL, etag TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS authorization_servers (
   id TEXT PRIMARY KEY, service_id TEXT NOT NULL REFERENCES services(id) ON DELETE CASCADE,
   name TEXT NOT NULL, display_name TEXT NOT NULL, description TEXT NOT NULL,
@@ -2000,6 +2005,65 @@ func (s *Store) GetPolicy(scopeID string) (model.Policy, error) {
 		return model.Policy{}, err
 	}
 	return value, nil
+}
+
+// UpsertDocumentation creates or replaces a documentation article while preserving its ARM document.
+func (s *Store) UpsertDocumentation(v model.Documentation) (model.Documentation, error) {
+	v.ETag = newETag()
+	document, err := json.Marshal(v.Document)
+	if err != nil {
+		return v, err
+	}
+	_, err = s.db.Exec(`INSERT INTO documentations (id, service_id, name, title, content, document_json, etag)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET title=excluded.title, content=excluded.content,
+        document_json=excluded.document_json, etag=excluded.etag`,
+		v.ID(), v.ServiceID, v.Name, v.Title, v.Content, document, v.ETag)
+	return v, err
+}
+
+// GetDocumentation finds one documentation article by ARM ID.
+func (s *Store) GetDocumentation(id string) (model.Documentation, error) {
+	values, err := scanDocumentations(s.db.Query(`SELECT service_id, name, title, content, document_json, etag
+      FROM documentations WHERE lower(id)=lower(?)`, id))
+	if err != nil {
+		return model.Documentation{}, err
+	}
+	if len(values) == 0 {
+		return model.Documentation{}, ErrNotFound
+	}
+	return values[0], nil
+}
+
+// ListDocumentations returns service documentation articles in stable ID order.
+func (s *Store) ListDocumentations(serviceID string) ([]model.Documentation, error) {
+	return scanDocumentations(s.db.Query(`SELECT service_id, name, title, content, document_json, etag
+      FROM documentations WHERE lower(service_id)=lower(?) ORDER BY id`, serviceID))
+}
+
+func scanDocumentations(rows *sql.Rows, err error) ([]model.Documentation, error) {
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	values := make([]model.Documentation, 0)
+	for rows.Next() {
+		var v model.Documentation
+		var document string
+		if err := rows.Scan(&v.ServiceID, &v.Name, &v.Title, &v.Content, &document, &v.ETag); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal([]byte(document), &v.Document); err != nil {
+			return nil, err
+		}
+		values = append(values, v)
+	}
+	return values, rows.Err()
+}
+
+// DeleteDocumentation removes one documentation article.
+func (s *Store) DeleteDocumentation(id string) error {
+	return deleteScopedResource(s.db, "documentations", id)
 }
 
 // UpsertAuthorizationServer creates or replaces an OAuth authorization server while preserving its ARM document.

@@ -194,6 +194,19 @@ type AuthorizationServer struct {
 // ID returns the authorization server ARM resource ID.
 func (v AuthorizationServer) ID() string { return v.ServiceID + "/authorizationServers/" + v.Name }
 
+// Documentation is a service-scoped markdown documentation article.
+type Documentation struct {
+	ServiceID string
+	Name      string
+	Title     string
+	Content   string
+	ETag      string
+	Document  map[string]any
+}
+
+// ID returns the documentation ARM resource ID.
+func (v Documentation) ID() string { return v.ServiceID + "/documentations/" + v.Name }
+
 // Certificate is backend client-certificate material or a Key Vault reference.
 type Certificate struct {
 	ServiceID          string

@@ -43,6 +43,7 @@
     "canonical identity-provider ARM documents": ["go:TestIdentityProviderLifecycle", "go:TestIdentityProviderBranches", "sdk:TestGoManagementSDKConfiguresProtectedGateway/identity-provider"],
     "canonical OpenID Connect provider ARM documents": ["go:TestOpenIDConnectProviderLifecycle", "go:TestOpenIDConnectProviderBranches", "sdk:TestGoManagementSDKConfiguresProtectedGateway/openid-connect-provider"],
     "canonical authorization-server ARM documents": ["go:TestAuthorizationServerLifecycle", "go:TestAuthorizationServerBranches", "sdk:TestGoManagementSDKConfiguresProtectedGateway/authorization-server"],
+    "canonical documentation ARM documents": ["go:TestDocumentationLifecycle", "go:TestDocumentationBranches"],
     "canonical certificate ARM documents": ["go:TestCertificateLifecycle", "go:TestCertificateDocumentFallback", "sdk:TestGoManagementSDKConfiguresProtectedGateway/certificate"],
     "canonical logger ARM documents": ["go:TestLoggerDiagnosticAndEventLifecycle", "go:TestLoggerAndDiagnosticBranches", "sdk:TestGoManagementSDKConfiguresProtectedGateway/logger", "sdk:TestGoManagementSDKConfiguresProtectedGateway/logger-reference-protection"],
     "canonical diagnostic ARM documents": ["go:TestDiagnosticEmissionAndSampling", "go:TestDiagnosticWriterCapabilities", "sdk:TestGoManagementSDKConfiguresProtectedGateway/diagnostic", "sdk:TestGoManagementSDKConfiguresProtectedGateway/api-diagnostic"],
