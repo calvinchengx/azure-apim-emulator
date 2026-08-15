@@ -11,6 +11,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -62,6 +63,8 @@ const (
 	ActionReturnResponse
 	ActionRetry
 	ActionSetStatus
+	ActionSendOneWay
+	ActionRedirectContentURLs
 	ActionUnsupported
 )
 
@@ -400,13 +403,9 @@ func compileNode(item node, strict bool) (Action, bool, error) {
 		}
 		return Action{Kind: ActionCheckHeader, Name: item.Attrs["name"], Values: values, Value: item.Attrs["failed-check-error-message"], StatusCode: code, IgnoreCase: strings.EqualFold(item.Attrs["ignore-case"], "true")}, true, nil
 	case "validate-jwt":
-		code := http.StatusUnauthorized
-		if value := item.Attrs["failed-validation-httpcode"]; value != "" {
-			if _, err := fmt.Sscanf(value, "%d", &code); err != nil {
-				return Action{}, false, fmt.Errorf("invalid validate-jwt status")
-			}
-		}
-		return Action{Kind: ActionValidateJWT, Value: item.Attrs["failed-validation-error-message"], FailedCode: code}, true, nil
+		return compileValidateJWT(item)
+	case "validate-azure-ad-token":
+		return compileValidateAzureADToken(item)
 	case "ip-filter":
 		filterAction := strings.ToLower(item.Attrs["action"])
 		if filterAction != "allow" && filterAction != "forbid" {
@@ -434,36 +433,8 @@ func compileNode(item node, strict bool) (Action, bool, error) {
 			return unsupported(item.Name), true, nil
 		}
 		return Action{Kind: ActionCORS, AllowOrigin: item.Attrs["allowed-origins"], Methods: item.Attrs["allowed-methods"], AllowHeaders: item.Attrs["allowed-headers"], ExposeHeaders: item.Attrs["expose-headers"], MaxAge: item.Attrs["max-age"], AllowCreds: strings.EqualFold(item.Attrs["allow-credentials"], "true")}, true, nil
-	case "send-request":
-		action := Action{Kind: ActionSendRequest, SendMethod: http.MethodGet, ResponseVar: item.Attrs["response-variable-name"]}
-		for _, child := range item.Children {
-			switch child.Name {
-			case "set-url":
-				action.SendURL = strings.TrimSpace(child.Text)
-			case "set-method":
-				action.SendMethod = strings.ToUpper(strings.TrimSpace(child.Text))
-			case "set-header":
-				value := childText(child, "value")
-				if expression(value) {
-					return unsupported(item.Name), true, nil
-				}
-				action.Headers = append(action.Headers, Header{Name: child.Attrs["name"], Value: value, Action: child.Attrs["exists-action"]})
-			case "set-body":
-				action.Body = strings.TrimSpace(child.Text)
-				if action.Body == "" {
-					action.Body = childText(child, "value")
-				}
-				if expression(action.Body) {
-					return unsupported(item.Name), true, nil
-				}
-			default:
-				return unsupported(item.Name + "/" + child.Name), true, nil
-			}
-		}
-		if action.SendURL == "" || expression(action.SendURL) || action.SendMethod == "" {
-			return unsupported(item.Name), true, nil
-		}
-		return action, true, nil
+	case "send-request", "send-one-way-request":
+		return compileSendRequest(item)
 	case "rate-limit-by-key", "quota-by-key", "rate-limit", "quota":
 		return compileLimit(item)
 	case "limit-concurrency":
@@ -820,6 +791,17 @@ func compileNode(item node, strict bool) (Action, bool, error) {
 			return Action{}, false, fmt.Errorf("invalid set-status code")
 		}
 		return Action{Kind: ActionSetStatus, StatusCode: code, Reason: item.Attrs["reason"]}, true, nil
+	case "cross-domain":
+		var body strings.Builder
+		for _, child := range item.Children {
+			writeNodeXML(&body, child)
+		}
+		return Action{Kind: ActionReturnResponse, StatusCode: http.StatusOK, Body: body.String(), Headers: []Header{{Name: "Content-Type", Value: "text/x-cross-domain-policy", Action: "override"}}}, true, nil
+	case "redirect-content-urls":
+		if len(item.Children) > 0 {
+			return unsupported(item.Name + "/" + item.Children[0].Name), true, nil
+		}
+		return Action{Kind: ActionRedirectContentURLs}, true, nil
 	case "mock-response":
 		if expression(item.Attrs["status-code"]) || expression(item.Attrs["content-type"]) {
 			return unsupported(item.Name), true, nil
@@ -882,6 +864,169 @@ func compileLimit(item node) (Action, bool, error) {
 		retryAfter = "Retry-After"
 	}
 	return Action{Kind: ActionRateLimit, Value: key, LimitCalls: calls, LimitPeriod: period, StatusCode: status, Body: retryAfter}, true, nil
+}
+
+func compileValidateJWT(item node) (Action, bool, error) {
+	code := http.StatusUnauthorized
+	if value := item.Attrs["failed-validation-httpcode"]; value != "" {
+		if _, err := fmt.Sscanf(value, "%d", &code); err != nil {
+			return Action{}, false, fmt.Errorf("invalid validate-jwt status")
+		}
+	}
+	return Action{Kind: ActionValidateJWT, Value: item.Attrs["failed-validation-error-message"], FailedCode: code}, true, nil
+}
+
+func compileValidateAzureADToken(item node) (Action, bool, error) {
+	if expression(item.Attrs["tenant-id"]) || expression(item.Attrs["header-name"]) || expression(item.Attrs["query-parameter-name"]) || expression(item.Attrs["token-value"]) || expression(item.Attrs["failed-validation-httpcode"]) || expression(item.Attrs["failed-validation-error-message"]) {
+		return unsupported(item.Name), true, nil
+	}
+	if strings.TrimSpace(item.Attrs["tenant-id"]) == "" || item.Attrs["token-value"] != "" {
+		return unsupported(item.Name), true, nil
+	}
+	if len(item.Children) > 0 {
+		return unsupported(item.Name + "/" + item.Children[0].Name), true, nil
+	}
+	code := http.StatusUnauthorized
+	if value := item.Attrs["failed-validation-httpcode"]; value != "" {
+		if _, err := fmt.Sscanf(value, "%d", &code); err != nil {
+			return Action{}, false, fmt.Errorf("invalid validate-azure-ad-token status")
+		}
+	}
+	return Action{Kind: ActionValidateJWT, Name: item.Attrs["header-name"], Variable: item.Attrs["query-parameter-name"], Value: item.Attrs["failed-validation-error-message"], FailedCode: code}, true, nil
+}
+
+func compileSendRequest(item node) (Action, bool, error) {
+	kind := ActionSendRequest
+	if item.Name == "send-one-way-request" {
+		kind = ActionSendOneWay
+		if expression(item.Attrs["mode"]) || expression(item.Attrs["timeout"]) {
+			return unsupported(item.Name), true, nil
+		}
+		if mode := item.Attrs["mode"]; mode != "" && !strings.EqualFold(mode, "new") {
+			return unsupported(item.Name), true, nil
+		}
+	}
+	action := Action{Kind: kind, SendMethod: http.MethodGet, ResponseVar: item.Attrs["response-variable-name"]}
+	if kind == ActionSendOneWay {
+		action.ResponseVar = ""
+	}
+	for _, child := range item.Children {
+		switch child.Name {
+		case "set-url":
+			action.SendURL = strings.TrimSpace(child.Text)
+		case "set-method":
+			action.SendMethod = strings.ToUpper(strings.TrimSpace(child.Text))
+		case "set-header":
+			value := childText(child, "value")
+			if expression(value) {
+				return unsupported(item.Name), true, nil
+			}
+			action.Headers = append(action.Headers, Header{Name: child.Attrs["name"], Value: value, Action: child.Attrs["exists-action"]})
+		case "set-body":
+			action.Body = strings.TrimSpace(child.Text)
+			if action.Body == "" {
+				action.Body = childText(child, "value")
+			}
+			if expression(action.Body) {
+				return unsupported(item.Name), true, nil
+			}
+		default:
+			return unsupported(item.Name + "/" + child.Name), true, nil
+		}
+	}
+	if action.SendURL == "" || expression(action.SendURL) || action.SendMethod == "" {
+		return unsupported(item.Name), true, nil
+	}
+	return action, true, nil
+}
+
+func writeNodeXML(body *strings.Builder, item node) {
+	body.WriteByte('<')
+	body.WriteString(item.Name)
+	keys := make([]string, 0, len(item.Attrs))
+	for key := range item.Attrs {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		body.WriteByte(' ')
+		body.WriteString(key)
+		body.WriteString(`="`)
+		body.WriteString(item.Attrs[key])
+		body.WriteByte('"')
+	}
+	if item.Text == "" && len(item.Children) == 0 {
+		body.WriteString("/>")
+		return
+	}
+	body.WriteByte('>')
+	body.WriteString(item.Text)
+	for _, child := range item.Children {
+		writeNodeXML(body, child)
+	}
+	body.WriteString("</")
+	body.WriteString(item.Name)
+	body.WriteByte('>')
+}
+
+func tokenFromRequest(request *http.Request, action Action) string {
+	if action.Variable != "" {
+		if request.URL == nil {
+			return ""
+		}
+		return strings.TrimSpace(request.URL.Query().Get(action.Variable))
+	}
+	name := action.Name
+	if name == "" {
+		name = "Authorization"
+	}
+	return strings.TrimSpace(strings.TrimPrefix(request.Header.Get(name), "Bearer "))
+}
+
+func requestBaseURL(request *http.Request) string {
+	scheme := "http"
+	if request.TLS != nil {
+		scheme = "https"
+	}
+	if request.URL != nil && request.URL.Scheme != "" {
+		scheme = request.URL.Scheme
+	}
+	host := request.Host
+	if host == "" && request.URL != nil {
+		host = request.URL.Host
+	}
+	return scheme + "://" + host
+}
+
+func replaceContentURLs(state *State, gateway, backend string) error {
+	from, to := gateway, backend
+	if state.Response != nil {
+		from, to = backend, gateway
+	}
+	var body io.ReadCloser
+	if state.Response != nil {
+		body = state.Response.Body
+	} else {
+		body = state.Request.Body
+	}
+	if body == nil {
+		return fmt.Errorf("redirect-content-urls requires a body")
+	}
+	value, err := io.ReadAll(body)
+	if err != nil {
+		return err
+	}
+	replaced := strings.ReplaceAll(string(value), from, to)
+	if state.Response != nil {
+		state.Response.Body = io.NopCloser(strings.NewReader(replaced))
+		return nil
+	}
+	state.Request.Body = io.NopCloser(strings.NewReader(replaced))
+	state.Request.ContentLength = int64(len(replaced))
+	state.Request.GetBody = func() (io.ReadCloser, error) {
+		return io.NopCloser(strings.NewReader(replaced)), nil
+	}
+	return nil
 }
 
 func unsupported(name string) Action { return Action{Kind: ActionUnsupported, Source: name} }
@@ -977,8 +1122,7 @@ func Execute(actions []Action, state *State) error {
 			if state.Request == nil || state.ValidateToken == nil {
 				return fmt.Errorf("validate-jwt requires a configured token validator")
 			}
-			header := state.Request.Header.Get("Authorization")
-			if !strings.HasPrefix(header, "Bearer ") || state.ValidateToken(strings.TrimSpace(strings.TrimPrefix(header, "Bearer "))) != nil {
+			if state.ValidateToken(tokenFromRequest(state.Request, action)) != nil {
 				state.Returned, state.StatusCode, state.Body = true, action.FailedCode, action.Value
 				return nil
 			}
@@ -1034,8 +1178,11 @@ func Execute(actions []Action, state *State) error {
 			if state.Request.Method == http.MethodOptions {
 				state.Returned, state.StatusCode = true, http.StatusNoContent
 			}
-		case ActionSendRequest:
+		case ActionSendRequest, ActionSendOneWay:
 			if state.SendRequest == nil {
+				if action.Kind == ActionSendOneWay {
+					return fmt.Errorf("send-one-way-request requires a configured transport")
+				}
 				return fmt.Errorf("send-request requires a configured transport")
 			}
 			request, err := http.NewRequest(action.SendMethod, action.SendURL, strings.NewReader(action.Body))
@@ -1046,6 +1193,12 @@ func Execute(actions []Action, state *State) error {
 				setHeader(request.Header, header)
 			}
 			response, err := state.SendRequest(request)
+			if action.Kind == ActionSendOneWay {
+				if response != nil && response.Body != nil {
+					_ = response.Body.Close()
+				}
+				continue
+			}
 			if err != nil {
 				return err
 			}
@@ -1430,6 +1583,13 @@ func Execute(actions []Action, state *State) error {
 		case ActionSetStatus:
 			state.StatusCode = action.StatusCode
 			state.Reason = action.Reason
+		case ActionRedirectContentURLs:
+			if state.Request == nil || state.BackendURL == "" {
+				return fmt.Errorf("redirect-content-urls requires a request and backend URL")
+			}
+			if err := replaceContentURLs(state, requestBaseURL(state.Request), strings.TrimRight(state.BackendURL, "/")); err != nil {
+				return err
+			}
 		case ActionRetry:
 			if err := Execute(action.Children, state); err != nil {
 				return err
