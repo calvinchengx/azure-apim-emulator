@@ -86,7 +86,8 @@ APIM expressions use C# 7-style forms:
 The lexer tokenizes `@(expression)` and `@{ statements }` wrappers, C# literals
 (including APIM-policy single-quoted strings), identifiers, comments, and the
 phase-1 operator set. The evaluator runs context-free expressions and binds
-`context` for `choose` conditions: request method/URL/headers/IP, policy
+`context` for `choose`, mutation policies, and retry conditions: request
+method/URL/headers/IP, response status/headers, last-error message, policy
 variables, member access, indexing, and calls (`ToString`, `Length`,
 `GetValueOrDefault`, `ContainsKey`). Single-`return` statement blocks and
 runtime evaluation of `set-header`, `set-query-parameter`, `set-variable`,

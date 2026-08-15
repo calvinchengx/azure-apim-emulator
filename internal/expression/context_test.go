@@ -2,6 +2,7 @@ package expression
 
 import (
 	"crypto/tls"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -83,8 +84,10 @@ func TestRequestEnvFallbacksAndErrors(t *testing.T) {
 	}
 
 	for _, source := range []string{
-		"@(context.Response)",
+		"@(context.Api)",
 		"@(context.Request.Body)",
+		"@(context.Response.Body)",
+		"@(context.LastError.Message)",
 		"@(context.Request.Url.Port)",
 		"@(context.Request.Headers.Get('X'))",
 		"@(context.Request.Headers[1])",
@@ -108,6 +111,58 @@ func TestRequestEnvFallbacksAndErrors(t *testing.T) {
 		if _, err := EvalEnv(source, RequestEnv(plain, map[string]string{"route": "blue"})); err == nil {
 			t.Fatalf("accepted %s", source)
 		}
+	}
+}
+
+func TestResponseAndLastErrorBindings(t *testing.T) {
+	response := &http.Response{
+		StatusCode: http.StatusServiceUnavailable,
+		Header:     http.Header{"X-Retry": {"yes"}},
+	}
+	env := Bind(Context{
+		Request:   httptest.NewRequest(http.MethodGet, "/", nil),
+		Response:  response,
+		LastError: errors.New("temporary"),
+	})
+	cases := []struct {
+		source string
+		want   any
+	}{
+		{"@(context.Response.StatusCode)", int64(503)},
+		{"@(context.Response.StatusCode >= 500)", true},
+		{"@(context.Response.StatusReason)", "Service Unavailable"},
+		{"@(context.Response.Headers['X-Retry'])", "yes"},
+		{"@(context.LastError != null)", true},
+		{"@(context.LastError.Message)", "temporary"},
+	}
+	for _, test := range cases {
+		got, err := EvalEnv(test.source, env)
+		if err != nil {
+			t.Fatalf("%s: %v", test.source, err)
+		}
+		if got.Interface() != test.want {
+			t.Fatalf("%s = %#v, want %#v", test.source, got.Interface(), test.want)
+		}
+	}
+
+	named := &http.Response{StatusCode: http.StatusTeapot, Status: "418 I'm a teapot"}
+	reason, err := EvalEnv("@(context.Response.StatusReason)", Bind(Context{Response: named}))
+	if err != nil || reason.String() != "418 I'm a teapot" {
+		t.Fatalf("named status = %q %v", reason, err)
+	}
+
+	missing, err := EvalEnv("@(context.Response == null && context.LastError == null)", Bind(Context{}))
+	if err != nil || !missing.Truthy() {
+		t.Fatalf("missing response/error = %+v %v", missing, err)
+	}
+	if _, err := EvalEnv("@(context.Response.StatusCode)", Bind(Context{})); err == nil {
+		t.Fatal("null response member accepted")
+	}
+	if _, err := EvalEnv("@(context.LastError.Reason)", Bind(Context{LastError: errors.New("temporary")})); err == nil {
+		t.Fatal("unknown last-error member accepted")
+	}
+	if _, err := EvalEnv("@(context.Response.Body)", env); err == nil {
+		t.Fatal("unknown response member accepted")
 	}
 }
 

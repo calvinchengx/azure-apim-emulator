@@ -1057,7 +1057,7 @@ func evalValue(value string, state *State) (string, error) {
 	if !expression(value) {
 		return value, nil
 	}
-	got, err := expr.EvalEnv(value, expr.RequestEnv(state.Request, state.Variables))
+	got, err := expr.EvalEnv(value, stateEnv(state))
 	if err != nil {
 		return "", err
 	}
@@ -1658,8 +1658,12 @@ func Execute(actions []Action, state *State) error {
 	return nil
 }
 
+func stateEnv(state *State) *expr.Env {
+	return expr.Bind(expr.Context{Request: state.Request, Response: state.Response, Variables: state.Variables})
+}
+
 func evaluateCondition(condition string, state *State) (bool, error) {
-	value, err := expr.EvalEnv(condition, expr.RequestEnv(state.Request, state.Variables))
+	value, err := expr.EvalEnv(condition, stateEnv(state))
 	if err != nil {
 		return false, err
 	}

@@ -15,13 +15,13 @@ import (
 	"net/url"
 	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	certutil "github.com/calvinchengx/azure-apim-emulator/internal/certificate"
+	"github.com/calvinchengx/azure-apim-emulator/internal/expression"
 	"github.com/calvinchengx/azure-apim-emulator/internal/model"
 	"github.com/calvinchengx/azure-apim-emulator/internal/policy"
 	"github.com/calvinchengx/azure-apim-emulator/internal/store"
@@ -1165,7 +1165,7 @@ func forwardWithRetry(client *http.Client, original *http.Request, backend, path
 			original.Body = io.NopCloser(bytes.NewReader(body))
 		}
 		response, requestErr := forwardWithClient(client, original, backend, path)
-		if attempt >= retry.RetryCount || !retryConditionMatches(retry.Condition, response, requestErr) {
+		if attempt >= retry.RetryCount || !retryConditionMatches(retry.Condition, original, response, requestErr) {
 			return response, requestErr
 		}
 		if response != nil && response.Body != nil {
@@ -1183,39 +1183,23 @@ func forwardWithRetry(client *http.Client, original *http.Request, backend, path
 	}
 }
 
-var retryStatusCondition = regexp.MustCompile(`(?i)context\.Response\.StatusCode\s*(==|!=|>=|<=|>|<)\s*(\d+)`)
-
-func retryConditionMatches(condition string, response *http.Response, requestErr error) bool {
-	if requestErr != nil {
-		value := strings.ToLower(condition)
-		return strings.TrimSpace(condition) == "" || strings.Contains(value, "lastresult") || strings.Contains(value, "lasterror")
+func retryConditionMatches(condition string, request *http.Request, response *http.Response, requestErr error) bool {
+	if strings.TrimSpace(condition) == "" {
+		if requestErr != nil {
+			return true
+		}
+		return response != nil && response.StatusCode >= http.StatusInternalServerError
 	}
-	if response == nil {
+	value, err := expression.EvalEnv(condition, expression.Bind(expression.Context{
+		Request:   request,
+		Response:  response,
+		LastError: requestErr,
+	}))
+	if err != nil {
 		return false
 	}
-	condition = strings.TrimSpace(condition)
-	if condition == "" {
-		return response.StatusCode >= http.StatusInternalServerError
-	}
-	matches := retryStatusCondition.FindStringSubmatch(condition)
-	if len(matches) != 3 {
-		return false
-	}
-	status, _ := strconv.Atoi(matches[2])
-	switch matches[1] {
-	case "==":
-		return response.StatusCode == status
-	case "!=":
-		return response.StatusCode != status
-	case ">=":
-		return response.StatusCode >= status
-	case "<=":
-		return response.StatusCode <= status
-	case ">":
-		return response.StatusCode > status
-	default:
-		return response.StatusCode < status
-	}
+	truth, ok := value.AsBool()
+	return ok && truth
 }
 
 func forwardWithClient(client *http.Client, original *http.Request, backend, path string) (*http.Response, error) {
