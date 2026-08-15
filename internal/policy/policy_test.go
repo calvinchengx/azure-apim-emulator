@@ -807,6 +807,14 @@ func TestChoosePolicy(t *testing.T) {
 	if err := Execute(falsePlan.Inbound, state); err != nil || state.Variables != nil {
 		t.Fatalf("false choose = %+v, %v", state, err)
 	}
+	blockPlan, err := Compile(`<policies><inbound><choose><when condition="@{ return context.Request.Method == 'GET'; }"><set-variable name="picked"><value>block</value></set-variable></when></choose></inbound></policies>`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state = &State{Request: httptest.NewRequest(http.MethodGet, "/", nil)}
+	if err := Execute(blockPlan.Inbound, state); err != nil || state.Variables["picked"] != "block" {
+		t.Fatalf("block choose = %+v, %v", state, err)
+	}
 	pathPlan, err := Compile(`<policies><inbound><choose><when condition="@(context.Request.Url.Path == '/match')"><set-variable name="picked"><value>path</value></set-variable></when></choose></inbound></policies>`, true)
 	if err != nil {
 		t.Fatal(err)

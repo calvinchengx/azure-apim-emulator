@@ -58,6 +58,10 @@ func TestEvalLiteralsOperatorsAndGrouping(t *testing.T) {
 		{"@(true ? 1 : 2)", int64(1)},
 		{"@(false ? 1 : 2)", int64(2)},
 		{"@(true ? false ? 1 : 2 : 3)", int64(2)},
+		{"@{ return 1 + 2; }", int64(3)},
+		{"@{ return true; }", true},
+		{"@{ return null; }", nil},
+		{`@{ return "hi".Length; }`, int64(2)},
 	}
 	for _, test := range cases {
 		got, err := Eval(test.source)
@@ -80,7 +84,16 @@ func TestEvalAndParseErrors(t *testing.T) {
 	for _, source := range []string{
 		"@(",
 		"@()",
-		"@{ return 1; }",
+		"@{}",
+		"@{ }",
+		"@{ return; }",
+		"@{ return }",
+		"@{ return 1 }",
+		"@{ return 1 + ; }",
+		"@{ return 1; return 2; }",
+		"@{ var x = 1; return x; }",
+		"@{ if (true) { return 1; } }",
+		"@{ new System.Uri(\"http://x\"); }",
 		"@(1 2)",
 		"@(1 + )",
 		"@((1)",
@@ -129,8 +142,10 @@ func TestEvalAndParseErrors(t *testing.T) {
 			t.Fatalf("accepted %s", source)
 		}
 	}
-	if _, form, err := Parse("@{ return 1; }"); err == nil || form != FormBlock {
+	if expr, form, err := Parse("@{ return 1; }"); err != nil || form != FormBlock {
 		t.Fatalf("block parse = %d %v", form, err)
+	} else if got, evalErr := expr.eval(nil); evalErr != nil || got.Interface() != int64(1) {
+		t.Fatalf("block eval = %+v %v", got, evalErr)
 	}
 	if _, form, err := Parse("@(1 + 2)"); err != nil || form != FormExpression {
 		t.Fatalf("expression parse = %d %v", form, err)

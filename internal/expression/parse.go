@@ -51,18 +51,21 @@ type ternaryExpr struct {
 	cond, then, els Expr
 }
 
-// Parse lexes and compiles an APIM expression. Statement blocks remain
-// unsupported so they cannot be silently skipped.
+// Parse lexes and compiles an APIM expression. Blocks may contain a single
+// `return <expr>;`. Other statements stay unimplemented so they cannot be
+// silently skipped.
 func Parse(source string) (Expr, Form, error) {
 	tokens, form, err := Lex(source)
 	if err != nil {
 		return nil, form, err
 	}
-	if form == FormBlock {
-		return nil, form, fmt.Errorf("statement blocks are not implemented")
-	}
 	parser := &parser{tokens: tokens}
-	expr, err := parser.ternary()
+	var expr Expr
+	if form == FormBlock {
+		expr, err = parser.block()
+	} else {
+		expr, err = parser.ternary()
+	}
 	if err != nil {
 		return nil, form, err
 	}
@@ -104,6 +107,28 @@ func (p *parser) take() Token {
 		p.pos++
 	}
 	return token
+}
+
+func (p *parser) block() (Expr, error) {
+	if p.peek().Kind != TokenReturn {
+		if p.peek().Kind == TokenEOF {
+			return nil, fmt.Errorf("statement block must return a value")
+		}
+		return nil, fmt.Errorf("statement %q is not implemented", p.peek().Lexeme)
+	}
+	p.take()
+	if p.peek().Kind == TokenSemicolon || p.peek().Kind == TokenEOF {
+		return nil, fmt.Errorf("return requires a value")
+	}
+	expr, err := p.ternary()
+	if err != nil {
+		return nil, err
+	}
+	if p.peek().Kind != TokenSemicolon {
+		return nil, fmt.Errorf("expected ';'")
+	}
+	p.take()
+	return expr, nil
 }
 
 func (p *parser) ternary() (Expr, error) {
