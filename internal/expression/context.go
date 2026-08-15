@@ -111,6 +111,24 @@ type urlHost struct {
 	request *http.Request
 }
 
+func (u *urlHost) String() string {
+	if u.request.URL == nil {
+		return ""
+	}
+	if u.request.URL.IsAbs() {
+		return u.request.URL.String()
+	}
+	scheme := "http"
+	if u.request.TLS != nil {
+		scheme = "https"
+	}
+	host := u.request.Host
+	if host == "" {
+		host = u.request.URL.Host
+	}
+	return scheme + "://" + host + u.request.URL.RequestURI()
+}
+
 func (u *urlHost) member(name string) (Value, error) {
 	url := u.request.URL
 	if url == nil {
