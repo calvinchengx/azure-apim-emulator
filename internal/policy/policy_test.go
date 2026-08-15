@@ -1634,6 +1634,9 @@ func TestDispatchExpressionPolicies(t *testing.T) {
 		`<policies><inbound><send-request><set-url>https://probe.example</set-url><set-method>@(1 + )</set-method></send-request></inbound></policies>`,
 		`<policies><inbound><send-request><set-url>https://probe.example</set-url><set-header name="X"><value>@(1 + )</value></set-header></send-request></inbound></policies>`,
 		`<policies><inbound><send-request><set-url>https://probe.example</set-url><set-body>@(1 + )</set-body></send-request></inbound></policies>`,
+		`<policies><inbound><send-one-way-request mode="@(1 + )"><set-url>https://hooks.example</set-url></send-one-way-request></inbound></policies>`,
+		`<policies><inbound><send-one-way-request timeout="@(1 + )"><set-url>https://hooks.example</set-url></send-one-way-request></inbound></policies>`,
+		`<policies><inbound><send-one-way-request mode="@(new)"><set-url>https://hooks.example</set-url></send-one-way-request></inbound></policies>`,
 	} {
 		if _, err := Compile(value, false); err == nil {
 			t.Fatalf("invalid dispatch expression accepted: %s", value)
@@ -1647,6 +1650,8 @@ func TestDispatchExpressionPolicies(t *testing.T) {
 		`<policies><inbound><send-request><set-url>https://probe.example</set-url><set-method>@(context.Request.Body)</set-method></send-request></inbound></policies>`,
 		`<policies><inbound><send-request><set-url>https://probe.example</set-url><set-header name="X"><value>@(context.Request.Body)</value></set-header></send-request></inbound></policies>`,
 		`<policies><inbound><send-request><set-url>https://probe.example</set-url><set-body>@(context.Request.Body)</set-body></send-request></inbound></policies>`,
+		`<policies><inbound><send-one-way-request mode="@(context.Request.Body)"><set-url>https://hooks.example</set-url></send-one-way-request></inbound></policies>`,
+		`<policies><inbound><send-one-way-request timeout="@(context.Request.Body)"><set-url>https://hooks.example</set-url></send-one-way-request></inbound></policies>`,
 	} {
 		compiled, err := Compile(value, true)
 		if err != nil {
@@ -2046,7 +2051,7 @@ func TestCompileWithPolicyFragments(t *testing.T) {
 
 func TestIntegrationPolicies(t *testing.T) {
 	oneWay, err := Compile(`<policies><inbound><send-one-way-request mode="new" timeout="20"><set-url>https://hooks.example/slack</set-url><set-method>POST</set-method><set-header name="X-Hook"><value>yes</value></set-header><set-body>alert</set-body></send-one-way-request></inbound></policies>`, true)
-	if err != nil || oneWay.Inbound[0].Kind != ActionSendOneWay || oneWay.Inbound[0].ResponseVar != "" {
+	if err != nil || oneWay.Inbound[0].Kind != ActionSendOneWay || oneWay.Inbound[0].ResponseVar != "" || oneWay.Inbound[0].Name != "new" || oneWay.Inbound[0].MaxAge != "20" {
 		t.Fatalf("send-one-way-request action = %+v, %v", oneWay, err)
 	}
 	sent := 0
@@ -2072,6 +2077,37 @@ func TestIntegrationPolicies(t *testing.T) {
 	}
 	if err := Execute(invalidURL.Inbound, &State{SendRequest: func(*http.Request) (*http.Response, error) { return nil, nil }}); err == nil {
 		t.Fatal("invalid one-way URL accepted")
+	}
+	// timeout="@(20)" compiles and evaluates to "20"; the transport hook has no deadline, so the value is discarded after eval.
+	oneWayExpr, err := Compile(`<policies><inbound><send-one-way-request mode="@(context.Variables['mode'])" timeout="@(20)"><set-url>https://hooks.example/slack</set-url></send-one-way-request></inbound></policies>`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sentExpr := 0
+	exprOneWay := &State{Variables: map[string]string{"mode": "new"}, SendRequest: func(*http.Request) (*http.Response, error) {
+		sentExpr++
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader("ignored"))}, nil
+	}}
+	if err := Execute(oneWayExpr.Inbound, exprOneWay); err != nil || sentExpr != 1 {
+		t.Fatalf("expressed one-way = sent=%d, %v", sentExpr, err)
+	}
+	block, err := Compile(`<policies><inbound><send-one-way-request mode="@{ return context.Variables['mode']; }" timeout="@{ return 20; }"><set-url>https://hooks.example/slack</set-url></send-one-way-request></inbound></policies>`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sentBlock := 0
+	if err := Execute(block.Inbound, &State{Variables: map[string]string{"mode": "new"}, SendRequest: func(*http.Request) (*http.Response, error) {
+		sentBlock++
+		return nil, nil
+	}}); err != nil || sentBlock != 1 {
+		t.Fatalf("block one-way = sent=%d, %v", sentBlock, err)
+	}
+	copyMode, err := Compile(`<policies><inbound><send-one-way-request mode="@(context.Variables['mode'])"><set-url>https://hooks.example/slack</set-url></send-one-way-request></inbound></policies>`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := Execute(copyMode.Inbound, &State{Variables: map[string]string{"mode": "copy"}, SendRequest: func(*http.Request) (*http.Response, error) { return nil, nil }}); err == nil {
+		t.Fatal("expressed copy mode accepted")
 	}
 
 	entra, err := Compile(`<policies><inbound><validate-azure-ad-token tenant-id="organizations" header-name="X-Token" failed-validation-httpcode="403" failed-validation-error-message="aad rejected"/></inbound></policies>`, true)
@@ -2196,8 +2232,6 @@ func TestIntegrationPolicies(t *testing.T) {
 	}
 	for _, value := range []string{
 		`<policies><inbound><send-one-way-request mode="copy"><set-url>https://hooks.example</set-url></send-one-way-request></inbound></policies>`,
-		`<policies><inbound><send-one-way-request mode="@(new)"><set-url>https://hooks.example</set-url></send-one-way-request></inbound></policies>`,
-		`<policies><inbound><send-one-way-request timeout="@(20)"><set-url>https://hooks.example</set-url></send-one-way-request></inbound></policies>`,
 		`<policies><inbound><send-one-way-request/></inbound></policies>`,
 		`<policies><inbound><send-one-way-request><set-url>https://hooks.example</set-url><authentication-certificate thumbprint="abc"/></send-one-way-request></inbound></policies>`,
 		`<policies><inbound><validate-azure-ad-token/></inbound></policies>`,
