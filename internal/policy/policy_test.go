@@ -1445,3 +1445,159 @@ func TestCompileWithPolicyFragments(t *testing.T) {
 		})
 	}
 }
+
+func TestIntegrationPolicies(t *testing.T) {
+	oneWay, err := Compile(`<policies><inbound><send-one-way-request mode="new" timeout="20"><set-url>https://hooks.example/slack</set-url><set-method>POST</set-method><set-header name="X-Hook"><value>yes</value></set-header><set-body>alert</set-body></send-one-way-request></inbound></policies>`, true)
+	if err != nil || oneWay.Inbound[0].Kind != ActionSendOneWay || oneWay.Inbound[0].ResponseVar != "" {
+		t.Fatalf("send-one-way-request action = %+v, %v", oneWay, err)
+	}
+	sent := 0
+	state := &State{SendRequest: func(request *http.Request) (*http.Response, error) {
+		sent++
+		if request.Method != http.MethodPost || request.URL.String() != "https://hooks.example/slack" || request.Header.Get("X-Hook") != "yes" {
+			t.Fatalf("one-way request = %+v", request)
+		}
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader("ignored"))}, errors.New("transport failed")
+	}}
+	if err := Execute(oneWay.Inbound, state); err != nil || state.Returned || sent != 1 {
+		t.Fatalf("one-way execute = %+v, %v sent=%d", state, err, sent)
+	}
+	if err := Execute(oneWay.Inbound, &State{}); err == nil {
+		t.Fatal("send-one-way-request without transport accepted")
+	}
+	if err := Execute(oneWay.Inbound, &State{SendRequest: func(*http.Request) (*http.Response, error) { return nil, nil }}); err != nil {
+		t.Fatalf("nil one-way response = %v", err)
+	}
+	invalidURL, err := Compile(`<policies><inbound><send-one-way-request><set-url>://bad</set-url></send-one-way-request></inbound></policies>`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := Execute(invalidURL.Inbound, &State{SendRequest: func(*http.Request) (*http.Response, error) { return nil, nil }}); err == nil {
+		t.Fatal("invalid one-way URL accepted")
+	}
+
+	entra, err := Compile(`<policies><inbound><validate-azure-ad-token tenant-id="organizations" header-name="X-Token" failed-validation-httpcode="403" failed-validation-error-message="aad rejected"/></inbound></policies>`, true)
+	if err != nil || entra.Inbound[0].Kind != ActionValidateJWT || entra.Inbound[0].Name != "X-Token" {
+		t.Fatalf("validate-azure-ad-token action = %+v, %v", entra, err)
+	}
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	request.Header.Set("X-Token", "Bearer good")
+	aad := &State{Request: request, ValidateToken: func(token string) error {
+		if token != "good" {
+			return errors.New("bad token")
+		}
+		return nil
+	}}
+	if err := Execute(entra.Inbound, aad); err != nil || aad.Returned {
+		t.Fatalf("valid entra token = %+v, %v", aad, err)
+	}
+	query, err := Compile(`<policies><inbound><validate-azure-ad-token tenant-id="organizations" query-parameter-name="access_token"/></inbound></policies>`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	queryReq := httptest.NewRequest(http.MethodGet, "/?access_token=good", nil)
+	queryState := &State{Request: queryReq, ValidateToken: func(token string) error {
+		if token != "good" {
+			return errors.New("bad token")
+		}
+		return nil
+	}}
+	if err := Execute(query.Inbound, queryState); err != nil || queryState.Returned {
+		t.Fatalf("query token = %+v, %v", queryState, err)
+	}
+	if tokenFromRequest(&http.Request{}, Action{Variable: "access_token"}) != "" {
+		t.Fatal("nil URL should yield an empty token")
+	}
+
+	cross, err := Compile(`<policies><inbound><cross-domain><cross-domain-policy><allow-http-request-headers-from domain="*" headers="*"/><site-control permitted-cross-domain-policies="all">note</site-control></cross-domain-policy></cross-domain></inbound></policies>`, true)
+	if err != nil || cross.Inbound[0].Kind != ActionReturnResponse || !strings.Contains(cross.Inbound[0].Body, `domain="*"`) || !strings.Contains(cross.Inbound[0].Body, ">note</site-control>") {
+		t.Fatalf("cross-domain action = %+v, %v", cross, err)
+	}
+	crossState := &State{}
+	if err := Execute(cross.Inbound, crossState); err != nil || !crossState.Returned || crossState.Headers.Get("Content-Type") != "text/x-cross-domain-policy" {
+		t.Fatalf("cross-domain execute = %+v, %v", crossState, err)
+	}
+
+	redirect, err := Compile(`<policies><inbound><redirect-content-urls/></inbound><outbound><redirect-content-urls/></outbound></policies>`, true)
+	if err != nil || redirect.Inbound[0].Kind != ActionRedirectContentURLs {
+		t.Fatalf("redirect-content-urls action = %+v, %v", redirect, err)
+	}
+	inboundReq := httptest.NewRequest(http.MethodPost, "https://gateway.example/api", strings.NewReader(`{"url":"https://gateway.example/items"}`))
+	inbound := &State{Request: inboundReq, BackendURL: "https://backend.example/"}
+	if err := Execute(redirect.Inbound, inbound); err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(inbound.Request.Body)
+	if string(body) != `{"url":"https://backend.example/items"}` {
+		t.Fatalf("inbound rewrite = %s", body)
+	}
+	outboundReq := httptest.NewRequest(http.MethodGet, "https://gateway.example/api", nil)
+	outbound := &State{Request: outboundReq, BackendURL: "https://backend.example", Response: &http.Response{Body: io.NopCloser(strings.NewReader(`{"url":"https://backend.example/items"}`))}}
+	if err := Execute(redirect.Outbound, outbound); err != nil {
+		t.Fatal(err)
+	}
+	outBody, _ := io.ReadAll(outbound.Response.Body)
+	if string(outBody) != `{"url":"https://gateway.example/items"}` {
+		t.Fatalf("outbound rewrite = %s", outBody)
+	}
+	tlsReq := httptest.NewRequest(http.MethodGet, "/api", nil)
+	tlsReq.Host = "secure.example"
+	tlsReq.TLS = &tls.ConnectionState{}
+	if requestBaseURL(tlsReq) != "https://secure.example" {
+		t.Fatalf("tls base URL = %s", requestBaseURL(tlsReq))
+	}
+	hostReq := httptest.NewRequest(http.MethodGet, "http://from-url.example/api", nil)
+	hostReq.Host = ""
+	if requestBaseURL(hostReq) != "http://from-url.example" {
+		t.Fatalf("url host base = %s", requestBaseURL(hostReq))
+	}
+	if err := Execute(redirect.Inbound, &State{}); err == nil {
+		t.Fatal("redirect-content-urls without request accepted")
+	}
+	if err := Execute(redirect.Inbound, &State{Request: httptest.NewRequest(http.MethodGet, "https://gateway.example/", nil)}); err == nil {
+		t.Fatal("redirect-content-urls without backend accepted")
+	}
+	emptyBody := httptest.NewRequest(http.MethodGet, "https://gateway.example/", nil)
+	emptyBody.Body = nil
+	if err := Execute(redirect.Inbound, &State{Request: emptyBody, BackendURL: "https://backend.example"}); err == nil {
+		t.Fatal("redirect-content-urls without body accepted")
+	}
+	broken := httptest.NewRequest(http.MethodGet, "https://gateway.example/", nil)
+	broken.Body = errorBody{}
+	if err := Execute(redirect.Inbound, &State{Request: broken, BackendURL: "https://backend.example"}); err == nil {
+		t.Fatal("redirect-content-urls body read error lost")
+	}
+
+	for _, value := range []string{
+		`<policies><inbound><validate-azure-ad-token tenant-id="tid" failed-validation-httpcode="bad"/></inbound></policies>`,
+	} {
+		if _, err := Compile(value, true); err == nil {
+			t.Fatalf("invalid policy accepted: %s", value)
+		}
+	}
+	for _, value := range []string{
+		`<policies><inbound><send-one-way-request mode="copy"><set-url>https://hooks.example</set-url></send-one-way-request></inbound></policies>`,
+		`<policies><inbound><send-one-way-request mode="@(new)"><set-url>https://hooks.example</set-url></send-one-way-request></inbound></policies>`,
+		`<policies><inbound><send-one-way-request timeout="@(20)"><set-url>https://hooks.example</set-url></send-one-way-request></inbound></policies>`,
+		`<policies><inbound><send-one-way-request/></inbound></policies>`,
+		`<policies><inbound><send-one-way-request><set-url>https://hooks.example</set-url><authentication-certificate thumbprint="abc"/></send-one-way-request></inbound></policies>`,
+		`<policies><inbound><validate-azure-ad-token/></inbound></policies>`,
+		`<policies><inbound><validate-azure-ad-token tenant-id="@(tid)"/></inbound></policies>`,
+		`<policies><inbound><validate-azure-ad-token tenant-id="tid" header-name="@(X-Token)"/></inbound></policies>`,
+		`<policies><inbound><validate-azure-ad-token tenant-id="tid" query-parameter-name="@(access_token)"/></inbound></policies>`,
+		`<policies><inbound><validate-azure-ad-token tenant-id="tid" token-value="@(token)"/></inbound></policies>`,
+		`<policies><inbound><validate-azure-ad-token tenant-id="tid" token-value="raw"/></inbound></policies>`,
+		`<policies><inbound><validate-azure-ad-token tenant-id="tid" failed-validation-httpcode="@(403)"/></inbound></policies>`,
+		`<policies><inbound><validate-azure-ad-token tenant-id="tid" failed-validation-error-message="@(nope)"/></inbound></policies>`,
+		`<policies><inbound><validate-azure-ad-token tenant-id="tid"><client-application-ids><application-id>app</application-id></client-application-ids></validate-azure-ad-token></inbound></policies>`,
+		`<policies><inbound><redirect-content-urls><unknown/></redirect-content-urls></inbound></policies>`,
+	} {
+		compiled, err := Compile(value, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := Execute(append(append(compiled.Inbound, compiled.Outbound...), compiled.OnError...), &State{Request: httptest.NewRequest(http.MethodGet, "/", nil), ValidateToken: func(string) error { return nil }, SendRequest: func(*http.Request) (*http.Response, error) { return nil, nil }}); err == nil {
+			t.Fatalf("expected unsupported failure for %s", value)
+		}
+	}
+}
