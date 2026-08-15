@@ -882,17 +882,28 @@ func compileNode(item node, strict bool) (Action, bool, error) {
 		}
 		return result, true, nil
 	case "set-status":
-		if expression(item.Attrs["code"]) || expression(item.Attrs["reason"]) {
-			return unsupported(item.Name), true, nil
-		}
 		if len(item.Children) > 0 {
 			return unsupported(item.Name + "/" + item.Children[0].Name), true, nil
 		}
-		code := 0
-		if _, err := fmt.Sscanf(item.Attrs["code"], "%d", &code); err != nil || code < 100 || code > 599 {
+		code, err := compileValue(item.Attrs["code"])
+		if err != nil {
+			return Action{}, false, err
+		}
+		reason, err := compileValue(item.Attrs["reason"])
+		if err != nil {
+			return Action{}, false, err
+		}
+		action := Action{Kind: ActionSetStatus, Reason: reason}
+		if expression(code) {
+			action.Value = code
+			return action, true, nil
+		}
+		parsed := 0
+		if _, err := fmt.Sscanf(code, "%d", &parsed); err != nil || parsed < 100 || parsed > 599 {
 			return Action{}, false, fmt.Errorf("invalid set-status code")
 		}
-		return Action{Kind: ActionSetStatus, StatusCode: code, Reason: item.Attrs["reason"]}, true, nil
+		action.StatusCode = parsed
+		return action, true, nil
 	case "cross-domain":
 		var body strings.Builder
 		for _, child := range item.Children {
@@ -905,20 +916,29 @@ func compileNode(item node, strict bool) (Action, bool, error) {
 		}
 		return Action{Kind: ActionRedirectContentURLs}, true, nil
 	case "mock-response":
-		if expression(item.Attrs["status-code"]) || expression(item.Attrs["content-type"]) {
-			return unsupported(item.Name), true, nil
-		}
 		if len(item.Children) > 0 {
 			return unsupported(item.Name + "/" + item.Children[0].Name), true, nil
 		}
-		code := http.StatusOK
-		if value := item.Attrs["status-code"]; value != "" {
-			if _, err := fmt.Sscanf(value, "%d", &code); err != nil || code < 100 || code > 599 {
+		codeValue, err := compileValue(item.Attrs["status-code"])
+		if err != nil {
+			return Action{}, false, err
+		}
+		contentType, err := compileValue(item.Attrs["content-type"])
+		if err != nil {
+			return Action{}, false, err
+		}
+		result := Action{Kind: ActionReturnResponse, StatusCode: http.StatusOK}
+		if expression(codeValue) {
+			result.Value = codeValue
+			result.StatusCode = 0
+		} else if codeValue != "" {
+			code := 0
+			if _, err := fmt.Sscanf(codeValue, "%d", &code); err != nil || code < 100 || code > 599 {
 				return Action{}, false, fmt.Errorf("invalid mock-response status-code")
 			}
+			result.StatusCode = code
 		}
-		result := Action{Kind: ActionReturnResponse, StatusCode: code}
-		if contentType := item.Attrs["content-type"]; contentType != "" {
+		if contentType != "" {
 			result.Headers = []Header{{Name: "Content-Type", Value: contentType, Action: "override"}}
 		}
 		return result, true, nil
@@ -1858,11 +1878,21 @@ func Execute(actions []Action, state *State) error {
 		case ActionForward:
 			// Forwarding is performed by the gateway after the backend section.
 		case ActionReturnResponse:
+			code := action.StatusCode
+			if action.Value != "" {
+				evaluated, err := evalValue(action.Value, state)
+				if err != nil {
+					return err
+				}
+				if _, err := fmt.Sscanf(evaluated, "%d", &code); err != nil || code < 100 || code > 599 {
+					return fmt.Errorf("invalid mock-response status-code")
+				}
+			}
 			body, err := evalValue(action.Body, state)
 			if err != nil {
 				return err
 			}
-			state.Returned, state.StatusCode, state.Reason, state.Body = true, action.StatusCode, action.Reason, body
+			state.Returned, state.StatusCode, state.Reason, state.Body = true, code, action.Reason, body
 			for _, header := range action.Headers {
 				value, err := evalValue(header.Value, state)
 				if err != nil {
@@ -1872,8 +1902,22 @@ func Execute(actions []Action, state *State) error {
 			}
 			return nil
 		case ActionSetStatus:
-			state.StatusCode = action.StatusCode
-			state.Reason = action.Reason
+			code := action.StatusCode
+			if action.Value != "" {
+				evaluated, err := evalValue(action.Value, state)
+				if err != nil {
+					return err
+				}
+				if _, err := fmt.Sscanf(evaluated, "%d", &code); err != nil || code < 100 || code > 599 {
+					return fmt.Errorf("invalid set-status code")
+				}
+			}
+			reason, err := evalValue(action.Reason, state)
+			if err != nil {
+				return err
+			}
+			state.StatusCode = code
+			state.Reason = reason
 		case ActionRedirectContentURLs:
 			if state.Request == nil || state.BackendURL == "" {
 				return fmt.Errorf("redirect-content-urls requires a request and backend URL")

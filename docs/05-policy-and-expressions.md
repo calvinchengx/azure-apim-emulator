@@ -96,8 +96,9 @@ runtime evaluation of `set-header`, `set-query-parameter`, `set-variable`,
 `rewrite-uri`, `find-and-replace` from/to, value-cache key/value fields,
 CORS allowed-origins/allowed-methods/allowed-headers/expose-headers/max-age,
 `check-header` name/values/error message, `limit-concurrency` key,
-rate-limit/quota `counter-key`, and authentication-basic /
-managed-identity / oauth2 / certificate attributes are implemented;
+rate-limit/quota `counter-key`, authentication-basic /
+managed-identity / oauth2 / certificate attributes, `set-status`
+code/reason, and `mock-response` status-code/content-type are implemented;
 other statements, remaining context members, other expression-bearing
 fields, and the public allowlist remain open.
 
