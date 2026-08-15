@@ -673,8 +673,15 @@ func compileNode(item node, strict bool) (Action, bool, error) {
 		}
 		return Action{Kind: ActionAuthenticationCertificate, AuthCertificateID: certificateID}, true, nil
 	case "find-and-replace":
-		from, to := item.Attrs["from"], item.Attrs["to"]
-		if from == "" || expression(from) || expression(to) {
+		from, err := compileValue(item.Attrs["from"])
+		if err != nil {
+			return Action{}, false, err
+		}
+		to, err := compileValue(item.Attrs["to"])
+		if err != nil {
+			return Action{}, false, err
+		}
+		if from == "" {
 			return unsupported(item.Name), true, nil
 		}
 		if len(item.Children) > 0 {
@@ -702,14 +709,25 @@ func compileNode(item node, strict bool) (Action, bool, error) {
 		}
 		return Action{Kind: ActionJSONP, JSONPParameter: parameter}, true, nil
 	case "cache-lookup-value":
-		key, variable := item.Attrs["key"], item.Attrs["variable-name"]
-		if key == "" || variable == "" || expression(key) || expression(variable) || len(item.Children) > 0 {
+		key, err := compileValue(item.Attrs["key"])
+		if err != nil {
+			return Action{}, false, err
+		}
+		variable := item.Attrs["variable-name"]
+		if key == "" || variable == "" || expression(variable) || len(item.Children) > 0 {
 			return unsupported(item.Name), true, nil
 		}
 		return Action{Kind: ActionCacheLookupValue, ValueCacheKey: key, Variable: variable}, true, nil
 	case "cache-store-value":
-		key, value := item.Attrs["key"], item.Attrs["value"]
-		if key == "" || expression(key) || expression(value) || len(item.Children) > 0 {
+		key, err := compileValue(item.Attrs["key"])
+		if err != nil {
+			return Action{}, false, err
+		}
+		value, err := compileValue(item.Attrs["value"])
+		if err != nil {
+			return Action{}, false, err
+		}
+		if key == "" || len(item.Children) > 0 {
 			return unsupported(item.Name), true, nil
 		}
 		duration := 300 * time.Second
@@ -722,8 +740,11 @@ func compileNode(item node, strict bool) (Action, bool, error) {
 		}
 		return Action{Kind: ActionCacheStoreValue, ValueCacheKey: key, ValueCacheValue: value, ValueCacheDuration: duration}, true, nil
 	case "cache-remove-value":
-		key := item.Attrs["key"]
-		if key == "" || expression(key) || len(item.Children) > 0 {
+		key, err := compileValue(item.Attrs["key"])
+		if err != nil {
+			return Action{}, false, err
+		}
+		if key == "" || len(item.Children) > 0 {
 			return unsupported(item.Name), true, nil
 		}
 		return Action{Kind: ActionCacheRemoveValue, ValueCacheKey: key}, true, nil
@@ -1569,6 +1590,14 @@ func Execute(actions []Action, state *State) error {
 				return err
 			}
 		case ActionFindReplace:
+			from, err := evalValue(action.ReplaceFrom, state)
+			if err != nil {
+				return err
+			}
+			to, err := evalValue(action.ReplaceTo, state)
+			if err != nil {
+				return err
+			}
 			var body io.ReadCloser
 			if state.Response != nil {
 				body = state.Response.Body
@@ -1581,7 +1610,7 @@ func Execute(actions []Action, state *State) error {
 			if err != nil {
 				return err
 			}
-			replaced := strings.ReplaceAll(string(value), action.ReplaceFrom, action.ReplaceTo)
+			replaced := strings.ReplaceAll(string(value), from, to)
 			if state.Response != nil {
 				state.Response.Body = io.NopCloser(strings.NewReader(replaced))
 			} else {
@@ -1637,7 +1666,11 @@ func Execute(actions []Action, state *State) error {
 			if state.ValueCacheGet == nil {
 				return fmt.Errorf("cache-lookup-value requires a cache")
 			}
-			value, ok := state.ValueCacheGet(action.ValueCacheKey)
+			key, err := evalValue(action.ValueCacheKey, state)
+			if err != nil {
+				return err
+			}
+			value, ok := state.ValueCacheGet(key)
 			if ok {
 				if state.Variables == nil {
 					state.Variables = map[string]string{}
@@ -1648,12 +1681,24 @@ func Execute(actions []Action, state *State) error {
 			if state.ValueCacheSet == nil {
 				return fmt.Errorf("cache-store-value requires a cache")
 			}
-			state.ValueCacheSet(action.ValueCacheKey, action.ValueCacheValue, action.ValueCacheDuration)
+			key, err := evalValue(action.ValueCacheKey, state)
+			if err != nil {
+				return err
+			}
+			value, err := evalValue(action.ValueCacheValue, state)
+			if err != nil {
+				return err
+			}
+			state.ValueCacheSet(key, value, action.ValueCacheDuration)
 		case ActionCacheRemoveValue:
 			if state.ValueCacheRemove == nil {
 				return fmt.Errorf("cache-remove-value requires a cache")
 			}
-			state.ValueCacheRemove(action.ValueCacheKey)
+			key, err := evalValue(action.ValueCacheKey, state)
+			if err != nil {
+				return err
+			}
+			state.ValueCacheRemove(key)
 		case ActionSetBackend:
 			value, err := evalValue(action.Value, state)
 			if err != nil {

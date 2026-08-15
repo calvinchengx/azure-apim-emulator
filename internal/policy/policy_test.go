@@ -1095,7 +1095,6 @@ func TestFindAndReplacePolicy(t *testing.T) {
 	}
 	for _, value := range []string{
 		`<policies><inbound><find-and-replace from="" to="new"/></inbound></policies>`,
-		`<policies><inbound><find-and-replace from="old" to="@(context.Request.Body)"/></inbound></policies>`,
 		`<policies><inbound><find-and-replace from="old" to="new"><unknown/></find-and-replace></inbound></policies>`,
 	} {
 		if _, err := Compile(value, true); err == nil {
@@ -1262,10 +1261,12 @@ func TestValueCachePolicies(t *testing.T) {
 	}
 	for _, value := range []string{
 		`<policies><inbound><cache-lookup-value key="" variable-name="cached"/></inbound></policies>`,
-		`<policies><inbound><cache-lookup-value key="@(context.Url)" variable-name="cached"/></inbound></policies>`,
+		`<policies><inbound><cache-lookup-value key="user" variable-name=""/></inbound></policies>`,
+		`<policies><inbound><cache-lookup-value key="user" variable-name="@(context.Variables['name'])"/></inbound></policies>`,
+		`<policies><inbound><cache-lookup-value key="user" variable-name="cached"><unknown/></cache-lookup-value></inbound></policies>`,
 		`<policies><outbound><cache-store-value key="user" value="Ada" duration="bad"/></outbound></policies>`,
 		`<policies><outbound><cache-store-value key="user" value="Ada" duration="0"/></outbound></policies>`,
-		`<policies><outbound><cache-store-value key="user" value="@(context.Url)"/></outbound></policies>`,
+		`<policies><outbound><cache-store-value key="user" value="Ada"><unknown/></cache-store-value></outbound></policies>`,
 	} {
 		if _, err := Compile(value, true); err == nil {
 			t.Fatalf("invalid value cache accepted: %s", value)
@@ -1288,7 +1289,6 @@ func TestValueCacheRemovePolicy(t *testing.T) {
 	}
 	for _, value := range []string{
 		`<policies><inbound><cache-remove-value key=""/></inbound></policies>`,
-		`<policies><inbound><cache-remove-value key="@(context.Url)"/></inbound></policies>`,
 		`<policies><inbound><cache-remove-value key="user"><unknown/></cache-remove-value></inbound></policies>`,
 	} {
 		if _, err := Compile(value, true); err == nil {
@@ -1505,6 +1505,74 @@ func TestDispatchExpressionPolicies(t *testing.T) {
 			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(""))}, nil
 		}}); err == nil {
 			t.Fatalf("unknown dispatch member accepted: %s", value)
+		}
+	}
+}
+
+func TestCacheAndReplaceExpressionPolicies(t *testing.T) {
+	plan, err := Compile(`<policies><inbound><cache-lookup-value key="@(context.Variables['tenant'])" variable-name="cached"/><find-and-replace from="@(context.Variables['from'])" to="@(context.Variables['to'])"/><cache-remove-value key="@(context.Variables['tenant'])"/></inbound><outbound><cache-store-value key="@(context.Variables['tenant'])" value="@(context.Request.Method)" duration="60"/></outbound></policies>`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored := map[string]string{}
+	var duration time.Duration
+	removed := ""
+	request := httptest.NewRequest(http.MethodPut, "/", strings.NewReader("old token"))
+	state := &State{
+		Request:   request,
+		Variables: map[string]string{"tenant": "acme", "from": "old", "to": "new"},
+		ValueCacheGet: func(key string) (string, bool) {
+			return stored[key], stored[key] != ""
+		},
+		ValueCacheSet:    func(key, value string, got time.Duration) { stored[key], duration = value, got },
+		ValueCacheRemove: func(key string) { removed = key },
+	}
+	if err := Execute(plan.Outbound, state); err != nil || stored["acme"] != http.MethodPut || duration != time.Minute {
+		t.Fatalf("store expression = %+v %v, %v", stored, duration, err)
+	}
+	if err := Execute(plan.Inbound, state); err != nil {
+		t.Fatal(err)
+	}
+	if state.Variables["cached"] != http.MethodPut || removed != "acme" {
+		t.Fatalf("lookup/remove expression = %+v removed=%q", state.Variables, removed)
+	}
+	body, err := io.ReadAll(request.Body)
+	if err != nil || string(body) != "new token" {
+		t.Fatalf("replace expression = %q, %v", body, err)
+	}
+
+	for _, value := range []string{
+		`<policies><inbound><find-and-replace from="@(1 + )" to="new"/></inbound></policies>`,
+		`<policies><inbound><find-and-replace from="old" to="@(1 + )"/></inbound></policies>`,
+		`<policies><inbound><cache-lookup-value key="@(1 + )" variable-name="cached"/></inbound></policies>`,
+		`<policies><outbound><cache-store-value key="@(1 + )" value="Ada"/></outbound></policies>`,
+		`<policies><outbound><cache-store-value key="user" value="@(1 + )"/></outbound></policies>`,
+		`<policies><inbound><cache-remove-value key="@(1 + )"/></inbound></policies>`,
+	} {
+		if _, err := Compile(value, false); err == nil {
+			t.Fatalf("invalid cache/replace expression accepted: %s", value)
+		}
+	}
+	for _, value := range []string{
+		`<policies><inbound><find-and-replace from="@(context.Request.Body)" to="new"/></inbound></policies>`,
+		`<policies><inbound><find-and-replace from="old" to="@(context.Request.Body)"/></inbound></policies>`,
+		`<policies><inbound><cache-lookup-value key="@(context.Request.Body)" variable-name="cached"/></inbound></policies>`,
+		`<policies><outbound><cache-store-value key="@(context.Request.Body)" value="Ada"/></outbound></policies>`,
+		`<policies><outbound><cache-store-value key="user" value="@(context.Request.Body)"/></outbound></policies>`,
+		`<policies><inbound><cache-remove-value key="@(context.Request.Body)"/></inbound></policies>`,
+	} {
+		compiled, err := Compile(value, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		state := &State{
+			Request:          httptest.NewRequest(http.MethodGet, "/", strings.NewReader("old")),
+			ValueCacheGet:    func(string) (string, bool) { return "", false },
+			ValueCacheSet:    func(string, string, time.Duration) {},
+			ValueCacheRemove: func(string) {},
+		}
+		if err := Execute(append(compiled.Inbound, compiled.Outbound...), state); err == nil {
+			t.Fatalf("unknown cache/replace member accepted: %s", value)
 		}
 	}
 }
