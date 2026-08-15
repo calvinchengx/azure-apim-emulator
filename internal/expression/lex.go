@@ -136,15 +136,15 @@ func matchingCloser(source string, open int, left, right byte) (int, error) {
 				return i, nil
 			}
 			i++
-		case '"':
-			next, err := skipString(source, i, false)
+		case '"', '\'':
+			next, err := skipString(source, i, source[i], false)
 			if err != nil {
 				return 0, err
 			}
 			i = next
 		case '@':
 			if i+1 < len(source) && source[i+1] == '"' {
-				next, err := skipString(source, i+1, true)
+				next, err := skipString(source, i+1, '"', true)
 				if err != nil {
 					return 0, err
 				}
@@ -169,10 +169,10 @@ func matchingCloser(source string, open int, left, right byte) (int, error) {
 	return 0, fmt.Errorf("unclosed expression wrapper")
 }
 
-func skipString(source string, start int, verbatim bool) (int, error) {
+func skipString(source string, start int, quote byte, verbatim bool) (int, error) {
 	i := start + 1
 	for i < len(source) {
-		if source[i] == '"' {
+		if source[i] == quote {
 			if verbatim && i+1 < len(source) && source[i+1] == '"' {
 				i += 2
 				continue
@@ -375,12 +375,12 @@ func (s *scanner) next() (Token, error) {
 	case ';':
 		s.pos += width
 		return Token{Kind: TokenSemicolon, Lexeme: ";", Offset: start}, nil
-	case '"':
-		return s.scanString(false)
+	case '"', '\'':
+		return s.scanString(byte(r), false)
 	case '@':
 		if s.peekAt(1) == '"' {
 			s.pos++
-			return s.scanString(true)
+			return s.scanString('"', true)
 		}
 		return Token{}, fmt.Errorf("unexpected character %q", "@")
 	default:
@@ -460,13 +460,13 @@ func (s *scanner) scanNumber() (Token, error) {
 	return Token{Kind: TokenNumber, Lexeme: lexeme, Literal: Int(value), Offset: start}, nil
 }
 
-func (s *scanner) scanString(verbatim bool) (Token, error) {
+func (s *scanner) scanString(quote byte, verbatim bool) (Token, error) {
 	start := s.pos
 	s.pos++
 	var body strings.Builder
 	for !s.done() {
 		r, width := utf8.DecodeRuneInString(s.source[s.pos:])
-		if r == '"' {
+		if r == rune(quote) {
 			if verbatim && s.peekAt(1) == '"' {
 				body.WriteByte('"')
 				s.pos += 2
@@ -514,7 +514,7 @@ func decodeEscape(source string) (string, int, error) {
 		return "\t", width, nil
 	case '0':
 		return "\x00", width, nil
-	case '\\', '"':
+	case '\\', '"', '\'':
 		return string(r), width, nil
 	case 'u':
 		if len(source) < 5 {

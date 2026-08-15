@@ -15,6 +15,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	expr "github.com/calvinchengx/azure-apim-emulator/internal/expression"
 )
 
 // ErrUnsupported is returned when execution reaches an unsupported policy.
@@ -1602,32 +1604,15 @@ func Execute(actions []Action, state *State) error {
 }
 
 func evaluateCondition(condition string, state *State) (bool, error) {
-	condition = strings.TrimSpace(condition)
-	switch strings.ToLower(condition) {
-	case "true", "@(true)":
-		return true, nil
-	case "false", "@(false)":
-		return false, nil
+	value, err := expr.EvalEnv(condition, expr.RequestEnv(state.Request, state.Variables))
+	if err != nil {
+		return false, err
 	}
-	if state.Request == nil {
-		return false, fmt.Errorf("choose condition requires a request")
+	truth, ok := value.AsBool()
+	if !ok {
+		return false, fmt.Errorf("choose condition must be boolean")
 	}
-	condition = strings.TrimSpace(strings.TrimPrefix(condition, "@("))
-	condition = strings.TrimSuffix(condition, ")")
-	parts := strings.SplitN(condition, "==", 2)
-	if len(parts) != 2 {
-		return false, fmt.Errorf("unsupported choose condition %q", condition)
-	}
-	left := strings.TrimSpace(parts[0])
-	right := strings.Trim(strings.TrimSpace(parts[1]), "\"'")
-	switch left {
-	case "context.Request.Method":
-		return state.Request.Method == right, nil
-	case "context.Request.Url.Path", "context.Request.URL.Path":
-		return state.Request.URL.Path == right, nil
-	default:
-		return false, fmt.Errorf("unsupported choose condition %q", condition)
-	}
+	return truth, nil
 }
 
 func jsonValueXML(name string, value any) (string, error) {

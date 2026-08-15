@@ -66,6 +66,10 @@ func TestLexNumbersStringsAndComments(t *testing.T) {
 	if text[0].Literal.String() != "a\n\r\t\x00\\\"A" || text[2].Literal.String() != `say "hi"` {
 		t.Fatalf("strings = %q %q", text[0].Literal.String(), text[2].Literal.String())
 	}
+	single, _, err := Lex("@('GET' + 'it\\'s')")
+	if err != nil || single[0].Literal.String() != "GET" || single[2].Literal.String() != "it's" {
+		t.Fatalf("single quotes = %+v %v", single, err)
+	}
 
 	commented, _, err := Lex("@(1 /* inner ) still */ + 2 // line\n + 3)")
 	if err != nil || !equalKinds(kinds(commented), []TokenKind{TokenNumber, TokenPlus, TokenNumber, TokenPlus, TokenNumber, TokenEOF}) {
@@ -105,6 +109,8 @@ func TestLexWrapperAndScanErrors(t *testing.T) {
 		`"unterminated`,
 		"\"\n\"",
 		`"abc\`,
+		`'unterminated`,
+		`'\q'`,
 		`"\q"`,
 		`"\u12"`,
 		`"\uZZZZ"`,
@@ -155,5 +161,9 @@ func TestLexStringWithCloserInLiteral(t *testing.T) {
 	}
 	if !strings.Contains(tokens[0].Lexeme, `"`) {
 		t.Fatal("string lexeme lost quotes")
+	}
+	quoted, form, err := Lex("@('a)b')")
+	if err != nil || form != FormExpression || quoted[0].Literal.String() != "a)b" {
+		t.Fatalf("closer in single-quoted string = %+v %d %v", quoted, form, err)
 	}
 }

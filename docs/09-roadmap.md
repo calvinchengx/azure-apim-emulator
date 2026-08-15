@@ -51,7 +51,7 @@ official SDKs and documented policies.
 ## P2 - Expression completeness and policy inventory
 
 - Full documented C# 7 expression grammar used by APIM.
-  The value model, lexer, and context-free evaluator for literals, grouping, arithmetic, string concatenation, comparisons, boolean short-circuit, and ternary are implemented; statement blocks, identifiers, member access, calls, indexing, the binder, and the allowlist remain open.
+  The value model, lexer, evaluator, and `context` binder for literals, grouping, arithmetic, string concatenation, comparisons, boolean short-circuit, ternary, identifiers, member access, calls, and indexing are implemented for `choose`; statement blocks, remaining context members, mutation-policy evaluation, and the allowlist remain open.
 - Complete APIM context object and documented allowed .NET type/member surface in pure Go.
 - Multi-statement blocks, lambdas/LINQ, JSON/XML/JWT/crypto semantics, and exception behavior.
 - Every policy-reference entry implemented or carrying an explicit external dependency adapter.

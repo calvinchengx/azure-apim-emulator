@@ -1,0 +1,136 @@
+package expression
+
+import (
+	"crypto/tls"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+)
+
+func TestRequestEnvBindings(t *testing.T) {
+	request := httptest.NewRequest(http.MethodPost, "https://api.example/match?x=1", nil)
+	request.Header.Set("X-Test", "yes")
+	request.RemoteAddr = "10.0.0.8:443"
+	env := RequestEnv(request, map[string]string{"route": "blue"})
+
+	cases := []struct {
+		source string
+		want   any
+	}{
+		{"@(context.Request.Method == 'POST')", true},
+		{"@(context.Request.Url.Path == '/match')", true},
+		{"@(context.Request.URL.Path)", "/match"},
+		{"@(context.Request.Url.Host)", "api.example"},
+		{"@(context.Request.Url.Scheme)", "https"},
+		{"@(context.Request.Url.Query)", "x=1"},
+		{"@(context.Request.Url.QueryString)", "?x=1"},
+		{"@(context.Request.IpAddress)", "10.0.0.8"},
+		{"@(context.Request.Headers['X-Test'])", "yes"},
+		{"@(context.Request.Headers.GetValueOrDefault('X-Test'))", "yes"},
+		{"@(context.Request.Headers.GetValueOrDefault('Missing', 'fallback'))", "fallback"},
+		{"@(context.Request.Headers.GetValueOrDefault('Missing'))", ""},
+		{"@(context.Variables['route'])", "blue"},
+		{"@(context.Variables.ContainsKey('route'))", true},
+		{"@(context.Variables.ContainsKey('missing'))", false},
+		{"@(context.Variables['missing'])", nil},
+		{`@("hi".Length)`, int64(2)},
+		{"@(42.ToString())", "42"},
+	}
+	for _, test := range cases {
+		got, err := EvalEnv(test.source, env)
+		if err != nil {
+			t.Fatalf("%s: %v", test.source, err)
+		}
+		if got.Interface() != test.want {
+			t.Fatalf("%s = %#v, want %#v", test.source, got.Interface(), test.want)
+		}
+	}
+}
+
+func TestRequestEnvFallbacksAndErrors(t *testing.T) {
+	plain := httptest.NewRequest(http.MethodGet, "/plain", nil)
+	plain.Host = ""
+	plain.URL.Host = "from-url.example"
+	plain.RemoteAddr = "192.0.2.1"
+	got, err := EvalEnv("@(context.Request.Url.Host + context.Request.Url.Scheme + context.Request.Url.QueryString + context.Request.IpAddress)", RequestEnv(plain, nil))
+	if err != nil || got.String() != "from-url.examplehttp192.0.2.1" {
+		t.Fatalf("plain request = %q %v", got, err)
+	}
+
+	secure := httptest.NewRequest(http.MethodGet, "/secure", nil)
+	secure.TLS = &tls.ConnectionState{}
+	scheme, err := EvalEnv("@(context.Request.Url.Scheme)", RequestEnv(secure, nil))
+	if err != nil || scheme.String() != "https" {
+		t.Fatalf("tls scheme = %q %v", scheme, err)
+	}
+
+	missingURL := &http.Request{Method: http.MethodGet}
+	if _, err := EvalEnv("@(context.Request.Url.Path)", RequestEnv(missingURL, nil)); err == nil {
+		t.Fatal("nil URL accepted")
+	}
+
+	nilRequest, err := EvalEnv("@(context.Request)", RequestEnv(nil, nil))
+	if err != nil || !nilRequest.IsNull() {
+		t.Fatalf("nil request = %+v %v", nilRequest, err)
+	}
+	if _, err := EvalEnv("@(context.Request.Method)", RequestEnv(nil, nil)); err == nil {
+		t.Fatal("null request member accepted")
+	}
+
+	emptyVars, err := EvalEnv("@(context.Variables.ContainsKey('x') || context.Variables['x'] == null)", RequestEnv(plain, nil))
+	if err != nil || !emptyVars.Truthy() {
+		t.Fatalf("nil variables = %+v %v", emptyVars, err)
+	}
+
+	for _, source := range []string{
+		"@(context.Response)",
+		"@(context.Request.Body)",
+		"@(context.Request.Url.Port)",
+		"@(context.Request.Headers.Get('X'))",
+		"@(context.Request.Headers[1])",
+		"@(context.Request.Headers.GetValueOrDefault())",
+		"@(context.Request.Headers.GetValueOrDefault(1))",
+		"@(context.Request.Headers.GetValueOrDefault('a', 'b', 'c'))",
+		"@(context.Request.Headers.GetValueOrDefault('a', (1 / 0)))",
+		"@(context.Request.Headers[(1 / 0)])",
+		"@(context.Variables[(1 / 0)])",
+		"@(context.Variables[1])",
+		"@(context.Variables.ContainsKey())",
+		"@(context.Variables.ContainsKey(1))",
+		"@(context.Variables.Missing)",
+		"@(missing)",
+		"@(42.Length)",
+		"@(null.Foo)",
+		"@(1[0])",
+		"@(1())",
+		"@(42.ToString(1))",
+	} {
+		if _, err := EvalEnv(source, RequestEnv(plain, map[string]string{"route": "blue"})); err == nil {
+			t.Fatalf("accepted %s", source)
+		}
+	}
+}
+
+func TestValueMembersIndexAndCall(t *testing.T) {
+	host := Object(struct{}{})
+	toString, err := host.member("ToString")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text, err := toString.call(nil)
+	if err != nil || text.String() != "" {
+		t.Fatalf("object ToString = %+v %v", text, err)
+	}
+	if _, err := host.member("Missing"); err == nil {
+		t.Fatal("unknown object member accepted")
+	}
+	if _, err := host.index(String("x")); err == nil {
+		t.Fatal("non-indexable object accepted")
+	}
+	if _, err := host.call(nil); err == nil {
+		t.Fatal("non-callable object accepted")
+	}
+	if _, err := Int(1).member("Missing"); err == nil {
+		t.Fatal("unknown primitive member accepted")
+	}
+}
