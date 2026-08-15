@@ -549,6 +549,22 @@ func TestSharedLimitAndResponsePolicies(t *testing.T) {
 	if err != nil || defaults.Inbound[0].StatusCode != http.StatusOK || len(defaults.Inbound[0].Headers) != 0 {
 		t.Fatalf("default mock-response = %+v, %v", defaults, err)
 	}
+	statusExpr, err := Compile(`<policies><outbound><set-status code="@(401)" reason="@('Unauthorized')"/></outbound></policies>`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state = &State{}
+	if err := Execute(statusExpr.Outbound, state); err != nil || state.StatusCode != http.StatusUnauthorized || state.Reason != "Unauthorized" {
+		t.Fatalf("set-status expression = %+v, %v", state, err)
+	}
+	mockExpr, err := Compile(`<policies><inbound><mock-response status-code="@(201)" content-type="@('application/json')"/></inbound></policies>`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mockState = &State{}
+	if err := Execute(mockExpr.Inbound, mockState); err != nil || !mockState.Returned || mockState.StatusCode != http.StatusCreated || mockState.Headers.Get("Content-Type") != "application/json" {
+		t.Fatalf("mock-response expression = %+v, %v", mockState, err)
+	}
 
 	for _, value := range []string{
 		`<policies><inbound><rate-limit calls="0" renewal-period="1"/></inbound></policies>`,
@@ -569,11 +585,7 @@ func TestSharedLimitAndResponsePolicies(t *testing.T) {
 		`<policies><inbound><rate-limit calls="1" renewal-period="1"><api name="demo" calls="1" renewal-period="1"/></rate-limit></inbound></policies>`,
 		`<policies><inbound><quota bandwidth="10" renewal-period="1"/></inbound></policies>`,
 		`<policies><inbound><quota calls="1" renewal-period="1"><api name="demo" calls="1"/></quota></inbound></policies>`,
-		`<policies><inbound><set-status code="@(401)" reason="Unauthorized"/></inbound></policies>`,
-		`<policies><inbound><set-status code="401" reason="@(Unauthorized)"/></inbound></policies>`,
 		`<policies><inbound><set-status code="401" reason="Unauthorized"><unknown/></set-status></inbound></policies>`,
-		`<policies><inbound><mock-response status-code="@(200)"/></inbound></policies>`,
-		`<policies><inbound><mock-response content-type="@(application/json)"/></inbound></policies>`,
 		`<policies><inbound><mock-response><unknown/></mock-response></inbound></policies>`,
 	} {
 		compiled, err := Compile(value, false)
@@ -1743,6 +1755,60 @@ func TestAccessExpressionPolicies(t *testing.T) {
 		}
 		if err := Execute(append(compiled.Inbound, compiled.Backend...), state); err == nil {
 			t.Fatalf("unknown access member accepted: %s", value)
+		}
+	}
+}
+
+func TestStatusExpressionPolicies(t *testing.T) {
+	plan, err := Compile(`<policies><inbound><set-status code="@(context.Variables['code'])" reason="@(context.Variables['reason'])"/><mock-response status-code="@(context.Variables['status'])" content-type="@(context.Variables['type'])"/></inbound></policies>`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := &State{Variables: map[string]string{"code": "401", "reason": "Unauthorized", "status": "201", "type": "application/json"}}
+	if err := Execute(plan.Inbound[:1], state); err != nil || state.StatusCode != http.StatusUnauthorized || state.Reason != "Unauthorized" {
+		t.Fatalf("set-status variable expression = %+v, %v", state, err)
+	}
+	state = &State{Variables: map[string]string{"code": "401", "reason": "Unauthorized", "status": "201", "type": "application/json"}}
+	if err := Execute(plan.Inbound[1:], state); err != nil || !state.Returned || state.StatusCode != http.StatusCreated || state.Headers.Get("Content-Type") != "application/json" {
+		t.Fatalf("mock-response variable expression = %+v, %v", state, err)
+	}
+
+	for _, value := range []string{
+		`<policies><inbound><set-status code="@(1 + )" reason="Unauthorized"/></inbound></policies>`,
+		`<policies><inbound><set-status code="401" reason="@(1 + )"/></inbound></policies>`,
+		`<policies><inbound><mock-response status-code="@(1 + )"/></inbound></policies>`,
+		`<policies><inbound><mock-response content-type="@(1 + )"/></inbound></policies>`,
+	} {
+		if _, err := Compile(value, false); err == nil {
+			t.Fatalf("invalid status expression accepted: %s", value)
+		}
+	}
+	for _, value := range []string{
+		`<policies><inbound><set-status code="@(context.Request.Body)" reason="Unauthorized"/></inbound></policies>`,
+		`<policies><inbound><set-status code="401" reason="@(context.Request.Body)"/></inbound></policies>`,
+		`<policies><inbound><mock-response status-code="@(context.Request.Body)"/></inbound></policies>`,
+		`<policies><inbound><mock-response content-type="@(context.Request.Body)"/></inbound></policies>`,
+	} {
+		compiled, err := Compile(value, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := Execute(compiled.Inbound, &State{Request: httptest.NewRequest(http.MethodGet, "/", nil)}); err == nil {
+			t.Fatalf("unknown status member accepted: %s", value)
+		}
+	}
+	for _, value := range []string{
+		`<policies><inbound><set-status code="@(99)" reason="bad"/></inbound></policies>`,
+		`<policies><inbound><set-status code="@(context.Variables['code'])" reason="bad"/></inbound></policies>`,
+		`<policies><inbound><mock-response status-code="@(99)"/></inbound></policies>`,
+		`<policies><inbound><mock-response status-code="@(context.Variables['code'])"/></inbound></policies>`,
+	} {
+		compiled, err := Compile(value, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := Execute(compiled.Inbound, &State{Variables: map[string]string{"code": "bad"}}); err == nil {
+			t.Fatalf("invalid evaluated status accepted: %s", value)
 		}
 	}
 }
