@@ -520,7 +520,7 @@ func decodeEscape(source string) (string, int, error) {
 		if len(source) < 5 {
 			return "", 0, fmt.Errorf("invalid unicode escape")
 		}
-		value, err := strconv.ParseUint(source[1:5], 16, 32)
+		value, err := strconv.ParseUint(source[1:5], 16, 16)
 		if err != nil {
 			return "", 0, fmt.Errorf("invalid unicode escape")
 		}
