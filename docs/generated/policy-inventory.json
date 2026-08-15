@@ -15,6 +15,8 @@
     {"name":"send-request","status":"implemented"},
     {"name":"rate-limit-by-key","status":"implemented"},
     {"name":"quota-by-key","status":"implemented"},
+    {"name":"rate-limit","status":"implemented"},
+    {"name":"quota","status":"implemented"},
     {"name":"limit-concurrency","status":"implemented"},
     {"name":"cache-lookup","status":"implemented"},
     {"name":"cache-store","status":"implemented"},
@@ -40,6 +42,9 @@
     {"name":"rewrite-uri","status":"implemented"},
     {"name":"forward-request","status":"implemented"},
     {"name":"retry","status":"implemented"},
-    {"name":"return-response","status":"implemented"}
+    {"name":"return-response","status":"implemented"},
+    {"name":"set-status","status":"implemented"},
+    {"name":"mock-response","status":"implemented"},
+    {"name":"include-fragment","status":"implemented"}
   ]
 }

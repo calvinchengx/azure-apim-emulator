@@ -64,6 +64,7 @@ Implementation tracks include:
 - JWT, Entra, certificates, managed identity, Basic, Digest, and authorization context
 - subscription, IP filtering, CORS, validation, and content safety
 - rate limits, quotas, concurrency, cache, and external cache
+- standalone `set-status`, empty-body `mock-response`, and compile-time `include-fragment` expansion
 - retry, send-request, one-way request, log/event, and metrics
 - backend pools, load balancing, circuit breakers, Service Fabric, Dapr, and Service Bus
 - GraphQL resolver and validation policies

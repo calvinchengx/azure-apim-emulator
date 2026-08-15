@@ -61,6 +61,7 @@ const (
 	ActionForward
 	ActionReturnResponse
 	ActionRetry
+	ActionSetStatus
 	ActionUnsupported
 )
 
@@ -463,24 +464,8 @@ func compileNode(item node, strict bool) (Action, bool, error) {
 			return unsupported(item.Name), true, nil
 		}
 		return action, true, nil
-	case "rate-limit-by-key", "quota-by-key":
-		calls, period := 0, time.Duration(0)
-		if value := item.Attrs["calls"]; value != "" {
-			if _, err := fmt.Sscanf(value, "%d", &calls); err != nil || calls <= 0 {
-				return Action{}, false, fmt.Errorf("invalid %s calls", item.Name)
-			}
-		}
-		if value := item.Attrs["renewal-period"]; value != "" {
-			seconds, err := time.ParseDuration(value + "s")
-			if err != nil || seconds <= 0 {
-				return Action{}, false, fmt.Errorf("invalid %s renewal period", item.Name)
-			}
-			period = seconds
-		}
-		if calls == 0 || period == 0 || expression(item.Attrs["counter-key"]) {
-			return unsupported(item.Name), true, nil
-		}
-		return Action{Kind: ActionRateLimit, Value: item.Attrs["counter-key"], LimitCalls: calls, LimitPeriod: period, StatusCode: http.StatusTooManyRequests, Body: item.Attrs["retry-after-header-name"]}, true, nil
+	case "rate-limit-by-key", "quota-by-key", "rate-limit", "quota":
+		return compileLimit(item)
 	case "limit-concurrency":
 		count, err := strconv.Atoi(item.Attrs["max-count"])
 		if err != nil || count <= 0 || expression(item.Attrs["key"]) || len(item.Children) > 0 {
@@ -823,9 +808,80 @@ func compileNode(item node, strict bool) (Action, bool, error) {
 			}
 		}
 		return result, true, nil
+	case "set-status":
+		if expression(item.Attrs["code"]) || expression(item.Attrs["reason"]) {
+			return unsupported(item.Name), true, nil
+		}
+		if len(item.Children) > 0 {
+			return unsupported(item.Name + "/" + item.Children[0].Name), true, nil
+		}
+		code := 0
+		if _, err := fmt.Sscanf(item.Attrs["code"], "%d", &code); err != nil || code < 100 || code > 599 {
+			return Action{}, false, fmt.Errorf("invalid set-status code")
+		}
+		return Action{Kind: ActionSetStatus, StatusCode: code, Reason: item.Attrs["reason"]}, true, nil
+	case "mock-response":
+		if expression(item.Attrs["status-code"]) || expression(item.Attrs["content-type"]) {
+			return unsupported(item.Name), true, nil
+		}
+		if len(item.Children) > 0 {
+			return unsupported(item.Name + "/" + item.Children[0].Name), true, nil
+		}
+		code := http.StatusOK
+		if value := item.Attrs["status-code"]; value != "" {
+			if _, err := fmt.Sscanf(value, "%d", &code); err != nil || code < 100 || code > 599 {
+				return Action{}, false, fmt.Errorf("invalid mock-response status-code")
+			}
+		}
+		result := Action{Kind: ActionReturnResponse, StatusCode: code}
+		if contentType := item.Attrs["content-type"]; contentType != "" {
+			result.Headers = []Header{{Name: "Content-Type", Value: contentType, Action: "override"}}
+		}
+		return result, true, nil
 	default:
 		return unsupported(item.Name), true, nil
 	}
+}
+
+func compileLimit(item node) (Action, bool, error) {
+	if len(item.Children) > 0 {
+		return unsupported(item.Name + "/" + item.Children[0].Name), true, nil
+	}
+	if item.Name == "quota" && item.Attrs["bandwidth"] != "" {
+		return unsupported(item.Name), true, nil
+	}
+	calls, period := 0, time.Duration(0)
+	if value := item.Attrs["calls"]; value != "" {
+		if _, err := fmt.Sscanf(value, "%d", &calls); err != nil || calls <= 0 {
+			return Action{}, false, fmt.Errorf("invalid %s calls", item.Name)
+		}
+	}
+	if value := item.Attrs["renewal-period"]; value != "" {
+		seconds, err := time.ParseDuration(value + "s")
+		if err != nil || seconds <= 0 {
+			return Action{}, false, fmt.Errorf("invalid %s renewal period", item.Name)
+		}
+		period = seconds
+	}
+	if item.Name == "rate-limit" && period > 300*time.Second {
+		return Action{}, false, fmt.Errorf("invalid rate-limit renewal period")
+	}
+	key := item.Attrs["counter-key"]
+	if key == "" && (item.Name == "rate-limit" || item.Name == "quota") {
+		key = item.Name
+	}
+	if calls == 0 || period == 0 || expression(key) {
+		return unsupported(item.Name), true, nil
+	}
+	status := http.StatusTooManyRequests
+	if item.Name == "quota" {
+		status = http.StatusForbidden
+	}
+	retryAfter := item.Attrs["retry-after-header-name"]
+	if retryAfter == "" && (item.Name == "rate-limit" || item.Name == "quota") {
+		retryAfter = "Retry-After"
+	}
+	return Action{Kind: ActionRateLimit, Value: key, LimitCalls: calls, LimitPeriod: period, StatusCode: status, Body: retryAfter}, true, nil
 }
 
 func unsupported(name string) Action { return Action{Kind: ActionUnsupported, Source: name} }
@@ -1371,6 +1427,9 @@ func Execute(actions []Action, state *State) error {
 				setHeader(state.Headers, header)
 			}
 			return nil
+		case ActionSetStatus:
+			state.StatusCode = action.StatusCode
+			state.Reason = action.Reason
 		case ActionRetry:
 			if err := Execute(action.Children, state); err != nil {
 				return err

@@ -421,6 +421,86 @@ func TestRateLimitPolicies(t *testing.T) {
 	}
 }
 
+func TestSharedLimitAndResponsePolicies(t *testing.T) {
+	rate, err := Compile(`<policies><inbound><rate-limit calls="1" renewal-period="60" retry-after-header-name="X-Retry"/></inbound></policies>`, true)
+	if err != nil || len(rate.Inbound) != 1 || rate.Inbound[0].Kind != ActionRateLimit || rate.Inbound[0].Value != "rate-limit" || rate.Inbound[0].StatusCode != http.StatusTooManyRequests || rate.Inbound[0].Body != "X-Retry" {
+		t.Fatalf("rate-limit action = %+v, %v", rate, err)
+	}
+	shared, err := Compile(`<policies><inbound><rate-limit calls="1" renewal-period="60"/></inbound></policies>`, true)
+	if err != nil || shared.Inbound[0].Body != "Retry-After" {
+		t.Fatalf("default rate-limit header = %+v, %v", shared, err)
+	}
+	quota, err := Compile(`<policies><inbound><quota calls="1" renewal-period="3600"/></inbound></policies>`, true)
+	if err != nil || quota.Inbound[0].Value != "quota" || quota.Inbound[0].StatusCode != http.StatusForbidden || quota.Inbound[0].LimitPeriod != time.Hour {
+		t.Fatalf("quota action = %+v, %v", quota, err)
+	}
+	limited := &State{RateLimit: func(key string, _ int, _ time.Duration) bool { return key == "rate-limit" }}
+	if err := Execute(rate.Inbound, limited); err != nil || !limited.Returned || limited.StatusCode != http.StatusTooManyRequests || limited.Headers.Get("X-Retry") != "true" {
+		t.Fatalf("rate-limit execute = %+v, %v", limited, err)
+	}
+	quotaState := &State{RateLimit: func(key string, _ int, _ time.Duration) bool { return key == "quota" }}
+	if err := Execute(quota.Inbound, quotaState); err != nil || !quotaState.Returned || quotaState.StatusCode != http.StatusForbidden {
+		t.Fatalf("quota execute = %+v, %v", quotaState, err)
+	}
+
+	status, err := Compile(`<policies><outbound><set-status code="401" reason="Unauthorized"/></outbound></policies>`, true)
+	if err != nil || status.Outbound[0].Kind != ActionSetStatus || status.Outbound[0].StatusCode != http.StatusUnauthorized || status.Outbound[0].Reason != "Unauthorized" {
+		t.Fatalf("set-status action = %+v, %v", status, err)
+	}
+	state := &State{}
+	if err := Execute(status.Outbound, state); err != nil || state.Returned || state.StatusCode != http.StatusUnauthorized || state.Reason != "Unauthorized" {
+		t.Fatalf("set-status execute = %+v, %v", state, err)
+	}
+
+	mocked, err := Compile(`<policies><inbound><mock-response status-code="201" content-type="application/json"/></inbound></policies>`, true)
+	if err != nil || mocked.Inbound[0].Kind != ActionReturnResponse || mocked.Inbound[0].StatusCode != http.StatusCreated {
+		t.Fatalf("mock-response action = %+v, %v", mocked, err)
+	}
+	mockState := &State{}
+	if err := Execute(mocked.Inbound, mockState); err != nil || !mockState.Returned || mockState.StatusCode != http.StatusCreated || mockState.Headers.Get("Content-Type") != "application/json" || mockState.Body != "" {
+		t.Fatalf("mock-response execute = %+v, %v", mockState, err)
+	}
+	defaults, err := Compile(`<policies><inbound><mock-response/></inbound></policies>`, true)
+	if err != nil || defaults.Inbound[0].StatusCode != http.StatusOK || len(defaults.Inbound[0].Headers) != 0 {
+		t.Fatalf("default mock-response = %+v, %v", defaults, err)
+	}
+
+	for _, value := range []string{
+		`<policies><inbound><rate-limit calls="0" renewal-period="1"/></inbound></policies>`,
+		`<policies><inbound><rate-limit calls="bad" renewal-period="1"/></inbound></policies>`,
+		`<policies><inbound><rate-limit calls="1" renewal-period="301"/></inbound></policies>`,
+		`<policies><inbound><quota calls="1" renewal-period="bad"/></inbound></policies>`,
+		`<policies><inbound><set-status code="99" reason="bad"/></inbound></policies>`,
+		`<policies><inbound><set-status reason="missing"/></inbound></policies>`,
+		`<policies><inbound><mock-response status-code="bad"/></inbound></policies>`,
+		`<policies><inbound><mock-response status-code="99"/></inbound></policies>`,
+	} {
+		if _, err := Compile(value, true); err == nil {
+			t.Fatalf("invalid policy accepted: %s", value)
+		}
+	}
+	for _, value := range []string{
+		`<policies><inbound><rate-limit/></inbound></policies>`,
+		`<policies><inbound><rate-limit calls="1" renewal-period="1"><api name="demo" calls="1" renewal-period="1"/></rate-limit></inbound></policies>`,
+		`<policies><inbound><quota bandwidth="10" renewal-period="1"/></inbound></policies>`,
+		`<policies><inbound><quota calls="1" renewal-period="1"><api name="demo" calls="1"/></quota></inbound></policies>`,
+		`<policies><inbound><set-status code="@(401)" reason="Unauthorized"/></inbound></policies>`,
+		`<policies><inbound><set-status code="401" reason="@(Unauthorized)"/></inbound></policies>`,
+		`<policies><inbound><set-status code="401" reason="Unauthorized"><unknown/></set-status></inbound></policies>`,
+		`<policies><inbound><mock-response status-code="@(200)"/></inbound></policies>`,
+		`<policies><inbound><mock-response content-type="@(application/json)"/></inbound></policies>`,
+		`<policies><inbound><mock-response><unknown/></mock-response></inbound></policies>`,
+	} {
+		compiled, err := Compile(value, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := Execute(append(append(append(compiled.Inbound, compiled.Backend...), compiled.Outbound...), compiled.OnError...), &State{}); err == nil {
+			t.Fatalf("expected unsupported failure for %s", value)
+		}
+	}
+}
+
 func TestCachePolicies(t *testing.T) {
 	plan, err := Compile(`<policies><inbound><cache-lookup/></inbound><outbound><cache-store duration="60"/></outbound></policies>`, true)
 	if err != nil || len(plan.Inbound) != 1 || len(plan.Outbound) != 1 {

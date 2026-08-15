@@ -426,6 +426,11 @@ func TestGatewayFaultControls(t *testing.T) {
 	if defaultStatus.Code != http.StatusServiceUnavailable {
 		t.Fatalf("default injected status = %d", defaultStatus.Code)
 	}
+	statused := httptest.NewRecorder()
+	runtime.serveInjectedFault(statused, httptest.NewRequest(http.MethodGet, "/", nil), policy.Plan{Outbound: []policy.Action{{Kind: policy.ActionSetStatus, StatusCode: http.StatusTeapot}}}, &policy.State{Headers: make(http.Header)}, Fault{Status: http.StatusOK})
+	if statused.Code != http.StatusTeapot {
+		t.Fatalf("injected set-status = %d", statused.Code)
+	}
 	if hosts := customHostnames(map[string]any{"properties": map[string]any{"hostnameConfigurations": []any{"invalid", map[string]any{"hostName": "portal.example"}}}}); !hosts["portal.example"] {
 		t.Fatalf("custom host extraction = %#v", hosts)
 	}
@@ -1129,6 +1134,12 @@ func TestSuccessfulBackendAndOutboundReturn(t *testing.T) {
 	runtime.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/items", nil))
 	if recorder.Code != http.StatusCreated || recorder.Body.String() != "rewritten" {
 		t.Fatalf("set-body response = %d %q", recorder.Code, recorder.Body.String())
+	}
+	route.Plan.Outbound = []policy.Action{{Kind: policy.ActionSetStatus, StatusCode: http.StatusUnauthorized, Reason: "Unauthorized"}}
+	recorder = httptest.NewRecorder()
+	runtime.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/items", nil))
+	if recorder.Code != http.StatusUnauthorized || recorder.Body.String() != "backend" {
+		t.Fatalf("set-status response = %d %q", recorder.Code, recorder.Body.String())
 	}
 }
 
