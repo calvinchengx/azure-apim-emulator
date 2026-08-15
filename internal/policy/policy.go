@@ -359,21 +359,21 @@ func compileNode(item node, strict bool) (Action, bool, error) {
 	case "base":
 		return Action{Kind: ActionBase}, true, nil
 	case "set-header":
-		value := childText(item, "value")
-		if expression(value) {
-			return unsupported(item.Name), true, nil
+		value, err := compileValue(childText(item, "value"))
+		if err != nil {
+			return Action{}, false, err
 		}
 		return Action{Kind: ActionSetHeader, Name: item.Attrs["name"], Value: value, Action: item.Attrs["exists-action"]}, true, nil
 	case "set-query-parameter":
-		value := childText(item, "value")
-		if expression(value) {
-			return unsupported(item.Name), true, nil
+		value, err := compileValue(childText(item, "value"))
+		if err != nil {
+			return Action{}, false, err
 		}
 		return Action{Kind: ActionSetQueryParameter, Name: item.Attrs["name"], Value: value, Action: item.Attrs["exists-action"]}, true, nil
 	case "set-variable":
-		value := childText(item, "value")
-		if expression(value) {
-			return unsupported(item.Name), true, nil
+		value, err := compileValue(childText(item, "value"))
+		if err != nil {
+			return Action{}, false, err
 		}
 		return Action{Kind: ActionSetVariable, Variable: item.Attrs["name"], Value: value}, true, nil
 	case "set-body":
@@ -381,8 +381,9 @@ func compileNode(item node, strict bool) (Action, bool, error) {
 		if value == "" {
 			value = childText(item, "value")
 		}
-		if expression(value) {
-			return unsupported(item.Name), true, nil
+		value, err := compileValue(value)
+		if err != nil {
+			return Action{}, false, err
 		}
 		return Action{Kind: ActionSetBody, Body: value}, true, nil
 	case "check-header":
@@ -426,8 +427,12 @@ func compileNode(item node, strict bool) (Action, bool, error) {
 		if value == "" {
 			value = strings.TrimSpace(item.Text)
 		}
-		if value == "" || expression(value) {
+		if value == "" {
 			return unsupported(item.Name), true, nil
+		}
+		value, err := compileValue(value)
+		if err != nil {
+			return Action{}, false, err
 		}
 		return Action{Kind: ActionSetMethod, Value: value}, true, nil
 	case "cors":
@@ -766,16 +771,17 @@ func compileNode(item node, strict bool) (Action, bool, error) {
 				}
 				result.Reason = child.Attrs["reason"]
 			case "set-header":
-				value := childText(child, "value")
-				if expression(value) {
-					return unsupported(item.Name), true, nil
+				value, err := compileValue(childText(child, "value"))
+				if err != nil {
+					return Action{}, false, err
 				}
 				result.Headers = append(result.Headers, Header{Name: child.Attrs["name"], Value: value, Action: child.Attrs["exists-action"]})
 			case "set-body":
-				result.Body = strings.TrimSpace(child.Text)
-				if expression(result.Body) {
-					return unsupported(item.Name), true, nil
+				body, err := compileValue(strings.TrimSpace(child.Text))
+				if err != nil {
+					return Action{}, false, err
 				}
+				result.Body = body
 			default:
 				return unsupported(item.Name + "/" + child.Name), true, nil
 			}
@@ -1036,6 +1042,27 @@ func expression(value string) bool {
 	value = strings.TrimSpace(value)
 	return strings.HasPrefix(value, "@(") || strings.HasPrefix(value, "@{")
 }
+
+func compileValue(value string) (string, error) {
+	if !expression(value) {
+		return value, nil
+	}
+	if _, _, err := expr.Parse(value); err != nil {
+		return "", fmt.Errorf("invalid expression: %w", err)
+	}
+	return value, nil
+}
+
+func evalValue(value string, state *State) (string, error) {
+	if !expression(value) {
+		return value, nil
+	}
+	got, err := expr.EvalEnv(value, expr.RequestEnv(state.Request, state.Variables))
+	if err != nil {
+		return "", err
+	}
+	return got.String(), nil
+}
 func childText(item node, name string) string {
 	for _, child := range item.Children {
 		if child.Name == name {
@@ -1065,16 +1092,24 @@ func Execute(actions []Action, state *State) error {
 	for _, action := range actions {
 		switch action.Kind {
 		case ActionSetHeader:
+			value, err := evalValue(action.Value, state)
+			if err != nil {
+				return err
+			}
 			target := state.Headers
 			if state.Response == nil && state.Request != nil {
 				target = state.Request.Header
 			}
-			setHeader(target, Header{Name: action.Name, Value: action.Value, Action: action.Action})
+			setHeader(target, Header{Name: action.Name, Value: value, Action: action.Action})
 		case ActionBase:
 			// Base markers are expanded by the gateway scope composer.
 		case ActionSetQueryParameter:
 			if state.Request == nil {
 				return fmt.Errorf("set-query-parameter requires a request")
+			}
+			value, err := evalValue(action.Value, state)
+			if err != nil {
+				return err
 			}
 			query := state.Request.URL.Query()
 			switch action.Action {
@@ -1082,26 +1117,34 @@ func Execute(actions []Action, state *State) error {
 				query.Del(action.Name)
 			case "skip":
 				if !query.Has(action.Name) {
-					query.Set(action.Name, action.Value)
+					query.Set(action.Name, value)
 				}
 			default:
-				query.Set(action.Name, action.Value)
+				query.Set(action.Name, value)
 			}
 			state.Request.URL.RawQuery = query.Encode()
 		case ActionSetVariable:
+			value, err := evalValue(action.Value, state)
+			if err != nil {
+				return err
+			}
 			if state.Variables == nil {
 				state.Variables = map[string]string{}
 			}
-			state.Variables[action.Variable] = action.Value
+			state.Variables[action.Variable] = value
 		case ActionSetBody:
+			body, err := evalValue(action.Body, state)
+			if err != nil {
+				return err
+			}
 			if state.Response == nil && state.Request != nil {
-				state.Request.Body = io.NopCloser(strings.NewReader(action.Body))
-				state.Request.ContentLength = int64(len(action.Body))
+				state.Request.Body = io.NopCloser(strings.NewReader(body))
+				state.Request.ContentLength = int64(len(body))
 				state.Request.GetBody = func() (io.ReadCloser, error) {
-					return io.NopCloser(strings.NewReader(action.Body)), nil
+					return io.NopCloser(strings.NewReader(body)), nil
 				}
 			} else {
-				state.Body, state.BodySet = action.Body, true
+				state.Body, state.BodySet = body, true
 			}
 		case ActionCheckHeader:
 			if state.Request == nil {
@@ -1152,7 +1195,11 @@ func Execute(actions []Action, state *State) error {
 			if state.Request == nil {
 				return fmt.Errorf("set-method requires a request")
 			}
-			state.Request.Method = strings.ToUpper(action.Value)
+			value, err := evalValue(action.Value, state)
+			if err != nil {
+				return err
+			}
+			state.Request.Method = strings.ToUpper(value)
 		case ActionCORS:
 			if state.Request == nil {
 				return fmt.Errorf("cors requires a request")
@@ -1577,9 +1624,17 @@ func Execute(actions []Action, state *State) error {
 		case ActionForward:
 			// Forwarding is performed by the gateway after the backend section.
 		case ActionReturnResponse:
-			state.Returned, state.StatusCode, state.Reason, state.Body = true, action.StatusCode, action.Reason, action.Body
+			body, err := evalValue(action.Body, state)
+			if err != nil {
+				return err
+			}
+			state.Returned, state.StatusCode, state.Reason, state.Body = true, action.StatusCode, action.Reason, body
 			for _, header := range action.Headers {
-				setHeader(state.Headers, header)
+				value, err := evalValue(header.Value, state)
+				if err != nil {
+					return err
+				}
+				setHeader(state.Headers, Header{Name: header.Name, Value: value, Action: header.Action})
 			}
 			return nil
 		case ActionSetStatus:

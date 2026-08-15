@@ -108,10 +108,10 @@ func TestRetryPolicyCompilationAndExecution(t *testing.T) {
 			}
 		})
 	}
-	if _, err := Compile(`<policies><backend><retry><set-header name="X"><value>@(1)</value></set-header></retry></backend></policies>`, true); err == nil {
+	if _, err := Compile(`<policies><backend><retry><wait/></retry></backend></policies>`, true); err == nil {
 		t.Fatal("strict mode should reject unsupported retry child")
 	}
-	nonstrict, err := Compile(`<policies><backend><retry><set-header name="X"><value>@(1)</value></set-header></retry></backend></policies>`, false)
+	nonstrict, err := Compile(`<policies><backend><retry><wait/></retry></backend></policies>`, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -140,13 +140,17 @@ func TestQueryParameterAndVariablePolicies(t *testing.T) {
 	if err := Execute([]Action{{Kind: ActionSetQueryParameter, Name: "x"}}, &State{}); err == nil {
 		t.Fatal("query mutation without request should fail")
 	}
-	for _, value := range []string{
-		`<policies><inbound><set-query-parameter name="x"><value>@(1)</value></set-query-parameter></inbound></policies>`,
-		`<policies><inbound><set-variable name="x"><value>@(1)</value></set-variable></inbound></policies>`,
-	} {
-		if _, err := Compile(value, true); err == nil {
-			t.Fatal("strict mode should reject expression mutation")
-		}
+	exprPlan, err := Compile(`<policies><inbound><set-query-parameter name="n"><value>@(1 + 2)</value></set-query-parameter><set-variable name="flag"><value>@(true)</value></set-variable></inbound></policies>`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request = httptest.NewRequest(http.MethodGet, "http://example/", nil)
+	state = &State{Request: request}
+	if err := Execute(exprPlan.Inbound, state); err != nil || request.URL.Query().Get("n") != "3" || state.Variables["flag"] != "True" {
+		t.Fatalf("expression mutation = query %v variables %v, %v", request.URL.Query(), state.Variables, err)
+	}
+	if _, err := Compile(`<policies><inbound><set-variable name="x"><value>@{ var y = 1; return y; }</value></set-variable></inbound></policies>`, true); err == nil {
+		t.Fatal("invalid mutation expression accepted")
 	}
 }
 
@@ -179,8 +183,28 @@ func TestSetBodyPolicy(t *testing.T) {
 	if !state.BodySet || state.Body != "response body" {
 		t.Fatalf("outbound body = %+v", state)
 	}
-	if _, err := Compile(`<policies><inbound><set-body>@(context.Request.Body)</set-body></inbound></policies>`, true); err == nil {
-		t.Fatal("strict mode should reject set-body expression")
+	exprPlan, err := Compile(`<policies><inbound><set-body>@(context.Request.Method)</set-body></inbound></policies>`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request = httptest.NewRequest(http.MethodPut, "/", strings.NewReader("old"))
+	state = &State{Request: request}
+	if err := Execute(exprPlan.Inbound, state); err != nil {
+		t.Fatal(err)
+	}
+	body, err = io.ReadAll(request.Body)
+	if err != nil || string(body) != "PUT" {
+		t.Fatalf("expression body = %q, %v", body, err)
+	}
+	if _, err := Compile(`<policies><inbound><set-body>@(</set-body></inbound></policies>`, true); err == nil {
+		t.Fatal("invalid set-body expression accepted")
+	}
+	unsupportedBody, err := Compile(`<policies><inbound><set-body>@(context.Request.Body)</set-body></inbound></policies>`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := Execute(unsupportedBody.Inbound, &State{Request: httptest.NewRequest(http.MethodGet, "/", nil)}); err == nil {
+		t.Fatal("unknown set-body member accepted")
 	}
 }
 
@@ -305,8 +329,14 @@ func TestSetMethodAndCORSPolicies(t *testing.T) {
 	if err := Execute(plan.Inbound[1:], state); err != nil || !state.Returned || state.StatusCode != http.StatusNoContent {
 		t.Fatalf("preflight state = %+v, %v", state, err)
 	}
-	if _, err := Compile(`<policies><inbound><set-method>@(context.Request.Method)</set-method></inbound></policies>`, true); err == nil {
-		t.Fatal("set-method expression accepted")
+	methodPlan, err := Compile(`<policies><inbound><set-method>@(context.Request.Headers.GetValueOrDefault('X-Method', 'patch'))</set-method></inbound></policies>`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request = httptest.NewRequest(http.MethodGet, "/", nil)
+	state = &State{Request: request}
+	if err := Execute(methodPlan.Inbound, state); err != nil || request.Method != http.MethodPatch {
+		t.Fatalf("set-method expression = %s, %v", request.Method, err)
 	}
 	if _, err := Compile(`<policies><inbound><cors allowed-origins="@(context.Request.Headers.GetValueOrDefault('Origin'))"/></inbound></policies>`, true); err == nil {
 		t.Fatal("cors expression accepted")
@@ -1264,17 +1294,52 @@ type errorBody struct{}
 func (errorBody) Read([]byte) (int, error) { return 0, errors.New("body read failed") }
 func (errorBody) Close() error             { return nil }
 
-func TestUnsupportedExpressionModes(t *testing.T) {
+func TestMutationExpressionModes(t *testing.T) {
 	xml := `<policies><inbound><set-header name="X"><value>@(context.Request.Method)</value></set-header></inbound><backend/><outbound/><on-error/></policies>`
-	plan, err := Compile(xml, false)
+	plan, err := Compile(xml, true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := Execute(plan.Inbound, &State{Request: httptest.NewRequest("GET", "/", nil)}); err == nil {
-		t.Fatal("expected runtime error")
+	request := httptest.NewRequest("GET", "/", nil)
+	if err := Execute(plan.Inbound, &State{Request: request}); err != nil || request.Header.Get("X") != "GET" {
+		t.Fatalf("set-header expression = %q, %v", request.Header.Get("X"), err)
 	}
-	if _, err := Compile(xml, true); err == nil {
-		t.Fatal("strict compile should reject expression")
+	if err := Execute(plan.Inbound, &State{}); err == nil {
+		t.Fatal("set-header expression without request accepted")
+	}
+	returned, err := Compile(`<policies><inbound><return-response><set-status code="200"/><set-header name="X"><value>@(1)</value></set-header><set-body>@{ return "x"; }</set-body></return-response></inbound></policies>`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := &State{Request: httptest.NewRequest(http.MethodGet, "/", nil)}
+	if err := Execute(returned.Inbound, state); err != nil || state.Body != "x" || state.Headers.Get("X") != "1" {
+		t.Fatalf("return-response expressions = %+v, %v", state, err)
+	}
+	if _, err := Compile(`<policies><inbound><set-header name="X"><value>@{ var y = 1; return y; }</value></set-header></inbound></policies>`, false); err == nil {
+		t.Fatal("invalid set-header expression accepted")
+	}
+	for _, value := range []string{
+		`<policies><inbound><set-query-parameter name="x"><value>@(</value></set-query-parameter></inbound></policies>`,
+		`<policies><inbound><set-method>@(</set-method></inbound></policies>`,
+		`<policies><inbound><return-response><set-header name="X"><value>@(</value></set-header></return-response></inbound></policies>`,
+		`<policies><inbound><return-response><set-body>@(</set-body></return-response></inbound></policies>`,
+	} {
+		if _, err := Compile(value, false); err == nil {
+			t.Fatalf("invalid expression accepted: %s", value)
+		}
+	}
+	for _, value := range []string{
+		`<policies><inbound><set-query-parameter name="x"><value>@(context.Request.Body)</value></set-query-parameter></inbound></policies>`,
+		`<policies><inbound><set-variable name="x"><value>@(context.Request.Body)</value></set-variable></inbound></policies>`,
+		`<policies><inbound><set-method>@(context.Request.Body)</set-method></inbound></policies>`,
+	} {
+		plan, err := Compile(value, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := Execute(plan.Inbound, &State{Request: httptest.NewRequest(http.MethodGet, "/", nil)}); err == nil {
+			t.Fatalf("unknown member accepted: %s", value)
+		}
 	}
 }
 
@@ -1349,8 +1414,8 @@ func TestUnsupportedActionForms(t *testing.T) {
 		`<policies><inbound><set-backend-service base-url="https://backend" backend-id="named"/></inbound></policies>`,
 		`<policies><inbound><set-backend-service base-url="@(context.Request.Url)"/></inbound></policies>`,
 		`<policies><inbound><rewrite-uri template="@(context.Request.Url.Path)"/></inbound></policies>`,
-		`<policies><inbound><return-response><set-header name="X"><value>@(1)</value></set-header></return-response></inbound></policies>`,
-		`<policies><inbound><return-response><set-body>@{ return "x"; }</set-body></return-response></inbound></policies>`,
+		`<policies><inbound><return-response><set-header name="X"><value>@(context.Request.Body)</value></set-header></return-response></inbound></policies>`,
+		`<policies><inbound><return-response><set-body>@(context.Request.Body)</set-body></return-response></inbound></policies>`,
 		`<policies><inbound><return-response><choose/></return-response></inbound></policies>`,
 	}
 	for _, value := range values {
