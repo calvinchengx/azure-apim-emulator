@@ -102,22 +102,30 @@ func TestManagementToGatewayVerticalSlice(t *testing.T) {
 	}
 }
 
-func TestUnsupportedExpressionDefaultAndStrictModes(t *testing.T) {
+func TestExpressionAndUnsupportedPolicyModes(t *testing.T) {
 	expressionXML := `<policies><inbound><set-header name="X"><value>@(context.Request.Method)</value></set-header></inbound><backend><forward-request/></backend><outbound/><on-error/></policies>`
-	body, _ := json.Marshal(map[string]any{"properties": map[string]any{"format": "rawxml", "value": expressionXML}})
+	unsupportedXML := `<policies><inbound><wait/></inbound><backend><forward-request/></backend><outbound/><on-error/></policies>`
+	expressionBody, _ := json.Marshal(map[string]any{"properties": map[string]any{"format": "rawxml", "value": expressionXML}})
+	unsupportedBody, _ := json.Marshal(map[string]any{"properties": map[string]any{"format": "rawxml", "value": unsupportedXML}})
 
 	for _, test := range []struct {
 		name   string
 		strict bool
+		body   []byte
 		want   int
-	}{{"default accepts", false, http.StatusCreated}, {"strict rejects", true, http.StatusBadRequest}} {
+	}{
+		{"expression default", false, expressionBody, http.StatusCreated},
+		{"expression strict", true, expressionBody, http.StatusCreated},
+		{"unsupported default", false, unsupportedBody, http.StatusCreated},
+		{"unsupported strict", true, unsupportedBody, http.StatusBadRequest},
+	} {
 		t.Run(test.name, func(t *testing.T) {
 			srv := newTestServer(t, test.strict, http.DefaultClient)
 			front := httptest.NewServer(srv.Handler())
 			defer front.Close()
 			servicePath := "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/emulator-rg/providers/Microsoft.ApiManagement/service/emulator"
 			putOK(t, front, servicePath+"/apis/expr", `{"properties":{"displayName":"Expressions","path":"expr","serviceUrl":"http://127.0.0.1:1","protocols":["https"],"subscriptionRequired":false}}`)
-			response := management(t, front.Client(), http.MethodPut, front.URL+servicePath+"/apis/expr/policies/policy?api-version=2024-05-01", string(body))
+			response := management(t, front.Client(), http.MethodPut, front.URL+servicePath+"/apis/expr/policies/policy?api-version=2024-05-01", string(test.body))
 			defer response.Body.Close()
 			if response.StatusCode != test.want {
 				fatalResponse(t, response)
