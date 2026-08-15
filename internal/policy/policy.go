@@ -392,9 +392,9 @@ func compileNode(item node, strict bool) (Action, bool, error) {
 			if child.Name != "value" {
 				return unsupported(item.Name + "/" + child.Name), true, nil
 			}
-			value := strings.TrimSpace(child.Text)
-			if expression(value) {
-				return unsupported(item.Name), true, nil
+			value, err := compileValue(strings.TrimSpace(child.Text))
+			if err != nil {
+				return Action{}, false, err
 			}
 			values = append(values, value)
 		}
@@ -404,7 +404,15 @@ func compileNode(item node, strict bool) (Action, bool, error) {
 				return Action{}, false, fmt.Errorf("invalid check-header status")
 			}
 		}
-		return Action{Kind: ActionCheckHeader, Name: item.Attrs["name"], Values: values, Value: item.Attrs["failed-check-error-message"], StatusCode: code, IgnoreCase: strings.EqualFold(item.Attrs["ignore-case"], "true")}, true, nil
+		name, err := compileValue(item.Attrs["name"])
+		if err != nil {
+			return Action{}, false, err
+		}
+		message, err := compileValue(item.Attrs["failed-check-error-message"])
+		if err != nil {
+			return Action{}, false, err
+		}
+		return Action{Kind: ActionCheckHeader, Name: name, Values: values, Value: message, StatusCode: code, IgnoreCase: strings.EqualFold(item.Attrs["ignore-case"], "true")}, true, nil
 	case "validate-jwt":
 		return compileValidateJWT(item)
 	case "validate-azure-ad-token":
@@ -436,20 +444,41 @@ func compileNode(item node, strict bool) (Action, bool, error) {
 		}
 		return Action{Kind: ActionSetMethod, Value: value}, true, nil
 	case "cors":
-		if expression(item.Attrs["allowed-origins"]) || expression(item.Attrs["allowed-methods"]) || expression(item.Attrs["allowed-headers"]) {
-			return unsupported(item.Name), true, nil
+		allowOrigin, err := compileValue(item.Attrs["allowed-origins"])
+		if err != nil {
+			return Action{}, false, err
 		}
-		return Action{Kind: ActionCORS, AllowOrigin: item.Attrs["allowed-origins"], Methods: item.Attrs["allowed-methods"], AllowHeaders: item.Attrs["allowed-headers"], ExposeHeaders: item.Attrs["expose-headers"], MaxAge: item.Attrs["max-age"], AllowCreds: strings.EqualFold(item.Attrs["allow-credentials"], "true")}, true, nil
+		methods, err := compileValue(item.Attrs["allowed-methods"])
+		if err != nil {
+			return Action{}, false, err
+		}
+		allowHeaders, err := compileValue(item.Attrs["allowed-headers"])
+		if err != nil {
+			return Action{}, false, err
+		}
+		exposeHeaders, err := compileValue(item.Attrs["expose-headers"])
+		if err != nil {
+			return Action{}, false, err
+		}
+		maxAge, err := compileValue(item.Attrs["max-age"])
+		if err != nil {
+			return Action{}, false, err
+		}
+		return Action{Kind: ActionCORS, AllowOrigin: allowOrigin, Methods: methods, AllowHeaders: allowHeaders, ExposeHeaders: exposeHeaders, MaxAge: maxAge, AllowCreds: strings.EqualFold(item.Attrs["allow-credentials"], "true")}, true, nil
 	case "send-request", "send-one-way-request":
 		return compileSendRequest(item)
 	case "rate-limit-by-key", "quota-by-key", "rate-limit", "quota":
 		return compileLimit(item)
 	case "limit-concurrency":
 		count, err := strconv.Atoi(item.Attrs["max-count"])
-		if err != nil || count <= 0 || expression(item.Attrs["key"]) || len(item.Children) > 0 {
+		if err != nil || count <= 0 || len(item.Children) > 0 {
 			return unsupported(item.Name), true, nil
 		}
-		return Action{Kind: ActionLimitConcurrency, Value: item.Attrs["key"], LimitCalls: count, StatusCode: http.StatusTooManyRequests, Body: "concurrency limit exceeded"}, true, nil
+		key, err := compileValue(item.Attrs["key"])
+		if err != nil {
+			return Action{}, false, err
+		}
+		return Action{Kind: ActionLimitConcurrency, Value: key, LimitCalls: count, StatusCode: http.StatusTooManyRequests, Body: "concurrency limit exceeded"}, true, nil
 	case "cache-lookup":
 		return Action{Kind: ActionCacheLookup}, true, nil
 	case "cache-store":
@@ -638,38 +667,70 @@ func compileNode(item node, strict bool) (Action, bool, error) {
 		return Action{Kind: ActionTrace, TraceSource: item.Attrs["source"], TraceSeverity: item.Attrs["severity"], TraceMessage: message}, true, nil
 	case "authentication-basic":
 		username, password := item.Attrs["username"], item.Attrs["password"]
-		if username == "" || password == "" || expression(username) || expression(password) {
+		if username == "" || password == "" {
 			return unsupported(item.Name), true, nil
 		}
 		if len(item.Children) > 0 {
 			return unsupported(item.Name + "/" + item.Children[0].Name), true, nil
+		}
+		username, err := compileValue(username)
+		if err != nil {
+			return Action{}, false, err
+		}
+		password, err = compileValue(password)
+		if err != nil {
+			return Action{}, false, err
 		}
 		return Action{Kind: ActionAuthenticationBasic, AuthUsername: username, AuthPassword: password}, true, nil
 	case "authentication-managed-identity":
 		resource := item.Attrs["resource"]
-		if resource == "" || expression(resource) {
+		if resource == "" {
 			return unsupported(item.Name), true, nil
 		}
 		if len(item.Children) > 0 {
 			return unsupported(item.Name + "/" + item.Children[0].Name), true, nil
+		}
+		resource, err := compileValue(resource)
+		if err != nil {
+			return Action{}, false, err
 		}
 		return Action{Kind: ActionAuthenticationManagedIdentity, AuthResource: resource}, true, nil
 	case "authentication-oauth2":
 		clientID, clientSecret, endpoint := item.Attrs["client-id"], item.Attrs["client-secret"], item.Attrs["token-endpoint"]
-		if clientID == "" || clientSecret == "" || endpoint == "" || expression(clientID) || expression(clientSecret) || expression(endpoint) {
+		if clientID == "" || clientSecret == "" || endpoint == "" {
 			return unsupported(item.Name), true, nil
 		}
 		if len(item.Children) > 0 {
 			return unsupported(item.Name + "/" + item.Children[0].Name), true, nil
 		}
-		return Action{Kind: ActionAuthenticationOAuth2, AuthClientID: clientID, AuthClientSecret: clientSecret, AuthTokenEndpoint: endpoint, AuthResource: item.Attrs["resource"]}, true, nil
+		clientID, err := compileValue(clientID)
+		if err != nil {
+			return Action{}, false, err
+		}
+		clientSecret, err = compileValue(clientSecret)
+		if err != nil {
+			return Action{}, false, err
+		}
+		endpoint, err = compileValue(endpoint)
+		if err != nil {
+			return Action{}, false, err
+		}
+		resource, err := compileValue(item.Attrs["resource"])
+		if err != nil {
+			return Action{}, false, err
+		}
+		return Action{Kind: ActionAuthenticationOAuth2, AuthClientID: clientID, AuthClientSecret: clientSecret, AuthTokenEndpoint: endpoint, AuthResource: resource}, true, nil
 	case "authentication-certificate":
 		certificateID := item.Attrs["certificate-id"]
-		if certificateID == "" || expression(certificateID) {
+		if certificateID == "" {
 			return unsupported(item.Name), true, nil
 		}
 		if len(item.Children) > 0 {
 			return unsupported(item.Name + "/" + item.Children[0].Name), true, nil
+		}
+		certificateID, err := compileValue(certificateID)
+		if err != nil {
+			return Action{}, false, err
 		}
 		return Action{Kind: ActionAuthenticationCertificate, AuthCertificateID: certificateID}, true, nil
 	case "find-and-replace":
@@ -893,7 +954,11 @@ func compileLimit(item node) (Action, bool, error) {
 	if key == "" && (item.Name == "rate-limit" || item.Name == "quota") {
 		key = item.Name
 	}
-	if calls == 0 || period == 0 || expression(key) {
+	key, err := compileValue(key)
+	if err != nil {
+		return Action{}, false, err
+	}
+	if calls == 0 || period == 0 || key == "" {
 		return unsupported(item.Name), true, nil
 	}
 	status := http.StatusTooManyRequests
@@ -1193,17 +1258,33 @@ func Execute(actions []Action, state *State) error {
 			if state.Request == nil {
 				return fmt.Errorf("check-header requires a request")
 			}
-			actual := state.Request.Header.Values(action.Name)
+			name, err := evalValue(action.Name, state)
+			if err != nil {
+				return err
+			}
+			values := make([]string, len(action.Values))
+			for i, allowed := range action.Values {
+				value, err := evalValue(allowed, state)
+				if err != nil {
+					return err
+				}
+				values[i] = value
+			}
+			message, err := evalValue(action.Value, state)
+			if err != nil {
+				return err
+			}
+			actual := state.Request.Header.Values(name)
 			matched := false
 			for _, candidate := range actual {
-				for _, allowed := range action.Values {
+				for _, allowed := range values {
 					if (action.IgnoreCase && strings.EqualFold(candidate, allowed)) || (!action.IgnoreCase && candidate == allowed) {
 						matched = true
 					}
 				}
 			}
 			if !matched {
-				state.Returned, state.StatusCode, state.Body = true, action.StatusCode, action.Value
+				state.Returned, state.StatusCode, state.Body = true, action.StatusCode, message
 				return nil
 			}
 		case ActionValidateJWT:
@@ -1251,21 +1332,41 @@ func Execute(actions []Action, state *State) error {
 			if origin == "" {
 				continue
 			}
-			state.Headers.Set("Access-Control-Allow-Origin", action.AllowOrigin)
+			allowOrigin, err := evalValue(action.AllowOrigin, state)
+			if err != nil {
+				return err
+			}
+			methods, err := evalValue(action.Methods, state)
+			if err != nil {
+				return err
+			}
+			allowHeaders, err := evalValue(action.AllowHeaders, state)
+			if err != nil {
+				return err
+			}
+			exposeHeaders, err := evalValue(action.ExposeHeaders, state)
+			if err != nil {
+				return err
+			}
+			maxAge, err := evalValue(action.MaxAge, state)
+			if err != nil {
+				return err
+			}
+			state.Headers.Set("Access-Control-Allow-Origin", allowOrigin)
 			if action.AllowCreds {
 				state.Headers.Set("Access-Control-Allow-Credentials", "true")
 			}
-			if action.Methods != "" {
-				state.Headers.Set("Access-Control-Allow-Methods", action.Methods)
+			if methods != "" {
+				state.Headers.Set("Access-Control-Allow-Methods", methods)
 			}
-			if action.AllowHeaders != "" {
-				state.Headers.Set("Access-Control-Allow-Headers", action.AllowHeaders)
+			if allowHeaders != "" {
+				state.Headers.Set("Access-Control-Allow-Headers", allowHeaders)
 			}
-			if action.ExposeHeaders != "" {
-				state.Headers.Set("Access-Control-Expose-Headers", action.ExposeHeaders)
+			if exposeHeaders != "" {
+				state.Headers.Set("Access-Control-Expose-Headers", exposeHeaders)
 			}
-			if action.MaxAge != "" {
-				state.Headers.Set("Access-Control-Max-Age", action.MaxAge)
+			if maxAge != "" {
+				state.Headers.Set("Access-Control-Max-Age", maxAge)
 			}
 			if state.Request.Method == http.MethodOptions {
 				state.Returned, state.StatusCode = true, http.StatusNoContent
@@ -1325,7 +1426,10 @@ func Execute(actions []Action, state *State) error {
 			if state.RateLimit == nil {
 				return fmt.Errorf("rate-limit requires a configured limiter")
 			}
-			key := action.Value
+			key, err := evalValue(action.Value, state)
+			if err != nil {
+				return err
+			}
 			if key == "" && state.Request != nil {
 				key = state.Request.RemoteAddr
 			}
@@ -1340,7 +1444,10 @@ func Execute(actions []Action, state *State) error {
 			if state.AcquireConcurrency == nil {
 				return fmt.Errorf("limit-concurrency requires a configured limiter")
 			}
-			key := action.Value
+			key, err := evalValue(action.Value, state)
+			if err != nil {
+				return err
+			}
 			if key == "" && state.Request != nil {
 				key = state.Request.RemoteAddr
 			}
@@ -1554,7 +1661,15 @@ func Execute(actions []Action, state *State) error {
 			if state.Request == nil {
 				return fmt.Errorf("authentication-basic requires a request")
 			}
-			state.Request.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte(action.AuthUsername+":"+action.AuthPassword)))
+			username, err := evalValue(action.AuthUsername, state)
+			if err != nil {
+				return err
+			}
+			password, err := evalValue(action.AuthPassword, state)
+			if err != nil {
+				return err
+			}
+			state.Request.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte(username+":"+password)))
 		case ActionAuthenticationManagedIdentity:
 			if state.Request == nil {
 				return fmt.Errorf("authentication-managed-identity requires a request")
@@ -1562,7 +1677,11 @@ func Execute(actions []Action, state *State) error {
 			if state.AcquireToken == nil {
 				return fmt.Errorf("authentication-managed-identity requires a token provider")
 			}
-			token, err := state.AcquireToken(action.AuthResource)
+			resource, err := evalValue(action.AuthResource, state)
+			if err != nil {
+				return err
+			}
+			token, err := state.AcquireToken(resource)
 			if err != nil {
 				return err
 			}
@@ -1574,7 +1693,23 @@ func Execute(actions []Action, state *State) error {
 			if state.AcquireOAuth2Token == nil {
 				return fmt.Errorf("authentication-oauth2 requires a token provider")
 			}
-			token, err := state.AcquireOAuth2Token(action.AuthClientID, action.AuthClientSecret, action.AuthTokenEndpoint, action.AuthResource)
+			clientID, err := evalValue(action.AuthClientID, state)
+			if err != nil {
+				return err
+			}
+			clientSecret, err := evalValue(action.AuthClientSecret, state)
+			if err != nil {
+				return err
+			}
+			endpoint, err := evalValue(action.AuthTokenEndpoint, state)
+			if err != nil {
+				return err
+			}
+			resource, err := evalValue(action.AuthResource, state)
+			if err != nil {
+				return err
+			}
+			token, err := state.AcquireOAuth2Token(clientID, clientSecret, endpoint, resource)
 			if err != nil {
 				return err
 			}
@@ -1586,7 +1721,11 @@ func Execute(actions []Action, state *State) error {
 			if state.AttachClientCertificate == nil {
 				return fmt.Errorf("authentication-certificate requires a certificate provider")
 			}
-			if err := state.AttachClientCertificate(state.Request, action.AuthCertificateID); err != nil {
+			certificateID, err := evalValue(action.AuthCertificateID, state)
+			if err != nil {
+				return err
+			}
+			if err := state.AttachClientCertificate(state.Request, certificateID); err != nil {
 				return err
 			}
 		case ActionFindReplace:
