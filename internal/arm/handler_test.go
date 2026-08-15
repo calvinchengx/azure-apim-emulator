@@ -163,6 +163,8 @@ func TestRequiredIfMatchInventory(t *testing.T) {
 		{http.MethodDelete, []string{"openidConnectProviders", "oidc"}, true},
 		{http.MethodPatch, []string{"authorizationServers", "auth"}, true},
 		{http.MethodDelete, []string{"authorizationServers", "auth"}, true},
+		{http.MethodPatch, []string{"documentations", "guide"}, true},
+		{http.MethodDelete, []string{"documentations", "guide"}, true},
 		{http.MethodPatch, []string{"certificates", "certificate"}, false},
 		{http.MethodDelete, []string{"certificates", "certificate"}, true},
 		{http.MethodDelete, []string{"products", "product", "apis", "api"}, false},
@@ -393,6 +395,9 @@ func TestCollectionFilterContracts(t *testing.T) {
 		{[]string{"tags"}, "name eq displayName", false},
 		{[]string{"tags"}, "contains(name, displayName)", false},
 		{[]string{"tags"}, "contains('a', 'b')", false},
+		{[]string{"documentations"}, "name eq 'guide'", true},
+		{[]string{"documentations"}, "contains(name, 'guide')", true},
+		{[]string{"documentations"}, "name ne 'guide'", false},
 	}
 	for _, test := range tests {
 		_, err := parseFilterForRoute(test.filter, route{Tail: test.tail})
@@ -1166,6 +1171,113 @@ func TestAuthorizationServerStoreErrorsAndWireFallbacks(t *testing.T) {
 	}
 	sanitizeAuthorizationServerDocument(nil)
 	sanitizeAuthorizationServerDocument(map[string]any{"clientSecret": "secret"})
+}
+
+func TestDocumentationBranches(t *testing.T) {
+	handler, st := testHandler(t)
+	seedService(t, st)
+	docPath := basePath + "/documentations/guide" + apiQuery
+	docBody := `{"id":"malicious","properties":{"title":"Guide","content":"# Hello","custom":"kept"}}`
+	empty := request(t, handler, http.MethodGet, basePath+"/documentations"+apiQuery, "")
+	if !strings.Contains(empty.Body.String(), `"count":0`) {
+		t.Fatalf("empty documentation list = %s", empty.Body.String())
+	}
+	assertStatus(t, handler, http.MethodPost, basePath+"/documentations"+apiQuery, "", http.StatusMethodNotAllowed)
+	assertStatus(t, handler, http.MethodGet, basePath+"/documentations/too/deep"+apiQuery, "", http.StatusNotFound)
+	assertStatus(t, handler, http.MethodGet, basePath+"/documentations/bad*name"+apiQuery, "", http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodGet, basePath+"/documentations/"+strings.Repeat("x", 257)+apiQuery, "", http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodHead, docPath, "", http.StatusNotFound)
+	assertStatus(t, handler, http.MethodGet, docPath, "", http.StatusNotFound)
+	assertStatus(t, handler, http.MethodPut, docPath, `{`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPut, docPath, `{"properties":{}}`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPut, docPath, `{"properties":{"title":""}}`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPut, docPath, docBody, http.StatusCreated)
+	assertStatus(t, handler, http.MethodPut, docPath, docBody, http.StatusOK)
+	assertStatus(t, handler, http.MethodPut, basePath+"/documentations/GUIDE"+apiQuery, docBody, http.StatusOK)
+	assertStatus(t, handler, http.MethodHead, docPath, "", http.StatusOK)
+	docGet := request(t, handler, http.MethodGet, basePath+"/documentations/GUIDE"+apiQuery, "")
+	if !strings.Contains(docGet.Body.String(), `"name":"guide"`) || !strings.Contains(docGet.Body.String(), `"title":"Guide"`) || !strings.Contains(docGet.Body.String(), `"custom":"kept"`) || strings.Contains(docGet.Body.String(), `"id":"malicious"`) {
+		t.Fatalf("documentation GET = %s", docGet.Body.String())
+	}
+	assertStatus(t, handler, http.MethodPatch, basePath+"/documentations/missing"+apiQuery, `{}`, http.StatusNotFound)
+	assertStatus(t, handler, http.MethodPatch, docPath, `{`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPatch, docPath, `{"properties":{"title":"Updated","content":null}}`, http.StatusOK)
+	list := request(t, handler, http.MethodGet, basePath+"/documentations"+apiQuery, "")
+	if !strings.Contains(list.Body.String(), `"count":1`) || !strings.Contains(list.Body.String(), `"title":"Updated"`) || strings.Contains(list.Body.String(), `"# Hello"`) {
+		t.Fatalf("documentation list = %s", list.Body.String())
+	}
+	filtered := request(t, handler, http.MethodGet, basePath+"/documentations"+apiQuery+"&$filter=name+eq+%27guide%27", "")
+	if !strings.Contains(filtered.Body.String(), `"count":1`) {
+		t.Fatalf("documentation filter = %s", filtered.Body.String())
+	}
+	contained := request(t, handler, http.MethodGet, basePath+"/documentations"+apiQuery+"&$filter=contains%28name%2C+%27gui%27%29", "")
+	if !strings.Contains(contained.Body.String(), `"count":1`) {
+		t.Fatalf("documentation contains filter = %s", contained.Body.String())
+	}
+	assertStatus(t, handler, http.MethodGet, basePath+"/documentations"+apiQuery+"&$filter=name+ne+%27guide%27", "", http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPut, basePath+"/documentations/notes"+apiQuery, `{"properties":{"title":"Notes"}}`, http.StatusCreated)
+	assertStatus(t, handler, http.MethodPatch, docPath, `{"properties":{"title":""}}`, http.StatusBadRequest)
+	legacy := model.Documentation{ServiceID: serviceModel().ID(), Name: "legacy", Title: "Legacy"}
+	if _, err := st.UpsertDocumentation(legacy); err != nil {
+		t.Fatal(err)
+	}
+	assertStatus(t, handler, http.MethodPatch, basePath+"/documentations/legacy"+apiQuery, `{"properties":{"content":"hydrated"}}`, http.StatusOK)
+	assertStatus(t, handler, http.MethodPost, docPath, "", http.StatusMethodNotAllowed)
+	assertStatus(t, handler, http.MethodDelete, docPath, "", http.StatusNoContent)
+	assertStatus(t, handler, http.MethodDelete, docPath, "", http.StatusPreconditionFailed)
+}
+
+func TestDocumentationStoreErrorsAndWireFallbacks(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(dir, clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	seedService(t, st)
+	if _, err := st.UpsertDocumentation(model.Documentation{ServiceID: serviceModel().ID(), Name: "guide", Title: "Guide"}); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", filepath.Join(dir, "azure-apim-emulator.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	handler := &Handler{Store: st, Auth: auth.AllowAll{}}
+	docPath := basePath + "/documentations/guide" + apiQuery
+	if _, err := db.Exec(`CREATE TRIGGER reject_doc_write BEFORE INSERT ON documentations BEGIN SELECT RAISE(FAIL, 'rejected'); END`); err != nil {
+		t.Fatal(err)
+	}
+	assertStatus(t, handler, http.MethodPut, docPath, `{"properties":{"title":"Guide"}}`, http.StatusConflict)
+	assertStatus(t, handler, http.MethodPatch, docPath, `{"properties":{"title":"Guide"}}`, http.StatusConflict)
+	if _, err := db.Exec(`DROP TRIGGER reject_doc_write; CREATE TRIGGER reject_doc_delete BEFORE DELETE ON documentations BEGIN SELECT RAISE(FAIL, 'rejected'); END`); err != nil {
+		t.Fatal(err)
+	}
+	assertStatus(t, handler, http.MethodDelete, docPath, "", http.StatusConflict)
+	if _, err := db.Exec(`DROP TRIGGER reject_doc_delete; DROP TABLE documentations`); err != nil {
+		t.Fatal(err)
+	}
+	assertStatus(t, handler, http.MethodGet, basePath+"/documentations"+apiQuery, "", http.StatusConflict)
+	assertStatus(t, handler, http.MethodGet, docPath, "", http.StatusConflict)
+	assertStatus(t, handler, http.MethodHead, docPath, "", http.StatusConflict)
+	assertStatus(t, handler, http.MethodPut, docPath, `{"properties":{"title":"Guide"}}`, http.StatusConflict)
+	assertStatus(t, handler, http.MethodPatch, docPath, `{"properties":{"title":"Guide"}}`, http.StatusConflict)
+	assertStatus(t, handler, http.MethodDelete, docPath, "", http.StatusConflict)
+
+	result := documentationWire(model.Documentation{ServiceID: "service", Name: "guide", Title: "Guide", Content: "body", Document: map[string]any{"properties": "scalar"}})
+	if result["properties"].(map[string]any)["title"] != "Guide" || result["properties"].(map[string]any)["content"] != "body" {
+		t.Fatalf("documentation wire fallback = %#v", result)
+	}
+	nilDoc := documentationWire(model.Documentation{ServiceID: "service", Name: "guide", Title: "Guide"})
+	if nilDoc["properties"].(map[string]any)["title"] != "Guide" {
+		t.Fatalf("documentation nil document wire = %#v", nilDoc)
+	}
+	cleared := model.Documentation{Content: "keep"}
+	clearNullDocumentationProperties(&cleared, map[string]any{"properties": "scalar"})
+	clearNullDocumentationProperties(&cleared, map[string]any{"properties": map[string]any{"title": "Guide"}})
+	if cleared.Content != "keep" {
+		t.Fatalf("documentation null-clear no-op = %+v", cleared)
+	}
 }
 
 func TestLoggerAndDiagnosticBranches(t *testing.T) {
@@ -2791,6 +2903,7 @@ func TestForeignKeyStoreErrors(t *testing.T) {
 	assertStatus(t, handler, http.MethodPut, basePath+"/identityProviders/facebook"+apiQuery, `{"properties":{"clientId":"app","clientSecret":"secret"}}`, http.StatusConflict)
 	assertStatus(t, handler, http.MethodPut, basePath+"/openidConnectProviders/oidc"+apiQuery, `{"properties":{"displayName":"OIDC","metadataEndpoint":"https://issuer.example","clientId":"app"}}`, http.StatusConflict)
 	assertStatus(t, handler, http.MethodPut, basePath+"/authorizationServers/auth"+apiQuery, `{"properties":{"displayName":"Auth","authorizationEndpoint":"https://auth.example/authorize","clientRegistrationEndpoint":"https://auth.example/apps","clientId":"app","grantTypes":["authorizationCode"]}}`, http.StatusConflict)
+	assertStatus(t, handler, http.MethodPut, basePath+"/documentations/guide"+apiQuery, `{"properties":{"title":"Guide"}}`, http.StatusConflict)
 	assertStatus(t, handler, http.MethodPut, basePath+"/certificates/v"+apiQuery, `{"properties":{"keyVault":{"secretIdentifier":"https://vault/secret"}}}`, http.StatusConflict)
 	assertStatus(t, handler, http.MethodPut, basePath+"/apis/a/schemas/s"+apiQuery, `{"properties":{"contentType":"application/json","document":{}}}`, http.StatusConflict)
 	assertStatus(t, handler, http.MethodPut, basePath+"/apis/a/operations/get"+apiQuery, `{"properties":{"method":"GET","urlTemplate":"/"}}`, http.StatusConflict)
@@ -2868,6 +2981,10 @@ func TestClosedStoreWriteErrors(t *testing.T) {
 	assertStatus(t, handler, http.MethodPut, basePath+"/authorizationServers/auth"+apiQuery, `{"properties":{"displayName":"Auth","authorizationEndpoint":"https://auth.example/authorize","clientRegistrationEndpoint":"https://auth.example/apps","clientId":"app","grantTypes":["authorizationCode"]}}`, http.StatusConflict)
 	assertStatus(t, handler, http.MethodDelete, basePath+"/authorizationServers/auth"+apiQuery, "", http.StatusConflict)
 	assertStatus(t, handler, http.MethodPost, basePath+"/authorizationServers/auth/listSecrets"+apiQuery, "", http.StatusConflict)
+	assertStatus(t, handler, http.MethodGet, basePath+"/documentations"+apiQuery, "", http.StatusConflict)
+	assertStatus(t, handler, http.MethodGet, basePath+"/documentations/guide"+apiQuery, "", http.StatusConflict)
+	assertStatus(t, handler, http.MethodPut, basePath+"/documentations/guide"+apiQuery, `{"properties":{"title":"Guide"}}`, http.StatusConflict)
+	assertStatus(t, handler, http.MethodDelete, basePath+"/documentations/guide"+apiQuery, "", http.StatusConflict)
 	assertStatus(t, handler, http.MethodGet, basePath+"/certificates"+apiQuery, "", http.StatusConflict)
 	assertStatus(t, handler, http.MethodPut, basePath+"/certificates/v"+apiQuery, `{"properties":{"keyVault":{"secretIdentifier":"https://vault/secret"}}}`, http.StatusConflict)
 	assertStatus(t, handler, http.MethodDelete, basePath+"/certificates/v"+apiQuery, "", http.StatusConflict)

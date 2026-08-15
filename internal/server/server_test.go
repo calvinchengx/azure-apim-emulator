@@ -156,7 +156,7 @@ func TestControlAndDispatchEndpoints(t *testing.T) {
 	if diagnostics.Code != http.StatusOK || !strings.Contains(diagnostics.Body.String(), `"events":[]`) {
 		t.Fatalf("portal diagnostics = %d %s", diagnostics.Code, diagnostics.Body.String())
 	}
-	if !strings.Contains(status.Body.String(), `"counts"`) || !strings.Contains(status.Body.String(), `"products"`) {
+	if !strings.Contains(status.Body.String(), `"counts"`) || !strings.Contains(status.Body.String(), `"products"`) || !strings.Contains(status.Body.String(), `"documentations"`) {
 		t.Fatalf("portal core resource counts = %s", status.Body.String())
 	}
 	fault := httptest.NewRecorder()

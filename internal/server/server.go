@@ -169,6 +169,7 @@ func (s *Server) portalStatus(w http.ResponseWriter, _ *http.Request) {
 				"identityProviders":      countIdentityProviders(s.Store, service.ID()),
 				"openidConnectProviders": countOpenIDConnectProviders(s.Store, service.ID()),
 				"authorizationServers":   countAuthorizationServers(s.Store, service.ID()),
+				"documentations":         countDocumentations(s.Store, service.ID()),
 				"certificates":           countCertificates(s.Store, service.ID()), "tags": countTags(s.Store, service.ID()),
 				"groups": countGroups(s.Store, service.ID()), "users": countUsers(s.Store, service.ID()),
 				"policyFragments": countPolicyFragments(s.Store, service.ID()), "products": countProducts(s.Store, service.ID()),
@@ -711,6 +712,10 @@ func countOpenIDConnectProviders(st *store.Store, id string) int {
 }
 func countAuthorizationServers(st *store.Store, id string) int {
 	v, _ := st.ListAuthorizationServers(id)
+	return len(v)
+}
+func countDocumentations(st *store.Store, id string) int {
+	v, _ := st.ListDocumentations(id)
 	return len(v)
 }
 func countCertificates(st *store.Store, id string) int {
