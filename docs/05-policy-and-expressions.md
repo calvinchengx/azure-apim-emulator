@@ -98,7 +98,8 @@ CORS allowed-origins/allowed-methods/allowed-headers/expose-headers/max-age,
 `check-header` name/values/error message, `limit-concurrency` key,
 rate-limit/quota `counter-key`, authentication-basic /
 managed-identity / oauth2 / certificate attributes, `set-status`
-code/reason, and `mock-response` status-code/content-type are implemented;
+code/reason, `mock-response` status-code/content-type, `json-to-xml`
+root-element-name, and `jsonp` callback-parameter-name are implemented;
 other statements, remaining context members, other expression-bearing
 fields, and the public allowlist remain open.
 

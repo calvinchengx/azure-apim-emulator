@@ -1253,8 +1253,19 @@ func TestJSONToXMLPolicy(t *testing.T) {
 	if err := Execute([]Action{{Kind: ActionJSONToXML}}, &State{Response: &http.Response{Body: io.NopCloser(strings.NewReader("{}"))}}); err == nil {
 		t.Fatal("empty JSON transform root accepted")
 	}
+	expressed, err := Compile(`<policies><outbound><json-to-xml root-element-name="@(context.Variables['root'])"/></outbound></policies>`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expressedResponse := &http.Response{Body: io.NopCloser(strings.NewReader(`{"name":"Ada"}`))}
+	if err := Execute(expressed.Outbound, &State{Response: expressedResponse, Variables: map[string]string{"root": "document"}}); err != nil {
+		t.Fatal(err)
+	}
+	expressedBody, err := io.ReadAll(expressedResponse.Body)
+	if err != nil || string(expressedBody) != "<document><name>Ada</name></document>" {
+		t.Fatalf("json-to-xml expression body = %q, %v", expressedBody, err)
+	}
 	for _, value := range []string{
-		`<policies><outbound><json-to-xml root-element-name="@(context.Response.Body)"/></outbound></policies>`,
 		`<policies><outbound><json-to-xml><unknown/></json-to-xml></outbound></policies>`,
 	} {
 		if _, err := Compile(value, true); err == nil {
@@ -1336,9 +1347,21 @@ func TestJSONPPolicy(t *testing.T) {
 	if err := Execute(plan.Outbound, bad); err == nil {
 		t.Fatal("jsonp body read error lost")
 	}
+	expressed, err := Compile(`<policies><outbound><jsonp callback-parameter-name="@(context.Variables['param'])"/></outbound></policies>`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expressedRequest := httptest.NewRequest(http.MethodGet, "/?callback=handle", nil)
+	expressedResponse := &http.Response{Body: io.NopCloser(strings.NewReader(`{"ok":true}`))}
+	if err := Execute(expressed.Outbound, &State{Request: expressedRequest, Response: expressedResponse, Variables: map[string]string{"param": "callback"}}); err != nil {
+		t.Fatal(err)
+	}
+	expressedBody, _ := io.ReadAll(expressedResponse.Body)
+	if string(expressedBody) != "handle({\"ok\":true});" {
+		t.Fatalf("jsonp expression body = %q", expressedBody)
+	}
 	for _, value := range []string{
 		`<policies><outbound><jsonp callback-parameter-name=""/></outbound></policies>`,
-		`<policies><outbound><jsonp callback-parameter-name="@(context.Request.Url)"/></outbound></policies>`,
 		`<policies><outbound><jsonp callback-parameter-name="callback"><unknown/></jsonp></outbound></policies>`,
 	} {
 		if _, err := Compile(value, true); err == nil {
@@ -1809,6 +1832,33 @@ func TestStatusExpressionPolicies(t *testing.T) {
 		}
 		if err := Execute(compiled.Inbound, &State{Variables: map[string]string{"code": "bad"}}); err == nil {
 			t.Fatalf("invalid evaluated status accepted: %s", value)
+		}
+	}
+}
+
+func TestJSONTransformExpressionPolicies(t *testing.T) {
+	for _, value := range []string{
+		`<policies><outbound><json-to-xml root-element-name="@(1 + )"/></outbound></policies>`,
+		`<policies><outbound><jsonp callback-parameter-name="@(1 + )"/></outbound></policies>`,
+	} {
+		if _, err := Compile(value, false); err == nil {
+			t.Fatalf("invalid json transform expression accepted: %s", value)
+		}
+	}
+	for _, value := range []string{
+		`<policies><outbound><json-to-xml root-element-name="@(context.Request.Body)"/></outbound></policies>`,
+		`<policies><outbound><jsonp callback-parameter-name="@(context.Request.Body)"/></outbound></policies>`,
+	} {
+		compiled, err := Compile(value, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		state := &State{
+			Request:  httptest.NewRequest(http.MethodGet, "/?callback=handle", nil),
+			Response: &http.Response{Body: io.NopCloser(strings.NewReader(`{"ok":true}`))},
+		}
+		if err := Execute(compiled.Outbound, state); err == nil {
+			t.Fatalf("unknown json transform member accepted: %s", value)
 		}
 	}
 }

@@ -754,8 +754,12 @@ func compileNode(item node, strict bool) (Action, bool, error) {
 		if root == "" {
 			root = "root"
 		}
-		if expression(root) || len(item.Children) > 0 {
+		if len(item.Children) > 0 {
 			return unsupported(item.Name), true, nil
+		}
+		root, err := compileValue(root)
+		if err != nil {
+			return Action{}, false, err
 		}
 		return Action{Kind: ActionJSONToXML, TransformRoot: root}, true, nil
 	case "xml-to-json":
@@ -765,8 +769,12 @@ func compileNode(item node, strict bool) (Action, bool, error) {
 		return Action{Kind: ActionXMLToJSON}, true, nil
 	case "jsonp":
 		parameter := item.Attrs["callback-parameter-name"]
-		if parameter == "" || expression(parameter) || len(item.Children) > 0 {
+		if parameter == "" || len(item.Children) > 0 {
 			return unsupported(item.Name), true, nil
+		}
+		parameter, err := compileValue(parameter)
+		if err != nil {
+			return Action{}, false, err
 		}
 		return Action{Kind: ActionJSONP, JSONPParameter: parameter}, true, nil
 	case "cache-lookup-value":
@@ -1781,6 +1789,10 @@ func Execute(actions []Action, state *State) error {
 			if state.Response == nil {
 				return fmt.Errorf("json-to-xml requires a response")
 			}
+			root, err := evalValue(action.TransformRoot, state)
+			if err != nil {
+				return err
+			}
 			value, err := io.ReadAll(state.Response.Body)
 			if err != nil {
 				return err
@@ -1789,7 +1801,7 @@ func Execute(actions []Action, state *State) error {
 			if err := json.Unmarshal(value, &document); err != nil {
 				return err
 			}
-			xmlValue, err := jsonValueXML(action.TransformRoot, document)
+			xmlValue, err := jsonValueXML(root, document)
 			if err != nil {
 				return err
 			}
@@ -1812,7 +1824,11 @@ func Execute(actions []Action, state *State) error {
 			if state.Response == nil || state.Request == nil || state.Request.URL == nil {
 				return fmt.Errorf("jsonp requires a request and response")
 			}
-			callback := state.Request.URL.Query().Get(action.JSONPParameter)
+			parameter, err := evalValue(action.JSONPParameter, state)
+			if err != nil {
+				return err
+			}
+			callback := state.Request.URL.Query().Get(parameter)
 			if callback == "" {
 				continue
 			}
