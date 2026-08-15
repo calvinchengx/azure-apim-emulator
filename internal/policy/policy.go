@@ -782,8 +782,11 @@ func compileNode(item node, strict bool) (Action, bool, error) {
 		if err != nil {
 			return Action{}, false, err
 		}
-		variable := item.Attrs["variable-name"]
-		if key == "" || variable == "" || expression(variable) || len(item.Children) > 0 {
+		variable, err := compileValue(item.Attrs["variable-name"])
+		if err != nil {
+			return Action{}, false, err
+		}
+		if key == "" || variable == "" || len(item.Children) > 0 {
 			return unsupported(item.Name), true, nil
 		}
 		return Action{Kind: ActionCacheLookupValue, ValueCacheKey: key, Variable: variable}, true, nil
@@ -1902,12 +1905,19 @@ func Execute(actions []Action, state *State) error {
 			if err != nil {
 				return err
 			}
+			variable, err := evalValue(action.Variable, state)
+			if err != nil {
+				return err
+			}
+			if variable == "" {
+				return fmt.Errorf("cache-lookup-value requires a variable-name")
+			}
 			value, ok := state.ValueCacheGet(key)
 			if ok {
 				if state.Variables == nil {
 					state.Variables = map[string]string{}
 				}
-				state.Variables[action.Variable] = value
+				state.Variables[variable] = value
 			}
 		case ActionCacheStoreValue:
 			if state.ValueCacheSet == nil {

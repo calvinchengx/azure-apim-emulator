@@ -94,7 +94,8 @@ runtime evaluation of `set-header`, `set-query-parameter`, `set-variable`,
 `set-body`, `set-method`, `return-response` children, `send-request` /
 `send-one-way-request` url/method/header/body, `set-backend-service`,
 `rewrite-uri`, `find-and-replace` from/to, value-cache key/value fields,
-CORS allowed-origins/allowed-methods/allowed-headers/expose-headers/max-age,
+`cache-lookup-value` variable-name, CORS allowed-origins/allowed-methods/
+allowed-headers/expose-headers/max-age,
 `check-header` name/values/error message, `limit-concurrency` key,
 rate-limit/quota `counter-key`, authentication-basic /
 managed-identity / oauth2 / certificate attributes, `set-status`

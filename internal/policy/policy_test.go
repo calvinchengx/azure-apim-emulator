@@ -1395,10 +1395,25 @@ func TestValueCachePolicies(t *testing.T) {
 	if err := Execute(plan.Outbound, &State{}); err == nil {
 		t.Fatal("value cache store without cache accepted")
 	}
+	expressed, err := Compile(`<policies><inbound><cache-lookup-value key="user" variable-name="@(context.Variables['name'])"/></inbound></policies>`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state = &State{Variables: map[string]string{"name": "cached"}, ValueCacheGet: func(key string) (string, bool) { return stored[key], stored[key] != "" }}
+	if err := Execute(expressed.Inbound, state); err != nil || state.Variables["cached"] != "Ada" {
+		t.Fatalf("value cache expression variable = %+v, %v", state.Variables, err)
+	}
+	emptyName, err := Compile(`<policies><inbound><cache-lookup-value key="user" variable-name="@(context.Variables['name'])"/></inbound></policies>`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	emptyState := &State{ValueCacheGet: func(string) (string, bool) { return "Ada", true }}
+	if err := Execute(emptyName.Inbound, emptyState); err == nil || emptyState.Variables != nil {
+		t.Fatalf("empty evaluated variable-name = %+v, %v", emptyState.Variables, err)
+	}
 	for _, value := range []string{
 		`<policies><inbound><cache-lookup-value key="" variable-name="cached"/></inbound></policies>`,
 		`<policies><inbound><cache-lookup-value key="user" variable-name=""/></inbound></policies>`,
-		`<policies><inbound><cache-lookup-value key="user" variable-name="@(context.Variables['name'])"/></inbound></policies>`,
 		`<policies><inbound><cache-lookup-value key="user" variable-name="cached"><unknown/></cache-lookup-value></inbound></policies>`,
 		`<policies><outbound><cache-store-value key="user" value="Ada" duration="bad"/></outbound></policies>`,
 		`<policies><outbound><cache-store-value key="user" value="Ada" duration="0"/></outbound></policies>`,
@@ -1677,10 +1692,20 @@ func TestCacheAndReplaceExpressionPolicies(t *testing.T) {
 		t.Fatalf("replace expression = %q, %v", body, err)
 	}
 
+	block, err := Compile(`<policies><inbound><cache-lookup-value key="user" variable-name="@{ return context.Variables['name']; }"/></inbound></policies>`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blockState := &State{Variables: map[string]string{"name": "cached"}, ValueCacheGet: func(string) (string, bool) { return "Ada", true }}
+	if err := Execute(block.Inbound, blockState); err != nil || blockState.Variables["cached"] != "Ada" {
+		t.Fatalf("value cache block variable = %+v, %v", blockState.Variables, err)
+	}
+
 	for _, value := range []string{
 		`<policies><inbound><find-and-replace from="@(1 + )" to="new"/></inbound></policies>`,
 		`<policies><inbound><find-and-replace from="old" to="@(1 + )"/></inbound></policies>`,
 		`<policies><inbound><cache-lookup-value key="@(1 + )" variable-name="cached"/></inbound></policies>`,
+		`<policies><inbound><cache-lookup-value key="user" variable-name="@(1 + )"/></inbound></policies>`,
 		`<policies><outbound><cache-store-value key="@(1 + )" value="Ada"/></outbound></policies>`,
 		`<policies><outbound><cache-store-value key="user" value="@(1 + )"/></outbound></policies>`,
 		`<policies><inbound><cache-remove-value key="@(1 + )"/></inbound></policies>`,
@@ -1693,6 +1718,7 @@ func TestCacheAndReplaceExpressionPolicies(t *testing.T) {
 		`<policies><inbound><find-and-replace from="@(context.Request.Body)" to="new"/></inbound></policies>`,
 		`<policies><inbound><find-and-replace from="old" to="@(context.Request.Body)"/></inbound></policies>`,
 		`<policies><inbound><cache-lookup-value key="@(context.Request.Body)" variable-name="cached"/></inbound></policies>`,
+		`<policies><inbound><cache-lookup-value key="user" variable-name="@(context.Request.Body)"/></inbound></policies>`,
 		`<policies><outbound><cache-store-value key="@(context.Request.Body)" value="Ada"/></outbound></policies>`,
 		`<policies><outbound><cache-store-value key="user" value="@(context.Request.Body)"/></outbound></policies>`,
 		`<policies><inbound><cache-remove-value key="@(context.Request.Body)"/></inbound></policies>`,
