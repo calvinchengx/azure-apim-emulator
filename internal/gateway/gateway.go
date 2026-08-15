@@ -697,14 +697,7 @@ func (r *Runtime) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		writePolicyResponse(w, state)
 		return
 	}
-	copyHeaders(w.Header(), response.Header)
-	copyHeaders(w.Header(), state.Headers)
-	w.WriteHeader(response.StatusCode)
-	if state.BodySet {
-		_, _ = io.WriteString(w, state.Body)
-	} else {
-		writeGatewayBody(w, response)
-	}
+	writeForwardedResponse(w, response, state)
 }
 
 func (r *Runtime) serveInjectedFault(w http.ResponseWriter, req *http.Request, plan policy.Plan, state *policy.State, fault Fault) {
@@ -728,14 +721,7 @@ func (r *Runtime) serveInjectedFault(w http.ResponseWriter, req *http.Request, p
 		writePolicyResponse(w, state)
 		return
 	}
-	copyHeaders(w.Header(), response.Header)
-	copyHeaders(w.Header(), state.Headers)
-	w.WriteHeader(response.StatusCode)
-	if state.BodySet {
-		_, _ = io.WriteString(w, state.Body)
-	} else {
-		writeGatewayBody(w, response)
-	}
+	writeForwardedResponse(w, response, state)
 }
 
 func isWebSocketRequest(req *http.Request) bool {
@@ -1483,6 +1469,21 @@ func hopByHop(name string) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+func writeForwardedResponse(w http.ResponseWriter, response *http.Response, state *policy.State) {
+	copyHeaders(w.Header(), response.Header)
+	copyHeaders(w.Header(), state.Headers)
+	status := response.StatusCode
+	if state.StatusCode != 0 {
+		status = state.StatusCode
+	}
+	w.WriteHeader(status)
+	if state.BodySet {
+		_, _ = io.WriteString(w, state.Body)
+	} else {
+		writeGatewayBody(w, response)
 	}
 }
 
