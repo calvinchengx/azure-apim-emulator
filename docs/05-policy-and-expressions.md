@@ -88,8 +88,9 @@ The lexer tokenizes `@(expression)` and `@{ statements }` wrappers, C# literals
 phase-1 operator set. The evaluator runs context-free expressions and binds
 `context` for `choose` conditions: request method/URL/headers/IP, policy
 variables, member access, indexing, and calls (`ToString`, `Length`,
-`GetValueOrDefault`, `ContainsKey`). Statement blocks, the remaining context
-members, mutation-policy evaluation, and the public allowlist remain open.
+`GetValueOrDefault`, `ContainsKey`). Single-`return` statement blocks are
+implemented; other statements, remaining context members, mutation-policy
+evaluation, and the public allowlist remain open.
 
 The pure-Go engine has these stages:
 
