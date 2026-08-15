@@ -165,7 +165,11 @@ func (s *Server) portalStatus(w http.ResponseWriter, _ *http.Request) {
 			"counts": map[string]int{
 				"apis": len(apis), "apiVersionSets": countAPIVersionSets(s.Store, service.ID()),
 				"namedValues": countNamedValues(s.Store, service.ID()), "backends": countBackends(s.Store, service.ID()),
-				"certificates": countCertificates(s.Store, service.ID()), "tags": countTags(s.Store, service.ID()),
+				"caches":                 countCaches(s.Store, service.ID()),
+				"identityProviders":      countIdentityProviders(s.Store, service.ID()),
+				"openidConnectProviders": countOpenIDConnectProviders(s.Store, service.ID()),
+				"authorizationServers":   countAuthorizationServers(s.Store, service.ID()),
+				"certificates":           countCertificates(s.Store, service.ID()), "tags": countTags(s.Store, service.ID()),
 				"groups": countGroups(s.Store, service.ID()), "users": countUsers(s.Store, service.ID()),
 				"policyFragments": countPolicyFragments(s.Store, service.ID()), "products": countProducts(s.Store, service.ID()),
 				"subscriptions": countSubscriptions(s.Store, service.ID()), "loggers": countLoggers(s.Store, service.ID()),
@@ -696,6 +700,19 @@ func countAPIVersionSets(st *store.Store, id string) int {
 }
 func countNamedValues(st *store.Store, id string) int { v, _ := st.ListNamedValues(id); return len(v) }
 func countBackends(st *store.Store, id string) int    { v, _ := st.ListBackends(id); return len(v) }
+func countCaches(st *store.Store, id string) int      { v, _ := st.ListCaches(id); return len(v) }
+func countIdentityProviders(st *store.Store, id string) int {
+	v, _ := st.ListIdentityProviders(id)
+	return len(v)
+}
+func countOpenIDConnectProviders(st *store.Store, id string) int {
+	v, _ := st.ListOpenIDConnectProviders(id)
+	return len(v)
+}
+func countAuthorizationServers(st *store.Store, id string) int {
+	v, _ := st.ListAuthorizationServers(id)
+	return len(v)
+}
 func countCertificates(st *store.Store, id string) int {
 	v, _ := st.ListCertificates(id)
 	return len(v)

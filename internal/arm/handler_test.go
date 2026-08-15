@@ -157,6 +157,12 @@ func TestRequiredIfMatchInventory(t *testing.T) {
 	}{
 		{http.MethodGet, []string{"tags", "tag"}, false},
 		{http.MethodPatch, []string{"tags", "tag"}, true},
+		{http.MethodPatch, []string{"identityProviders", "facebook"}, true},
+		{http.MethodDelete, []string{"identityProviders", "facebook"}, true},
+		{http.MethodPatch, []string{"openidConnectProviders", "oidc"}, true},
+		{http.MethodDelete, []string{"openidConnectProviders", "oidc"}, true},
+		{http.MethodPatch, []string{"authorizationServers", "auth"}, true},
+		{http.MethodDelete, []string{"authorizationServers", "auth"}, true},
 		{http.MethodPatch, []string{"certificates", "certificate"}, false},
 		{http.MethodDelete, []string{"certificates", "certificate"}, true},
 		{http.MethodDelete, []string{"products", "product", "apis", "api"}, false},
@@ -757,6 +763,409 @@ func TestServiceDocumentHelpers(t *testing.T) {
 	if _, ok := target["remove"]; ok || target["object"] != "scalar" || target["replace"].(map[string]any)["new"] != true {
 		t.Fatalf("merged target = %#v", target)
 	}
+}
+
+func TestCacheBranches(t *testing.T) {
+	handler, st := testHandler(t)
+	seedService(t, st)
+	cachePath := basePath + "/caches/default" + apiQuery
+	cacheBody := `{"connectionString":"root-secret","id":"malicious","properties":{"connectionString":"host:6380,password=secret","useFromLocation":"Default","description":"Redis","resourceId":"https://management.azure.com/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Cache/redis/apim","custom":"kept"}}`
+	assertStatus(t, handler, http.MethodPost, basePath+"/caches"+apiQuery, "", http.StatusMethodNotAllowed)
+	assertStatus(t, handler, http.MethodGet, basePath+"/caches/too/deep"+apiQuery, "", http.StatusNotFound)
+	assertStatus(t, handler, http.MethodGet, cachePath, "", http.StatusNotFound)
+	assertStatus(t, handler, http.MethodPut, cachePath, `{`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPut, cachePath, `{"properties":{}}`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPut, cachePath, `{"properties":{"connectionString":"host","useFromLocation":""}}`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPut, cachePath, `{"properties":{"connectionString":"`+strings.Repeat("x", 301)+`","useFromLocation":"default"}}`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPut, cachePath, `{"properties":{"connectionString":"host","useFromLocation":"`+strings.Repeat("x", 257)+`"}}`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPut, cachePath, `{"properties":{"connectionString":"host","useFromLocation":"default","description":"`+strings.Repeat("x", 2001)+`"}}`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPut, cachePath, `{"properties":{"connectionString":"host","useFromLocation":"default","resourceId":"`+strings.Repeat("x", 2001)+`"}}`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPut, cachePath, cacheBody, http.StatusCreated)
+	assertStatus(t, handler, http.MethodPut, cachePath, cacheBody, http.StatusOK)
+	assertStatus(t, handler, http.MethodHead, cachePath, "", http.StatusOK)
+	cacheGet := request(t, handler, http.MethodGet, cachePath, "")
+	if strings.Contains(cacheGet.Body.String(), `"secret"`) || !strings.Contains(cacheGet.Body.String(), `"connectionString":"{{Cache-ConnectionString-`) || !strings.Contains(cacheGet.Body.String(), `"useFromLocation":"default"`) || !strings.Contains(cacheGet.Body.String(), `"region":"default"`) || !strings.Contains(cacheGet.Body.String(), `"custom":"kept"`) || strings.Contains(cacheGet.Body.String(), `"id":"malicious"`) {
+		t.Fatalf("cache GET = %s", cacheGet.Body.String())
+	}
+	storedCache, err := st.GetCache(serviceModel().ID() + "/caches/default")
+	if err != nil || storedCache.Document["connectionString"] != nil || storedCache.Document["properties"].(map[string]any)["connectionString"] != nil || storedCache.ConnectionString != "host:6380,password=secret" {
+		t.Fatalf("stored cache = %+v, %v", storedCache, err)
+	}
+	assertStatus(t, handler, http.MethodPatch, basePath+"/caches/missing"+apiQuery, `{}`, http.StatusNotFound)
+	assertStatus(t, handler, http.MethodPatch, cachePath, `{`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPatch, cachePath, `{"properties":{"description":"Updated","resourceId":null,"connectionString":"{{existing}}"}}`, http.StatusOK)
+	list := request(t, handler, http.MethodGet, basePath+"/caches"+apiQuery, "")
+	if !strings.Contains(list.Body.String(), `"count":1`) || !strings.Contains(list.Body.String(), `"description":"Updated"`) || !strings.Contains(list.Body.String(), `"connectionString":"{{existing}}"`) || strings.Contains(list.Body.String(), `"resourceId":"https://`) {
+		t.Fatalf("cache list = %s", list.Body.String())
+	}
+	assertStatus(t, handler, http.MethodPatch, cachePath, `{"properties":{"description":null}}`, http.StatusOK)
+	assertStatus(t, handler, http.MethodPatch, cachePath, `{"properties":{"useFromLocation":""}}`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPatch, cachePath, `{"properties":{"connectionString":"","useFromLocation":""}}`, http.StatusBadRequest)
+	legacy := model.Cache{ServiceID: serviceModel().ID(), Name: "legacy", ConnectionString: "legacy-host", UseFromLocation: "eastus"}
+	if _, err := st.UpsertCache(legacy); err != nil {
+		t.Fatal(err)
+	}
+	assertStatus(t, handler, http.MethodPatch, basePath+"/caches/legacy"+apiQuery, `{"properties":{"description":"hydrated"}}`, http.StatusOK)
+	assertStatus(t, handler, http.MethodPost, cachePath, "", http.StatusMethodNotAllowed)
+	assertStatus(t, handler, http.MethodDelete, cachePath, "", http.StatusNoContent)
+	assertStatus(t, handler, http.MethodDelete, cachePath, "", http.StatusPreconditionFailed)
+}
+
+func TestCacheStoreErrorsAndWireFallbacks(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(dir, clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	seedService(t, st)
+	if _, err := st.UpsertCache(model.Cache{ServiceID: serviceModel().ID(), Name: "default", ConnectionString: "host", UseFromLocation: "default"}); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", filepath.Join(dir, "azure-apim-emulator.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	handler := &Handler{Store: st, Auth: auth.AllowAll{}}
+	cachePath := basePath + "/caches/default" + apiQuery
+	if _, err := db.Exec(`CREATE TRIGGER reject_cache_write BEFORE INSERT ON caches BEGIN SELECT RAISE(FAIL, 'rejected'); END`); err != nil {
+		t.Fatal(err)
+	}
+	assertStatus(t, handler, http.MethodPut, cachePath, `{"properties":{"connectionString":"host","useFromLocation":"default"}}`, http.StatusConflict)
+	if _, err := db.Exec(`DROP TRIGGER reject_cache_write; CREATE TRIGGER reject_cache_delete BEFORE DELETE ON caches BEGIN SELECT RAISE(FAIL, 'rejected'); END`); err != nil {
+		t.Fatal(err)
+	}
+	assertStatus(t, handler, http.MethodDelete, cachePath, "", http.StatusConflict)
+	if _, err := db.Exec(`DROP TRIGGER reject_cache_delete; DROP TABLE caches`); err != nil {
+		t.Fatal(err)
+	}
+	assertStatus(t, handler, http.MethodGet, basePath+"/caches"+apiQuery, "", http.StatusConflict)
+	assertStatus(t, handler, http.MethodGet, cachePath, "", http.StatusConflict)
+	assertStatus(t, handler, http.MethodPut, cachePath, `{"properties":{"connectionString":"host","useFromLocation":"default"}}`, http.StatusConflict)
+	assertStatus(t, handler, http.MethodDelete, cachePath, "", http.StatusConflict)
+
+	result := cacheWire(model.Cache{ServiceID: "service", Name: "c", ConnectionString: "{{existing}}", UseFromLocation: "westus", Document: map[string]any{"properties": "scalar"}})
+	if result["properties"].(map[string]any)["connectionString"] != "{{existing}}" || result["properties"].(map[string]any)["region"] != "westus" {
+		t.Fatalf("cache wire fallback = %#v", result)
+	}
+	sanitizeCacheDocument(nil)
+	sanitizeCacheDocument(map[string]any{"connectionString": "secret"})
+}
+
+func TestIdentityProviderBranches(t *testing.T) {
+	handler, st := testHandler(t)
+	seedService(t, st)
+	facebookPath := basePath + "/identityProviders/Facebook" + apiQuery
+	facebookBody := `{"clientSecret":"root-secret","id":"malicious","properties":{"type":"facebook","clientId":"app","clientSecret":"secret","clientLibrary":"msal","custom":"kept"}}`
+	assertStatus(t, handler, http.MethodPost, basePath+"/identityProviders"+apiQuery, "", http.StatusMethodNotAllowed)
+	assertStatus(t, handler, http.MethodGet, basePath+"/identityProviders/too/deep/path"+apiQuery, "", http.StatusNotFound)
+	assertStatus(t, handler, http.MethodGet, basePath+"/identityProviders/unknown"+apiQuery, "", http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodGet, facebookPath, "", http.StatusNotFound)
+	assertStatus(t, handler, http.MethodPut, facebookPath, `{`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPut, facebookPath, `{"properties":{}}`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPut, facebookPath, `{"properties":{"clientId":"app","clientSecret":""}}`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPut, facebookPath, `{"properties":{"clientId":"","clientSecret":"secret"}}`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPut, facebookPath, `{"properties":{"type":"google","clientId":"app","clientSecret":"secret"}}`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPut, facebookPath, `{"properties":{"type":"unknown","clientId":"app","clientSecret":"secret"}}`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPut, facebookPath, `{"properties":{"clientId":"app","clientSecret":"secret","clientLibrary":"`+strings.Repeat("x", 17)+`"}}`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPut, facebookPath, facebookBody, http.StatusCreated)
+	assertStatus(t, handler, http.MethodPut, facebookPath, facebookBody, http.StatusOK)
+	assertStatus(t, handler, http.MethodHead, facebookPath, "", http.StatusOK)
+	facebookGet := request(t, handler, http.MethodGet, facebookPath, "")
+	if strings.Contains(facebookGet.Body.String(), `"secret"`) || strings.Contains(facebookGet.Body.String(), `"clientSecret"`) || !strings.Contains(facebookGet.Body.String(), `"name":"facebook"`) || !strings.Contains(facebookGet.Body.String(), `"type":"facebook"`) || !strings.Contains(facebookGet.Body.String(), `"clientLibrary":"msal"`) || !strings.Contains(facebookGet.Body.String(), `"custom":"kept"`) || strings.Contains(facebookGet.Body.String(), `"id":"malicious"`) {
+		t.Fatalf("identity provider GET = %s", facebookGet.Body.String())
+	}
+	stored, err := st.GetIdentityProvider(serviceModel().ID() + "/identityProviders/facebook")
+	if err != nil || stored.ClientSecret != "secret" || stored.Document["clientSecret"] != nil || stored.Document["properties"].(map[string]any)["clientSecret"] != nil {
+		t.Fatalf("stored identity provider = %+v, %v", stored, err)
+	}
+	secrets := request(t, handler, http.MethodPost, basePath+"/identityProviders/facebook/listSecrets"+apiQuery, "")
+	if secrets.Code != http.StatusOK || !strings.Contains(secrets.Body.String(), `"clientSecret":"secret"`) || secrets.Header().Get("ETag") == "" {
+		t.Fatalf("listSecrets = %d %s", secrets.Code, secrets.Body.String())
+	}
+	assertStatus(t, handler, http.MethodGet, basePath+"/identityProviders/facebook/listSecrets"+apiQuery, "", http.StatusMethodNotAllowed)
+	assertStatus(t, handler, http.MethodPost, basePath+"/identityProviders/facebook/unknown"+apiQuery, "", http.StatusNotFound)
+	assertStatus(t, handler, http.MethodPost, basePath+"/identityProviders/google/listSecrets"+apiQuery, "", http.StatusNotFound)
+	assertStatus(t, handler, http.MethodPatch, basePath+"/identityProviders/google"+apiQuery, `{}`, http.StatusNotFound)
+	assertStatus(t, handler, http.MethodPatch, facebookPath, `{`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPatch, facebookPath, `{"properties":{"clientId":"updated","authority":"login.example","signinTenant":"contoso","allowedTenants":["contoso"]}}`, http.StatusOK)
+	list := request(t, handler, http.MethodGet, basePath+"/identityProviders"+apiQuery, "")
+	if !strings.Contains(list.Body.String(), `"count":1`) || !strings.Contains(list.Body.String(), `"clientId":"updated"`) || !strings.Contains(list.Body.String(), `"authority":"login.example"`) || strings.Contains(list.Body.String(), `"clientSecret"`) {
+		t.Fatalf("identity provider list = %s", list.Body.String())
+	}
+	assertStatus(t, handler, http.MethodPatch, facebookPath, `{"properties":{"authority":null,"signinTenant":null,"signupPolicyName":null,"signinPolicyName":null,"profileEditingPolicyName":null,"passwordResetPolicyName":null,"allowedTenants":null,"clientId":""}}`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPatch, facebookPath, `{"properties":{"authority":null,"signinTenant":null,"signupPolicyName":null,"signinPolicyName":null,"profileEditingPolicyName":null,"passwordResetPolicyName":null,"allowedTenants":null}}`, http.StatusOK)
+	cleared := request(t, handler, http.MethodGet, facebookPath, "")
+	if !strings.Contains(cleared.Body.String(), `"authority":""`) || !strings.Contains(cleared.Body.String(), `"allowedTenants":[]`) {
+		t.Fatalf("cleared identity provider = %s", cleared.Body.String())
+	}
+	assertStatus(t, handler, http.MethodPatch, facebookPath, `{"properties":{"clientSecret":""}}`, http.StatusBadRequest)
+	b2cPath := basePath + "/identityProviders/AadB2C" + apiQuery
+	assertStatus(t, handler, http.MethodPut, b2cPath, `{"properties":{"clientId":"b2c","clientSecret":"b2c-secret","authority":"login.microsoftonline.com","signinTenant":"contoso.onmicrosoft.com","signupPolicyName":"B2C_1_signup","signinPolicyName":"B2C_1_signin","profileEditingPolicyName":"B2C_1_edit","passwordResetPolicyName":"B2C_1_reset","allowedTenants":["contoso.onmicrosoft.com"]}}`, http.StatusCreated)
+	b2cGet := request(t, handler, http.MethodGet, basePath+"/identityProviders/aadb2c"+apiQuery, "")
+	if !strings.Contains(b2cGet.Body.String(), `"name":"aadB2C"`) || !strings.Contains(b2cGet.Body.String(), `"signupPolicyName":"B2C_1_signup"`) || strings.Contains(b2cGet.Body.String(), `"b2c-secret"`) {
+		t.Fatalf("aadB2C GET = %s", b2cGet.Body.String())
+	}
+	legacy := model.IdentityProvider{ServiceID: serviceModel().ID(), Name: "twitter", ClientID: "legacy", ClientSecret: "legacy-secret"}
+	if _, err := st.UpsertIdentityProvider(legacy); err != nil {
+		t.Fatal(err)
+	}
+	assertStatus(t, handler, http.MethodPatch, basePath+"/identityProviders/twitter"+apiQuery, `{"properties":{"authority":"legacy.example"}}`, http.StatusOK)
+	assertStatus(t, handler, http.MethodPost, facebookPath, "", http.StatusMethodNotAllowed)
+	assertStatus(t, handler, http.MethodDelete, facebookPath, "", http.StatusNoContent)
+	assertStatus(t, handler, http.MethodDelete, facebookPath, "", http.StatusPreconditionFailed)
+}
+
+func TestIdentityProviderStoreErrorsAndWireFallbacks(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(dir, clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	seedService(t, st)
+	if _, err := st.UpsertIdentityProvider(model.IdentityProvider{ServiceID: serviceModel().ID(), Name: "facebook", ClientID: "app", ClientSecret: "secret"}); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", filepath.Join(dir, "azure-apim-emulator.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	handler := &Handler{Store: st, Auth: auth.AllowAll{}}
+	facebookPath := basePath + "/identityProviders/facebook" + apiQuery
+	if _, err := db.Exec(`CREATE TRIGGER reject_identity_provider_write BEFORE INSERT ON identity_providers BEGIN SELECT RAISE(FAIL, 'rejected'); END`); err != nil {
+		t.Fatal(err)
+	}
+	assertStatus(t, handler, http.MethodPut, facebookPath, `{"properties":{"clientId":"app","clientSecret":"secret"}}`, http.StatusConflict)
+	if _, err := db.Exec(`DROP TRIGGER reject_identity_provider_write; CREATE TRIGGER reject_identity_provider_delete BEFORE DELETE ON identity_providers BEGIN SELECT RAISE(FAIL, 'rejected'); END`); err != nil {
+		t.Fatal(err)
+	}
+	assertStatus(t, handler, http.MethodDelete, facebookPath, "", http.StatusConflict)
+	if _, err := db.Exec(`DROP TRIGGER reject_identity_provider_delete; DROP TABLE identity_providers`); err != nil {
+		t.Fatal(err)
+	}
+	assertStatus(t, handler, http.MethodGet, basePath+"/identityProviders"+apiQuery, "", http.StatusConflict)
+	assertStatus(t, handler, http.MethodGet, facebookPath, "", http.StatusConflict)
+	assertStatus(t, handler, http.MethodPut, facebookPath, `{"properties":{"clientId":"app","clientSecret":"secret"}}`, http.StatusConflict)
+	assertStatus(t, handler, http.MethodDelete, facebookPath, "", http.StatusConflict)
+	assertStatus(t, handler, http.MethodPost, basePath+"/identityProviders/facebook/listSecrets"+apiQuery, "", http.StatusConflict)
+
+	result := identityProviderWire(model.IdentityProvider{ServiceID: "service", Name: "aad", ClientID: "app", Document: map[string]any{"properties": "scalar"}})
+	if result["properties"].(map[string]any)["clientId"] != "app" || result["properties"].(map[string]any)["type"] != "aad" || result["properties"].(map[string]any)["clientSecret"] != nil {
+		t.Fatalf("identity provider wire fallback = %#v", result)
+	}
+	sanitizeIdentityProviderDocument(nil)
+	sanitizeIdentityProviderDocument(map[string]any{"clientSecret": "secret"})
+}
+
+func TestOpenIDConnectProviderBranches(t *testing.T) {
+	handler, st := testHandler(t)
+	seedService(t, st)
+	oidcPath := basePath + "/openidConnectProviders/template" + apiQuery
+	oidcBody := `{"clientSecret":"root-secret","id":"malicious","properties":{"displayName":"Template","description":"OIDC","metadataEndpoint":"https://issuer.example/.well-known/openid-configuration","clientId":"app","clientSecret":"secret","useInTestConsole":true,"custom":"kept"}}`
+	assertStatus(t, handler, http.MethodPost, basePath+"/openidConnectProviders"+apiQuery, "", http.StatusMethodNotAllowed)
+	assertStatus(t, handler, http.MethodGet, basePath+"/openidConnectProviders/too/deep/path"+apiQuery, "", http.StatusNotFound)
+	assertStatus(t, handler, http.MethodGet, oidcPath, "", http.StatusNotFound)
+	assertStatus(t, handler, http.MethodPut, oidcPath, `{`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPut, oidcPath, `{"properties":{}}`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPut, oidcPath, `{"properties":{"displayName":"","metadataEndpoint":"https://issuer.example","clientId":"app"}}`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPut, oidcPath, `{"properties":{"displayName":"Template","metadataEndpoint":"","clientId":"app"}}`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPut, oidcPath, `{"properties":{"displayName":"Template","metadataEndpoint":"https://issuer.example","clientId":""}}`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPut, oidcPath, `{"properties":{"displayName":"`+strings.Repeat("x", 51)+`","metadataEndpoint":"https://issuer.example","clientId":"app"}}`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPut, oidcPath, oidcBody, http.StatusCreated)
+	assertStatus(t, handler, http.MethodPut, oidcPath, oidcBody, http.StatusOK)
+	assertStatus(t, handler, http.MethodPut, basePath+"/openidConnectProviders/TEMPLATE"+apiQuery, oidcBody, http.StatusOK)
+	assertStatus(t, handler, http.MethodHead, oidcPath, "", http.StatusOK)
+	oidcGet := request(t, handler, http.MethodGet, basePath+"/openidConnectProviders/TEMPLATE"+apiQuery, "")
+	if strings.Contains(oidcGet.Body.String(), `"secret"`) || strings.Contains(oidcGet.Body.String(), `"clientSecret"`) || !strings.Contains(oidcGet.Body.String(), `"name":"template"`) || !strings.Contains(oidcGet.Body.String(), `"useInTestConsole":true`) || !strings.Contains(oidcGet.Body.String(), `"custom":"kept"`) || strings.Contains(oidcGet.Body.String(), `"id":"malicious"`) {
+		t.Fatalf("openid connect provider GET = %s", oidcGet.Body.String())
+	}
+	stored, err := st.GetOpenIDConnectProvider(serviceModel().ID() + "/openidConnectProviders/template")
+	if err != nil || stored.Name != "template" || stored.ClientSecret != "secret" || stored.Document["clientSecret"] != nil || stored.Document["properties"].(map[string]any)["clientSecret"] != nil {
+		t.Fatalf("stored openid connect provider = %+v, %v", stored, err)
+	}
+	secrets := request(t, handler, http.MethodPost, basePath+"/openidConnectProviders/template/listSecrets"+apiQuery, "")
+	if secrets.Code != http.StatusOK || !strings.Contains(secrets.Body.String(), `"clientSecret":"secret"`) || secrets.Header().Get("ETag") == "" {
+		t.Fatalf("listSecrets = %d %s", secrets.Code, secrets.Body.String())
+	}
+	assertStatus(t, handler, http.MethodGet, basePath+"/openidConnectProviders/template/listSecrets"+apiQuery, "", http.StatusMethodNotAllowed)
+	assertStatus(t, handler, http.MethodPost, basePath+"/openidConnectProviders/template/unknown"+apiQuery, "", http.StatusNotFound)
+	assertStatus(t, handler, http.MethodPost, basePath+"/openidConnectProviders/missing/listSecrets"+apiQuery, "", http.StatusNotFound)
+	assertStatus(t, handler, http.MethodPatch, basePath+"/openidConnectProviders/missing"+apiQuery, `{}`, http.StatusNotFound)
+	assertStatus(t, handler, http.MethodPatch, oidcPath, `{`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPatch, oidcPath, `{"properties":{"displayName":"Updated","description":null}}`, http.StatusOK)
+	list := request(t, handler, http.MethodGet, basePath+"/openidConnectProviders"+apiQuery, "")
+	if !strings.Contains(list.Body.String(), `"count":1`) || !strings.Contains(list.Body.String(), `"displayName":"Updated"`) || strings.Contains(list.Body.String(), `"description":"OIDC"`) || strings.Contains(list.Body.String(), `"clientSecret"`) {
+		t.Fatalf("openid connect provider list = %s", list.Body.String())
+	}
+	filtered := request(t, handler, http.MethodGet, basePath+"/openidConnectProviders"+apiQuery+"&$filter=displayName+eq+%27Updated%27", "")
+	if !strings.Contains(filtered.Body.String(), `"count":1`) || !strings.Contains(filtered.Body.String(), `"displayName":"Updated"`) {
+		t.Fatalf("openid connect provider filter = %s", filtered.Body.String())
+	}
+	assertStatus(t, handler, http.MethodPatch, oidcPath, `{"properties":{"displayName":""}}`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPatch, oidcPath, `{"properties":{"metadataEndpoint":""}}`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPatch, oidcPath, `{"properties":{"clientId":""}}`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPatch, oidcPath, `{"properties":{"displayName":"`+strings.Repeat("x", 51)+`"}}`, http.StatusBadRequest)
+	legacy := model.OpenIDConnectProvider{ServiceID: serviceModel().ID(), Name: "legacy", DisplayName: "Legacy", MetadataEndpoint: "https://legacy.example", ClientID: "legacy"}
+	if _, err := st.UpsertOpenIDConnectProvider(legacy); err != nil {
+		t.Fatal(err)
+	}
+	assertStatus(t, handler, http.MethodPatch, basePath+"/openidConnectProviders/legacy"+apiQuery, `{"properties":{"description":"hydrated"}}`, http.StatusOK)
+	assertStatus(t, handler, http.MethodPost, oidcPath, "", http.StatusMethodNotAllowed)
+	assertStatus(t, handler, http.MethodDelete, oidcPath, "", http.StatusNoContent)
+	assertStatus(t, handler, http.MethodDelete, oidcPath, "", http.StatusPreconditionFailed)
+}
+
+func TestOpenIDConnectProviderStoreErrorsAndWireFallbacks(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(dir, clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	seedService(t, st)
+	if _, err := st.UpsertOpenIDConnectProvider(model.OpenIDConnectProvider{ServiceID: serviceModel().ID(), Name: "template", DisplayName: "Template", MetadataEndpoint: "https://issuer.example", ClientID: "app", ClientSecret: "secret"}); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", filepath.Join(dir, "azure-apim-emulator.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	handler := &Handler{Store: st, Auth: auth.AllowAll{}}
+	oidcPath := basePath + "/openidConnectProviders/template" + apiQuery
+	if _, err := db.Exec(`CREATE TRIGGER reject_oidc_write BEFORE INSERT ON openid_connect_providers BEGIN SELECT RAISE(FAIL, 'rejected'); END`); err != nil {
+		t.Fatal(err)
+	}
+	assertStatus(t, handler, http.MethodPut, oidcPath, `{"properties":{"displayName":"Template","metadataEndpoint":"https://issuer.example","clientId":"app"}}`, http.StatusConflict)
+	if _, err := db.Exec(`DROP TRIGGER reject_oidc_write; CREATE TRIGGER reject_oidc_delete BEFORE DELETE ON openid_connect_providers BEGIN SELECT RAISE(FAIL, 'rejected'); END`); err != nil {
+		t.Fatal(err)
+	}
+	assertStatus(t, handler, http.MethodDelete, oidcPath, "", http.StatusConflict)
+	if _, err := db.Exec(`DROP TRIGGER reject_oidc_delete; DROP TABLE openid_connect_providers`); err != nil {
+		t.Fatal(err)
+	}
+	assertStatus(t, handler, http.MethodGet, basePath+"/openidConnectProviders"+apiQuery, "", http.StatusConflict)
+	assertStatus(t, handler, http.MethodGet, oidcPath, "", http.StatusConflict)
+	assertStatus(t, handler, http.MethodPut, oidcPath, `{"properties":{"displayName":"Template","metadataEndpoint":"https://issuer.example","clientId":"app"}}`, http.StatusConflict)
+	assertStatus(t, handler, http.MethodDelete, oidcPath, "", http.StatusConflict)
+	assertStatus(t, handler, http.MethodPost, basePath+"/openidConnectProviders/template/listSecrets"+apiQuery, "", http.StatusConflict)
+
+	result := openIDConnectProviderWire(model.OpenIDConnectProvider{ServiceID: "service", Name: "oidc", DisplayName: "OIDC", ClientID: "app", Document: map[string]any{"properties": "scalar"}})
+	if result["properties"].(map[string]any)["displayName"] != "OIDC" || result["properties"].(map[string]any)["clientId"] != "app" || result["properties"].(map[string]any)["clientSecret"] != nil {
+		t.Fatalf("openid connect provider wire fallback = %#v", result)
+	}
+	sanitizeOpenIDConnectProviderDocument(nil)
+	sanitizeOpenIDConnectProviderDocument(map[string]any{"clientSecret": "secret"})
+}
+
+func TestAuthorizationServerBranches(t *testing.T) {
+	handler, st := testHandler(t)
+	seedService(t, st)
+	authPath := basePath + "/authorizationServers/auth" + apiQuery
+	authBody := `{"clientSecret":"root-secret","id":"malicious","properties":{"displayName":"Auth","description":"OAuth","authorizationEndpoint":"https://auth.example/authorize","clientRegistrationEndpoint":"https://auth.example/apps","clientId":"app","clientSecret":"secret","tokenEndpoint":"https://auth.example/token","defaultScope":"read write","resourceOwnerUsername":"user","resourceOwnerPassword":"pwd","supportState":true,"grantTypes":["authorizationCode","implicit"],"authorizationMethods":["GET"],"custom":"kept"}}`
+	assertStatus(t, handler, http.MethodPost, basePath+"/authorizationServers"+apiQuery, "", http.StatusMethodNotAllowed)
+	assertStatus(t, handler, http.MethodGet, basePath+"/authorizationServers/too/deep/path"+apiQuery, "", http.StatusNotFound)
+	assertStatus(t, handler, http.MethodGet, authPath, "", http.StatusNotFound)
+	assertStatus(t, handler, http.MethodPut, authPath, `{`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPut, authPath, `{"properties":{}}`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPut, authPath, `{"properties":{"displayName":"","authorizationEndpoint":"https://auth.example/authorize","clientRegistrationEndpoint":"https://auth.example/apps","clientId":"app","grantTypes":["authorizationCode"]}}`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPut, authPath, `{"properties":{"displayName":"Auth","authorizationEndpoint":"","clientRegistrationEndpoint":"https://auth.example/apps","clientId":"app","grantTypes":["authorizationCode"]}}`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPut, authPath, `{"properties":{"displayName":"Auth","authorizationEndpoint":"https://auth.example/authorize","clientRegistrationEndpoint":"","clientId":"app","grantTypes":["authorizationCode"]}}`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPut, authPath, `{"properties":{"displayName":"Auth","authorizationEndpoint":"https://auth.example/authorize","clientRegistrationEndpoint":"https://auth.example/apps","clientId":"","grantTypes":["authorizationCode"]}}`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPut, authPath, `{"properties":{"displayName":"Auth","authorizationEndpoint":"https://auth.example/authorize","clientRegistrationEndpoint":"https://auth.example/apps","clientId":"app"}}`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPut, authPath, `{"properties":{"displayName":"`+strings.Repeat("x", 51)+`","authorizationEndpoint":"https://auth.example/authorize","clientRegistrationEndpoint":"https://auth.example/apps","clientId":"app","grantTypes":["authorizationCode"]}}`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPut, authPath, `{"properties":{"displayName":"Auth","authorizationEndpoint":"https://auth.example/authorize","clientRegistrationEndpoint":"https://auth.example/apps","clientId":"app","grantTypes":["unknown"]}}`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPut, authPath, `{"properties":{"displayName":"Auth","authorizationEndpoint":"https://auth.example/authorize","clientRegistrationEndpoint":"https://auth.example/apps","clientId":"app","grantTypes":["authorizationCode"],"authorizationMethods":["POST"]}}`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPut, authPath, authBody, http.StatusCreated)
+	assertStatus(t, handler, http.MethodPut, authPath, authBody, http.StatusOK)
+	assertStatus(t, handler, http.MethodPut, basePath+"/authorizationServers/AUTH"+apiQuery, authBody, http.StatusOK)
+	assertStatus(t, handler, http.MethodHead, authPath, "", http.StatusOK)
+	authGet := request(t, handler, http.MethodGet, basePath+"/authorizationServers/AUTH"+apiQuery, "")
+	if strings.Contains(authGet.Body.String(), `"clientSecret"`) || !strings.Contains(authGet.Body.String(), `"name":"auth"`) || !strings.Contains(authGet.Body.String(), `"resourceOwnerPassword":"pwd"`) || !strings.Contains(authGet.Body.String(), `"custom":"kept"`) || strings.Contains(authGet.Body.String(), `"id":"malicious"`) {
+		t.Fatalf("authorization server GET = %s", authGet.Body.String())
+	}
+	stored, err := st.GetAuthorizationServer(serviceModel().ID() + "/authorizationServers/auth")
+	if err != nil || stored.Name != "auth" || stored.ClientSecret != "secret" || stored.Document["clientSecret"] != nil || stored.Document["properties"].(map[string]any)["clientSecret"] != nil {
+		t.Fatalf("stored authorization server = %+v, %v", stored, err)
+	}
+	secrets := request(t, handler, http.MethodPost, basePath+"/authorizationServers/auth/listSecrets"+apiQuery, "")
+	if secrets.Code != http.StatusOK || !strings.Contains(secrets.Body.String(), `"clientSecret":"secret"`) || !strings.Contains(secrets.Body.String(), `"resourceOwnerUsername":"user"`) || secrets.Header().Get("ETag") == "" {
+		t.Fatalf("listSecrets = %d %s", secrets.Code, secrets.Body.String())
+	}
+	assertStatus(t, handler, http.MethodGet, basePath+"/authorizationServers/auth/listSecrets"+apiQuery, "", http.StatusMethodNotAllowed)
+	assertStatus(t, handler, http.MethodPost, basePath+"/authorizationServers/auth/unknown"+apiQuery, "", http.StatusNotFound)
+	assertStatus(t, handler, http.MethodPost, basePath+"/authorizationServers/missing/listSecrets"+apiQuery, "", http.StatusNotFound)
+	assertStatus(t, handler, http.MethodPatch, basePath+"/authorizationServers/missing"+apiQuery, `{}`, http.StatusNotFound)
+	assertStatus(t, handler, http.MethodPatch, authPath, `{`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPatch, authPath, `{"properties":{"displayName":"Updated","description":null,"tokenEndpoint":null,"defaultScope":null,"resourceOwnerUsername":null,"resourceOwnerPassword":null,"supportState":null}}`, http.StatusOK)
+	list := request(t, handler, http.MethodGet, basePath+"/authorizationServers"+apiQuery, "")
+	if !strings.Contains(list.Body.String(), `"count":1`) || !strings.Contains(list.Body.String(), `"displayName":"Updated"`) || strings.Contains(list.Body.String(), `"description":"OAuth"`) || strings.Contains(list.Body.String(), `"clientSecret"`) {
+		t.Fatalf("authorization server list = %s", list.Body.String())
+	}
+	filtered := request(t, handler, http.MethodGet, basePath+"/authorizationServers"+apiQuery+"&$filter=displayName+eq+%27Updated%27", "")
+	if !strings.Contains(filtered.Body.String(), `"count":1`) {
+		t.Fatalf("authorization server filter = %s", filtered.Body.String())
+	}
+	assertStatus(t, handler, http.MethodPatch, authPath, `{"properties":{"displayName":""}}`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPatch, authPath, `{"properties":{"authorizationEndpoint":""}}`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPatch, authPath, `{"properties":{"clientRegistrationEndpoint":""}}`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPatch, authPath, `{"properties":{"clientId":""}}`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPatch, authPath, `{"properties":{"grantTypes":[]}}`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPatch, authPath, `{"properties":{"displayName":"`+strings.Repeat("x", 51)+`"}}`, http.StatusBadRequest)
+	legacy := model.AuthorizationServer{ServiceID: serviceModel().ID(), Name: "legacy", DisplayName: "Legacy", AuthorizationEndpoint: "https://legacy.example/authorize", ClientRegistrationEndpoint: "https://legacy.example/apps", ClientID: "legacy", GrantTypes: []string{"clientCredentials"}}
+	if _, err := st.UpsertAuthorizationServer(legacy); err != nil {
+		t.Fatal(err)
+	}
+	assertStatus(t, handler, http.MethodPatch, basePath+"/authorizationServers/legacy"+apiQuery, `{"properties":{"description":"hydrated"}}`, http.StatusOK)
+	assertStatus(t, handler, http.MethodPost, authPath, "", http.StatusMethodNotAllowed)
+	assertStatus(t, handler, http.MethodDelete, authPath, "", http.StatusNoContent)
+	assertStatus(t, handler, http.MethodDelete, authPath, "", http.StatusPreconditionFailed)
+}
+
+func TestAuthorizationServerStoreErrorsAndWireFallbacks(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(dir, clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	seedService(t, st)
+	if _, err := st.UpsertAuthorizationServer(model.AuthorizationServer{ServiceID: serviceModel().ID(), Name: "auth", DisplayName: "Auth", AuthorizationEndpoint: "https://auth.example/authorize", ClientRegistrationEndpoint: "https://auth.example/apps", ClientID: "app", GrantTypes: []string{"authorizationCode"}}); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", filepath.Join(dir, "azure-apim-emulator.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	handler := &Handler{Store: st, Auth: auth.AllowAll{}}
+	authPath := basePath + "/authorizationServers/auth" + apiQuery
+	if _, err := db.Exec(`CREATE TRIGGER reject_auth_write BEFORE INSERT ON authorization_servers BEGIN SELECT RAISE(FAIL, 'rejected'); END`); err != nil {
+		t.Fatal(err)
+	}
+	assertStatus(t, handler, http.MethodPut, authPath, `{"properties":{"displayName":"Auth","authorizationEndpoint":"https://auth.example/authorize","clientRegistrationEndpoint":"https://auth.example/apps","clientId":"app","grantTypes":["authorizationCode"]}}`, http.StatusConflict)
+	if _, err := db.Exec(`DROP TRIGGER reject_auth_write; CREATE TRIGGER reject_auth_delete BEFORE DELETE ON authorization_servers BEGIN SELECT RAISE(FAIL, 'rejected'); END`); err != nil {
+		t.Fatal(err)
+	}
+	assertStatus(t, handler, http.MethodDelete, authPath, "", http.StatusConflict)
+	if _, err := db.Exec(`DROP TRIGGER reject_auth_delete; DROP TABLE authorization_servers`); err != nil {
+		t.Fatal(err)
+	}
+	assertStatus(t, handler, http.MethodGet, basePath+"/authorizationServers"+apiQuery, "", http.StatusConflict)
+	assertStatus(t, handler, http.MethodGet, authPath, "", http.StatusConflict)
+	assertStatus(t, handler, http.MethodPut, authPath, `{"properties":{"displayName":"Auth","authorizationEndpoint":"https://auth.example/authorize","clientRegistrationEndpoint":"https://auth.example/apps","clientId":"app","grantTypes":["authorizationCode"]}}`, http.StatusConflict)
+	assertStatus(t, handler, http.MethodDelete, authPath, "", http.StatusConflict)
+	assertStatus(t, handler, http.MethodPost, basePath+"/authorizationServers/auth/listSecrets"+apiQuery, "", http.StatusConflict)
+
+	result := authorizationServerWire(model.AuthorizationServer{ServiceID: "service", Name: "auth", DisplayName: "Auth", ClientID: "app", Document: map[string]any{"properties": "scalar"}})
+	if result["properties"].(map[string]any)["displayName"] != "Auth" || result["properties"].(map[string]any)["clientSecret"] != nil {
+		t.Fatalf("authorization server wire fallback = %#v", result)
+	}
+	sanitizeAuthorizationServerDocument(nil)
+	sanitizeAuthorizationServerDocument(map[string]any{"clientSecret": "secret"})
 }
 
 func TestLoggerAndDiagnosticBranches(t *testing.T) {
@@ -2378,6 +2787,10 @@ func TestForeignKeyStoreErrors(t *testing.T) {
 	assertStatus(t, handler, http.MethodPut, basePath+"/apiVersionSets/v"+apiQuery, `{"properties":{"displayName":"V","versioningScheme":"Segment"}}`, http.StatusConflict)
 	assertStatus(t, handler, http.MethodPut, basePath+"/namedValues/v"+apiQuery, `{"properties":{"displayName":"V","value":"value"}}`, http.StatusConflict)
 	assertStatus(t, handler, http.MethodPut, basePath+"/backends/v"+apiQuery, `{"properties":{"url":"https://backend","protocol":"http"}}`, http.StatusConflict)
+	assertStatus(t, handler, http.MethodPut, basePath+"/caches/v"+apiQuery, `{"properties":{"connectionString":"host","useFromLocation":"default"}}`, http.StatusConflict)
+	assertStatus(t, handler, http.MethodPut, basePath+"/identityProviders/facebook"+apiQuery, `{"properties":{"clientId":"app","clientSecret":"secret"}}`, http.StatusConflict)
+	assertStatus(t, handler, http.MethodPut, basePath+"/openidConnectProviders/oidc"+apiQuery, `{"properties":{"displayName":"OIDC","metadataEndpoint":"https://issuer.example","clientId":"app"}}`, http.StatusConflict)
+	assertStatus(t, handler, http.MethodPut, basePath+"/authorizationServers/auth"+apiQuery, `{"properties":{"displayName":"Auth","authorizationEndpoint":"https://auth.example/authorize","clientRegistrationEndpoint":"https://auth.example/apps","clientId":"app","grantTypes":["authorizationCode"]}}`, http.StatusConflict)
 	assertStatus(t, handler, http.MethodPut, basePath+"/certificates/v"+apiQuery, `{"properties":{"keyVault":{"secretIdentifier":"https://vault/secret"}}}`, http.StatusConflict)
 	assertStatus(t, handler, http.MethodPut, basePath+"/apis/a/schemas/s"+apiQuery, `{"properties":{"contentType":"application/json","document":{}}}`, http.StatusConflict)
 	assertStatus(t, handler, http.MethodPut, basePath+"/apis/a/operations/get"+apiQuery, `{"properties":{"method":"GET","urlTemplate":"/"}}`, http.StatusConflict)
@@ -2436,6 +2849,25 @@ func TestClosedStoreWriteErrors(t *testing.T) {
 	assertStatus(t, handler, http.MethodGet, basePath+"/backends"+apiQuery, "", http.StatusConflict)
 	assertStatus(t, handler, http.MethodPut, basePath+"/backends/v"+apiQuery, `{"properties":{"url":"https://backend","protocol":"http"}}`, http.StatusConflict)
 	assertStatus(t, handler, http.MethodDelete, basePath+"/backends/v"+apiQuery, "", http.StatusConflict)
+	assertStatus(t, handler, http.MethodGet, basePath+"/caches"+apiQuery, "", http.StatusConflict)
+	assertStatus(t, handler, http.MethodGet, basePath+"/caches/v"+apiQuery, "", http.StatusConflict)
+	assertStatus(t, handler, http.MethodPut, basePath+"/caches/v"+apiQuery, `{"properties":{"connectionString":"host","useFromLocation":"default"}}`, http.StatusConflict)
+	assertStatus(t, handler, http.MethodDelete, basePath+"/caches/v"+apiQuery, "", http.StatusConflict)
+	assertStatus(t, handler, http.MethodGet, basePath+"/identityProviders"+apiQuery, "", http.StatusConflict)
+	assertStatus(t, handler, http.MethodGet, basePath+"/identityProviders/facebook"+apiQuery, "", http.StatusConflict)
+	assertStatus(t, handler, http.MethodPut, basePath+"/identityProviders/facebook"+apiQuery, `{"properties":{"clientId":"app","clientSecret":"secret"}}`, http.StatusConflict)
+	assertStatus(t, handler, http.MethodDelete, basePath+"/identityProviders/facebook"+apiQuery, "", http.StatusConflict)
+	assertStatus(t, handler, http.MethodPost, basePath+"/identityProviders/facebook/listSecrets"+apiQuery, "", http.StatusConflict)
+	assertStatus(t, handler, http.MethodGet, basePath+"/openidConnectProviders"+apiQuery, "", http.StatusConflict)
+	assertStatus(t, handler, http.MethodGet, basePath+"/openidConnectProviders/oidc"+apiQuery, "", http.StatusConflict)
+	assertStatus(t, handler, http.MethodPut, basePath+"/openidConnectProviders/oidc"+apiQuery, `{"properties":{"displayName":"OIDC","metadataEndpoint":"https://issuer.example","clientId":"app"}}`, http.StatusConflict)
+	assertStatus(t, handler, http.MethodDelete, basePath+"/openidConnectProviders/oidc"+apiQuery, "", http.StatusConflict)
+	assertStatus(t, handler, http.MethodPost, basePath+"/openidConnectProviders/oidc/listSecrets"+apiQuery, "", http.StatusConflict)
+	assertStatus(t, handler, http.MethodGet, basePath+"/authorizationServers"+apiQuery, "", http.StatusConflict)
+	assertStatus(t, handler, http.MethodGet, basePath+"/authorizationServers/auth"+apiQuery, "", http.StatusConflict)
+	assertStatus(t, handler, http.MethodPut, basePath+"/authorizationServers/auth"+apiQuery, `{"properties":{"displayName":"Auth","authorizationEndpoint":"https://auth.example/authorize","clientRegistrationEndpoint":"https://auth.example/apps","clientId":"app","grantTypes":["authorizationCode"]}}`, http.StatusConflict)
+	assertStatus(t, handler, http.MethodDelete, basePath+"/authorizationServers/auth"+apiQuery, "", http.StatusConflict)
+	assertStatus(t, handler, http.MethodPost, basePath+"/authorizationServers/auth/listSecrets"+apiQuery, "", http.StatusConflict)
 	assertStatus(t, handler, http.MethodGet, basePath+"/certificates"+apiQuery, "", http.StatusConflict)
 	assertStatus(t, handler, http.MethodPut, basePath+"/certificates/v"+apiQuery, `{"properties":{"keyVault":{"secretIdentifier":"https://vault/secret"}}}`, http.StatusConflict)
 	assertStatus(t, handler, http.MethodDelete, basePath+"/certificates/v"+apiQuery, "", http.StatusConflict)

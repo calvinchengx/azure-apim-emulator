@@ -204,6 +204,35 @@ CREATE TABLE IF NOT EXISTS policy_fragment_documents (
   fragment_id TEXT PRIMARY KEY REFERENCES policy_fragments(id) ON DELETE CASCADE,
   document_json TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS authorization_servers (
+  id TEXT PRIMARY KEY, service_id TEXT NOT NULL REFERENCES services(id) ON DELETE CASCADE,
+  name TEXT NOT NULL, display_name TEXT NOT NULL, description TEXT NOT NULL,
+  authorization_endpoint TEXT NOT NULL, client_registration_endpoint TEXT NOT NULL,
+  client_id TEXT NOT NULL, client_secret TEXT NOT NULL, token_endpoint TEXT NOT NULL,
+  default_scope TEXT NOT NULL, resource_owner_username TEXT NOT NULL,
+  resource_owner_password TEXT NOT NULL, support_state INTEGER NOT NULL,
+  grant_types_json TEXT NOT NULL, document_json TEXT NOT NULL, etag TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS openid_connect_providers (
+  id TEXT PRIMARY KEY, service_id TEXT NOT NULL REFERENCES services(id) ON DELETE CASCADE,
+  name TEXT NOT NULL, display_name TEXT NOT NULL, description TEXT NOT NULL,
+  metadata_endpoint TEXT NOT NULL, client_id TEXT NOT NULL, client_secret TEXT NOT NULL,
+  document_json TEXT NOT NULL, etag TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS identity_providers (
+  id TEXT PRIMARY KEY, service_id TEXT NOT NULL REFERENCES services(id) ON DELETE CASCADE,
+  name TEXT NOT NULL, client_id TEXT NOT NULL, client_secret TEXT NOT NULL,
+  authority TEXT NOT NULL, signin_tenant TEXT NOT NULL, signup_policy_name TEXT NOT NULL,
+  signin_policy_name TEXT NOT NULL, profile_editing_policy_name TEXT NOT NULL,
+  password_reset_policy_name TEXT NOT NULL, allowed_tenants_json TEXT NOT NULL,
+  document_json TEXT NOT NULL, etag TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS caches (
+  id TEXT PRIMARY KEY, service_id TEXT NOT NULL REFERENCES services(id) ON DELETE CASCADE,
+  name TEXT NOT NULL, description TEXT NOT NULL, connection_string TEXT NOT NULL,
+  use_from_location TEXT NOT NULL, resource_id TEXT NOT NULL,
+  document_json TEXT NOT NULL, etag TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS loggers (
   id TEXT PRIMARY KEY, service_id TEXT NOT NULL REFERENCES services(id) ON DELETE CASCADE,
   name TEXT NOT NULL, logger_type TEXT NOT NULL, description TEXT NOT NULL,
@@ -1971,6 +2000,342 @@ func (s *Store) GetPolicy(scopeID string) (model.Policy, error) {
 		return model.Policy{}, err
 	}
 	return value, nil
+}
+
+// UpsertAuthorizationServer creates or replaces an OAuth authorization server while preserving its ARM document.
+func (s *Store) UpsertAuthorizationServer(v model.AuthorizationServer) (model.AuthorizationServer, error) {
+	sanitizeAuthorizationServerDocument(v.Document)
+	v.ETag = newETag()
+	if v.GrantTypes == nil {
+		v.GrantTypes = []string{}
+	}
+	grants, _ := json.Marshal(v.GrantTypes)
+	document, err := json.Marshal(v.Document)
+	if err != nil {
+		return v, err
+	}
+	supportState := 0
+	if v.SupportState {
+		supportState = 1
+	}
+	_, err = s.db.Exec(`INSERT INTO authorization_servers
+      (id, service_id, name, display_name, description, authorization_endpoint, client_registration_endpoint,
+       client_id, client_secret, token_endpoint, default_scope, resource_owner_username, resource_owner_password,
+       support_state, grant_types_json, document_json, etag)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET display_name=excluded.display_name, description=excluded.description,
+        authorization_endpoint=excluded.authorization_endpoint, client_registration_endpoint=excluded.client_registration_endpoint,
+        client_id=excluded.client_id, client_secret=excluded.client_secret, token_endpoint=excluded.token_endpoint,
+        default_scope=excluded.default_scope, resource_owner_username=excluded.resource_owner_username,
+        resource_owner_password=excluded.resource_owner_password, support_state=excluded.support_state,
+        grant_types_json=excluded.grant_types_json, document_json=excluded.document_json, etag=excluded.etag`,
+		v.ID(), v.ServiceID, v.Name, v.DisplayName, v.Description, v.AuthorizationEndpoint, v.ClientRegistrationEndpoint,
+		v.ClientID, v.ClientSecret, v.TokenEndpoint, v.DefaultScope, v.ResourceOwnerUsername, v.ResourceOwnerPassword,
+		supportState, grants, document, v.ETag)
+	return v, err
+}
+
+func sanitizeAuthorizationServerDocument(document map[string]any) {
+	if document == nil {
+		return
+	}
+	delete(document, "clientSecret")
+	properties, _ := document["properties"].(map[string]any)
+	delete(properties, "clientSecret")
+}
+
+// GetAuthorizationServer finds one authorization server by ARM ID.
+func (s *Store) GetAuthorizationServer(id string) (model.AuthorizationServer, error) {
+	values, err := scanAuthorizationServers(s.db.Query(`SELECT service_id, name, display_name, description,
+      authorization_endpoint, client_registration_endpoint, client_id, client_secret, token_endpoint,
+      default_scope, resource_owner_username, resource_owner_password, support_state, grant_types_json, document_json, etag
+      FROM authorization_servers WHERE lower(id)=lower(?)`, id))
+	if err != nil {
+		return model.AuthorizationServer{}, err
+	}
+	if len(values) == 0 {
+		return model.AuthorizationServer{}, ErrNotFound
+	}
+	return values[0], nil
+}
+
+// ListAuthorizationServers returns service authorization servers in stable ID order.
+func (s *Store) ListAuthorizationServers(serviceID string) ([]model.AuthorizationServer, error) {
+	return scanAuthorizationServers(s.db.Query(`SELECT service_id, name, display_name, description,
+      authorization_endpoint, client_registration_endpoint, client_id, client_secret, token_endpoint,
+      default_scope, resource_owner_username, resource_owner_password, support_state, grant_types_json, document_json, etag
+      FROM authorization_servers WHERE lower(service_id)=lower(?) ORDER BY id`, serviceID))
+}
+
+func scanAuthorizationServers(rows *sql.Rows, err error) ([]model.AuthorizationServer, error) {
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	values := make([]model.AuthorizationServer, 0)
+	for rows.Next() {
+		var v model.AuthorizationServer
+		var supportState int
+		var grants, document string
+		if err := rows.Scan(&v.ServiceID, &v.Name, &v.DisplayName, &v.Description, &v.AuthorizationEndpoint,
+			&v.ClientRegistrationEndpoint, &v.ClientID, &v.ClientSecret, &v.TokenEndpoint, &v.DefaultScope,
+			&v.ResourceOwnerUsername, &v.ResourceOwnerPassword, &supportState, &grants, &document, &v.ETag); err != nil {
+			return nil, err
+		}
+		v.SupportState = supportState == 1
+		if err := json.Unmarshal([]byte(grants), &v.GrantTypes); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal([]byte(document), &v.Document); err != nil {
+			return nil, err
+		}
+		values = append(values, v)
+	}
+	return values, rows.Err()
+}
+
+// DeleteAuthorizationServer removes one authorization server.
+func (s *Store) DeleteAuthorizationServer(id string) error {
+	return deleteScopedResource(s.db, "authorization_servers", id)
+}
+
+// UpsertOpenIDConnectProvider creates or replaces an OpenID Connect provider while preserving its ARM document.
+func (s *Store) UpsertOpenIDConnectProvider(v model.OpenIDConnectProvider) (model.OpenIDConnectProvider, error) {
+	sanitizeOpenIDConnectProviderDocument(v.Document)
+	v.ETag = newETag()
+	document, err := json.Marshal(v.Document)
+	if err != nil {
+		return v, err
+	}
+	_, err = s.db.Exec(`INSERT INTO openid_connect_providers
+      (id, service_id, name, display_name, description, metadata_endpoint, client_id, client_secret, document_json, etag)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET display_name=excluded.display_name, description=excluded.description,
+        metadata_endpoint=excluded.metadata_endpoint, client_id=excluded.client_id,
+        client_secret=excluded.client_secret, document_json=excluded.document_json, etag=excluded.etag`,
+		v.ID(), v.ServiceID, v.Name, v.DisplayName, v.Description, v.MetadataEndpoint, v.ClientID, v.ClientSecret, document, v.ETag)
+	return v, err
+}
+
+func sanitizeOpenIDConnectProviderDocument(document map[string]any) {
+	if document == nil {
+		return
+	}
+	delete(document, "clientSecret")
+	properties, _ := document["properties"].(map[string]any)
+	delete(properties, "clientSecret")
+}
+
+// GetOpenIDConnectProvider finds one OpenID Connect provider by ARM ID.
+func (s *Store) GetOpenIDConnectProvider(id string) (model.OpenIDConnectProvider, error) {
+	values, err := scanOpenIDConnectProviders(s.db.Query(`SELECT service_id, name, display_name, description,
+      metadata_endpoint, client_id, client_secret, document_json, etag
+      FROM openid_connect_providers WHERE lower(id)=lower(?)`, id))
+	if err != nil {
+		return model.OpenIDConnectProvider{}, err
+	}
+	if len(values) == 0 {
+		return model.OpenIDConnectProvider{}, ErrNotFound
+	}
+	return values[0], nil
+}
+
+// ListOpenIDConnectProviders returns service OpenID Connect providers in stable ID order.
+func (s *Store) ListOpenIDConnectProviders(serviceID string) ([]model.OpenIDConnectProvider, error) {
+	return scanOpenIDConnectProviders(s.db.Query(`SELECT service_id, name, display_name, description,
+      metadata_endpoint, client_id, client_secret, document_json, etag
+      FROM openid_connect_providers WHERE lower(service_id)=lower(?) ORDER BY id`, serviceID))
+}
+
+func scanOpenIDConnectProviders(rows *sql.Rows, err error) ([]model.OpenIDConnectProvider, error) {
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	values := make([]model.OpenIDConnectProvider, 0)
+	for rows.Next() {
+		var v model.OpenIDConnectProvider
+		var document string
+		if err := rows.Scan(&v.ServiceID, &v.Name, &v.DisplayName, &v.Description, &v.MetadataEndpoint,
+			&v.ClientID, &v.ClientSecret, &document, &v.ETag); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal([]byte(document), &v.Document); err != nil {
+			return nil, err
+		}
+		values = append(values, v)
+	}
+	return values, rows.Err()
+}
+
+// DeleteOpenIDConnectProvider removes one OpenID Connect provider.
+func (s *Store) DeleteOpenIDConnectProvider(id string) error {
+	return deleteScopedResource(s.db, "openid_connect_providers", id)
+}
+
+// UpsertIdentityProvider creates or replaces an identity provider while preserving its ARM document.
+func (s *Store) UpsertIdentityProvider(v model.IdentityProvider) (model.IdentityProvider, error) {
+	sanitizeIdentityProviderDocument(v.Document)
+	v.ETag = newETag()
+	if v.AllowedTenants == nil {
+		v.AllowedTenants = []string{}
+	}
+	tenants, _ := json.Marshal(v.AllowedTenants)
+	document, err := json.Marshal(v.Document)
+	if err != nil {
+		return v, err
+	}
+	_, err = s.db.Exec(`INSERT INTO identity_providers
+      (id, service_id, name, client_id, client_secret, authority, signin_tenant, signup_policy_name,
+       signin_policy_name, profile_editing_policy_name, password_reset_policy_name, allowed_tenants_json,
+       document_json, etag)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET client_id=excluded.client_id, client_secret=excluded.client_secret,
+        authority=excluded.authority, signin_tenant=excluded.signin_tenant,
+        signup_policy_name=excluded.signup_policy_name, signin_policy_name=excluded.signin_policy_name,
+        profile_editing_policy_name=excluded.profile_editing_policy_name,
+        password_reset_policy_name=excluded.password_reset_policy_name,
+        allowed_tenants_json=excluded.allowed_tenants_json, document_json=excluded.document_json, etag=excluded.etag`,
+		v.ID(), v.ServiceID, v.Name, v.ClientID, v.ClientSecret, v.Authority, v.SigninTenant,
+		v.SignupPolicyName, v.SigninPolicyName, v.ProfileEditingPolicyName, v.PasswordResetPolicyName,
+		tenants, document, v.ETag)
+	return v, err
+}
+
+func sanitizeIdentityProviderDocument(document map[string]any) {
+	if document == nil {
+		return
+	}
+	delete(document, "clientSecret")
+	properties, _ := document["properties"].(map[string]any)
+	delete(properties, "clientSecret")
+}
+
+// GetIdentityProvider finds one identity provider by ARM ID.
+func (s *Store) GetIdentityProvider(id string) (model.IdentityProvider, error) {
+	values, err := scanIdentityProviders(s.db.Query(`SELECT service_id, name, client_id, client_secret, authority,
+      signin_tenant, signup_policy_name, signin_policy_name, profile_editing_policy_name,
+      password_reset_policy_name, allowed_tenants_json, document_json, etag
+      FROM identity_providers WHERE lower(id)=lower(?)`, id))
+	if err != nil {
+		return model.IdentityProvider{}, err
+	}
+	if len(values) == 0 {
+		return model.IdentityProvider{}, ErrNotFound
+	}
+	return values[0], nil
+}
+
+// ListIdentityProviders returns service identity providers in stable ID order.
+func (s *Store) ListIdentityProviders(serviceID string) ([]model.IdentityProvider, error) {
+	return scanIdentityProviders(s.db.Query(`SELECT service_id, name, client_id, client_secret, authority,
+      signin_tenant, signup_policy_name, signin_policy_name, profile_editing_policy_name,
+      password_reset_policy_name, allowed_tenants_json, document_json, etag
+      FROM identity_providers WHERE lower(service_id)=lower(?) ORDER BY id`, serviceID))
+}
+
+func scanIdentityProviders(rows *sql.Rows, err error) ([]model.IdentityProvider, error) {
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	values := make([]model.IdentityProvider, 0)
+	for rows.Next() {
+		var v model.IdentityProvider
+		var tenants, document string
+		if err := rows.Scan(&v.ServiceID, &v.Name, &v.ClientID, &v.ClientSecret, &v.Authority,
+			&v.SigninTenant, &v.SignupPolicyName, &v.SigninPolicyName, &v.ProfileEditingPolicyName,
+			&v.PasswordResetPolicyName, &tenants, &document, &v.ETag); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal([]byte(tenants), &v.AllowedTenants); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal([]byte(document), &v.Document); err != nil {
+			return nil, err
+		}
+		values = append(values, v)
+	}
+	return values, rows.Err()
+}
+
+// DeleteIdentityProvider removes one identity provider.
+func (s *Store) DeleteIdentityProvider(id string) error {
+	return deleteScopedResource(s.db, "identity_providers", id)
+}
+
+// UpsertCache creates or replaces an external cache while preserving its ARM document.
+func (s *Store) UpsertCache(v model.Cache) (model.Cache, error) {
+	sanitizeCacheDocument(v.Document)
+	v.ETag = newETag()
+	document, err := json.Marshal(v.Document)
+	if err != nil {
+		return v, err
+	}
+	_, err = s.db.Exec(`INSERT INTO caches
+      (id, service_id, name, description, connection_string, use_from_location, resource_id, document_json, etag)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET description=excluded.description,
+        connection_string=excluded.connection_string, use_from_location=excluded.use_from_location,
+        resource_id=excluded.resource_id, document_json=excluded.document_json, etag=excluded.etag`,
+		v.ID(), v.ServiceID, v.Name, v.Description, v.ConnectionString, v.UseFromLocation,
+		v.ResourceID, document, v.ETag)
+	return v, err
+}
+
+func sanitizeCacheDocument(document map[string]any) {
+	if document == nil {
+		return
+	}
+	delete(document, "connectionString")
+	properties, _ := document["properties"].(map[string]any)
+	delete(properties, "connectionString")
+}
+
+// GetCache finds one cache by ARM ID.
+func (s *Store) GetCache(id string) (model.Cache, error) {
+	values, err := scanCaches(s.db.Query(`SELECT service_id, name, description, connection_string,
+      use_from_location, resource_id, document_json, etag FROM caches WHERE lower(id)=lower(?)`, id))
+	if err != nil {
+		return model.Cache{}, err
+	}
+	if len(values) == 0 {
+		return model.Cache{}, ErrNotFound
+	}
+	return values[0], nil
+}
+
+// ListCaches returns service caches in stable ID order.
+func (s *Store) ListCaches(serviceID string) ([]model.Cache, error) {
+	return scanCaches(s.db.Query(`SELECT service_id, name, description, connection_string,
+      use_from_location, resource_id, document_json, etag FROM caches
+      WHERE lower(service_id)=lower(?) ORDER BY id`, serviceID))
+}
+
+func scanCaches(rows *sql.Rows, err error) ([]model.Cache, error) {
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	values := make([]model.Cache, 0)
+	for rows.Next() {
+		var v model.Cache
+		var document string
+		if err := rows.Scan(&v.ServiceID, &v.Name, &v.Description, &v.ConnectionString,
+			&v.UseFromLocation, &v.ResourceID, &document, &v.ETag); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal([]byte(document), &v.Document); err != nil {
+			return nil, err
+		}
+		values = append(values, v)
+	}
+	return values, rows.Err()
+}
+
+// DeleteCache removes one cache.
+func (s *Store) DeleteCache(id string) error {
+	return deleteScopedResource(s.db, "caches", id)
 }
 
 // UpsertLogger creates or replaces a service logger while preserving its ARM document.

@@ -161,6 +161,54 @@ replacement preserves extension and non-secret Key Vault reference metadata,
 and refresh responses use the same redacted projection. Official Go SDK evidence
 covers PFX create/get/list and Key Vault create/refresh/get workflows.
 
+Caches retain canonical documents while the Redis connection string remains in
+a secret column. Handler and store boundaries strip `connectionString` from the
+canonical document, and ordinary create, GET, and list responses replace raw
+values with deterministic `{{Cache-ConnectionString-...}}` references; existing
+named-value references remain unchanged. `useFromLocation` normalizes `default`
+case-insensitively. Collection `$filter` accepts the stable `name`,
+`description`, and `region` fields, with `region` projected from
+`useFromLocation`. The official Go SDK witness verifies create, redacted GET,
+list, PATCH, and delete. Live Redis connectivity remains assigned to later
+gateway work.
+
+Identity providers retain canonical documents while the client secret remains
+in a secret column. Path names are the stable type enum (`facebook`, `google`,
+`microsoft`, `twitter`, `aad`, `aadB2C`) and are stored in that canonical form
+after case-insensitive lookup. Handler and store boundaries strip
+`clientSecret`; ordinary GET and list omit it entirely, and `POST listSecrets`
+is the only management projection that returns the raw value. PUT requires
+`clientId` and `clientSecret`; PATCH may update those fields and null-clears
+authority, tenant, B2C policy names, and `allowedTenants`. `clientLibrary` is
+persisted only in the lossless document. The official Go SDK witness verifies
+create, redacted GET, list, `listSecrets`, PATCH, and delete. Developer-portal
+sign-in remains assigned to later portal work.
+
+OpenID Connect providers retain canonical documents while the client secret
+remains in a secret column. Handler and store boundaries strip `clientSecret`;
+ordinary GET and list omit it entirely, and `POST listSecrets` is the only
+management projection that returns the raw value. PUT requires `displayName`,
+`metadataEndpoint`, and `clientId`; `clientSecret` is optional. PATCH may
+update those fields and null-clears `description`. Collection `$filter`
+accepts the stable `name` and `displayName` fields. Updates preserve the
+stored resource name so a differently cased path does not fork the row. The
+official Go SDK witness verifies create, redacted GET, list, `listSecrets`,
+PATCH, and delete. Policy and developer-portal OIDC runtime use remain
+assigned to later work.
+
+OAuth authorization servers retain canonical documents while the client secret
+remains in a secret column. Handler and store boundaries strip `clientSecret`;
+ordinary GET and list omit it, and `POST listSecrets` returns the client secret
+together with resource-owner username and password. PUT requires `displayName`,
+`authorizationEndpoint`, `clientRegistrationEndpoint`, `clientId`, and at least
+one of the stable grant types; `authorizationMethods`, when present, must
+include `GET`. PATCH may update those fields and null-clears description, token
+endpoint, default scope, resource-owner credentials, and `supportState`.
+Collection `$filter` accepts `name` and `displayName`. Updates preserve the
+stored resource name so a differently cased path does not fork the row. The
+official Go SDK witness verifies create, redacted GET, list, `listSecrets`,
+PATCH, and delete. OAuth policy runtime use remains assigned to later work.
+
 Loggers retain canonical documents while operational credentials remain in a
 separate indexed field. Handler and store boundaries strip duplicate credential
 fields from the canonical document, and ordinary create, GET, and list responses

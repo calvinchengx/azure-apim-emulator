@@ -120,6 +120,80 @@ type Backend struct {
 // ID returns the backend ARM resource ID.
 func (v Backend) ID() string { return v.ServiceID + "/backends/" + v.Name }
 
+// Cache is an external Redis-compatible cache associated with a service.
+type Cache struct {
+	ServiceID        string
+	Name             string
+	Description      string
+	ConnectionString string
+	UseFromLocation  string
+	ResourceID       string
+	ETag             string
+	Document         map[string]any
+}
+
+// ID returns the cache ARM resource ID.
+func (v Cache) ID() string { return v.ServiceID + "/caches/" + v.Name }
+
+// IdentityProvider is a developer-portal identity provider configuration.
+type IdentityProvider struct {
+	ServiceID                string
+	Name                     string
+	ClientID                 string
+	ClientSecret             string
+	Authority                string
+	SigninTenant             string
+	SignupPolicyName         string
+	SigninPolicyName         string
+	ProfileEditingPolicyName string
+	PasswordResetPolicyName  string
+	AllowedTenants           []string
+	ETag                     string
+	Document                 map[string]any
+}
+
+// ID returns the identity provider ARM resource ID.
+func (v IdentityProvider) ID() string { return v.ServiceID + "/identityProviders/" + v.Name }
+
+// OpenIDConnectProvider is an OpenID Connect provider configuration.
+type OpenIDConnectProvider struct {
+	ServiceID        string
+	Name             string
+	DisplayName      string
+	Description      string
+	MetadataEndpoint string
+	ClientID         string
+	ClientSecret     string
+	ETag             string
+	Document         map[string]any
+}
+
+// ID returns the OpenID Connect provider ARM resource ID.
+func (v OpenIDConnectProvider) ID() string { return v.ServiceID + "/openidConnectProviders/" + v.Name }
+
+// AuthorizationServer is an external OAuth authorization server configuration.
+type AuthorizationServer struct {
+	ServiceID                  string
+	Name                       string
+	DisplayName                string
+	Description                string
+	AuthorizationEndpoint      string
+	ClientRegistrationEndpoint string
+	ClientID                   string
+	ClientSecret               string
+	TokenEndpoint              string
+	DefaultScope               string
+	ResourceOwnerUsername      string
+	ResourceOwnerPassword      string
+	SupportState               bool
+	GrantTypes                 []string
+	ETag                       string
+	Document                   map[string]any
+}
+
+// ID returns the authorization server ARM resource ID.
+func (v AuthorizationServer) ID() string { return v.ServiceID + "/authorizationServers/" + v.Name }
+
 // Certificate is backend client-certificate material or a Key Vault reference.
 type Certificate struct {
 	ServiceID          string

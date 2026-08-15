@@ -484,10 +484,26 @@ func TestClosedStoreErrors(t *testing.T) {
 			_, err := st.ListPolicyFragmentReferences("service", "fragment")
 			return err
 		},
-		"upsert logger": func() error { _, err := st.UpsertLogger(model.Logger{}); return err },
-		"get logger":    func() error { _, err := st.GetLogger("logger"); return err },
-		"list loggers":  func() error { _, err := st.ListLoggers("service"); return err },
-		"delete logger": func() error { return st.DeleteLogger("logger") },
+		"upsert identity provider":       func() error { _, err := st.UpsertIdentityProvider(model.IdentityProvider{}); return err },
+		"get identity provider":          func() error { _, err := st.GetIdentityProvider("idp"); return err },
+		"list identity providers":        func() error { _, err := st.ListIdentityProviders("service"); return err },
+		"delete identity provider":       func() error { return st.DeleteIdentityProvider("idp") },
+		"upsert openid connect provider": func() error { _, err := st.UpsertOpenIDConnectProvider(model.OpenIDConnectProvider{}); return err },
+		"get openid connect provider":    func() error { _, err := st.GetOpenIDConnectProvider("oidc"); return err },
+		"list openid connect providers":  func() error { _, err := st.ListOpenIDConnectProviders("service"); return err },
+		"delete openid connect provider": func() error { return st.DeleteOpenIDConnectProvider("oidc") },
+		"upsert authorization server":    func() error { _, err := st.UpsertAuthorizationServer(model.AuthorizationServer{}); return err },
+		"get authorization server":       func() error { _, err := st.GetAuthorizationServer("auth"); return err },
+		"list authorization servers":     func() error { _, err := st.ListAuthorizationServers("service"); return err },
+		"delete authorization server":    func() error { return st.DeleteAuthorizationServer("auth") },
+		"upsert cache":                   func() error { _, err := st.UpsertCache(model.Cache{}); return err },
+		"get cache":                      func() error { _, err := st.GetCache("cache"); return err },
+		"list caches":                    func() error { _, err := st.ListCaches("service"); return err },
+		"delete cache":                   func() error { return st.DeleteCache("cache") },
+		"upsert logger":                  func() error { _, err := st.UpsertLogger(model.Logger{}); return err },
+		"get logger":                     func() error { _, err := st.GetLogger("logger"); return err },
+		"list loggers":                   func() error { _, err := st.ListLoggers("service"); return err },
+		"delete logger":                  func() error { return st.DeleteLogger("logger") },
 		"upsert diagnostic": func() error {
 			_, err := st.UpsertDiagnostic(model.Diagnostic{})
 			return err
@@ -673,6 +689,30 @@ func TestScanFunctionsRejectMalformedRows(t *testing.T) {
 				_, err := (&Store{db: db}).ListPolicyFragmentReferences("service", "fragment")
 				return err
 			},
+		},
+		{
+			"identity providers",
+			`CREATE TABLE identity_providers (id, service_id, name, client_id, client_secret, authority, signin_tenant, signup_policy_name, signin_policy_name, profile_editing_policy_name, password_reset_policy_name, allowed_tenants_json, document_json, etag)`,
+			`INSERT INTO identity_providers VALUES ('id', 'service', NULL, '', '', '', '', '', '', '', '', '[]', '{}', '')`,
+			func(db *sql.DB) error { _, err := (&Store{db: db}).ListIdentityProviders("service"); return err },
+		},
+		{
+			"openid connect providers",
+			`CREATE TABLE openid_connect_providers (id, service_id, name, display_name, description, metadata_endpoint, client_id, client_secret, document_json, etag)`,
+			`INSERT INTO openid_connect_providers VALUES ('id', 'service', NULL, '', '', '', '', '', '{}', '')`,
+			func(db *sql.DB) error { _, err := (&Store{db: db}).ListOpenIDConnectProviders("service"); return err },
+		},
+		{
+			"authorization servers",
+			`CREATE TABLE authorization_servers (id, service_id, name, display_name, description, authorization_endpoint, client_registration_endpoint, client_id, client_secret, token_endpoint, default_scope, resource_owner_username, resource_owner_password, support_state, grant_types_json, document_json, etag)`,
+			`INSERT INTO authorization_servers VALUES ('id', 'service', NULL, '', '', '', '', '', '', '', '', '', '', 0, '[]', '{}', '')`,
+			func(db *sql.DB) error { _, err := (&Store{db: db}).ListAuthorizationServers("service"); return err },
+		},
+		{
+			"caches",
+			`CREATE TABLE caches (id, service_id, name, description, connection_string, use_from_location, resource_id, document_json, etag)`,
+			`INSERT INTO caches VALUES ('id', 'service', NULL, '', '', '', '', '{}', '')`,
+			func(db *sql.DB) error { _, err := (&Store{db: db}).ListCaches("service"); return err },
 		},
 		{
 			"loggers",
@@ -1909,6 +1949,250 @@ func TestCertificateLifecycle(t *testing.T) {
 	}
 	if err := st.DeleteCertificate(certificate.ID()); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("second delete = %v", err)
+	}
+}
+
+func TestAuthorizationServerLifecycle(t *testing.T) {
+	st, err := Open("", clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	service, err := st.UpsertService(model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "oauth"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server, err := st.UpsertAuthorizationServer(model.AuthorizationServer{
+		ServiceID: service.ID(), Name: "auth", DisplayName: "Auth", AuthorizationEndpoint: "https://auth.example/authorize",
+		ClientRegistrationEndpoint: "https://auth.example/apps", ClientID: "app", ClientSecret: "secret",
+		ResourceOwnerUsername: "user", ResourceOwnerPassword: "pwd", SupportState: true,
+		Document: map[string]any{"clientSecret": "root-secret", "custom": true, "properties": map[string]any{"clientSecret": "nested-secret", "kept": true}},
+	})
+	if err != nil || server.ID() != service.ID()+"/authorizationServers/auth" || server.ETag == "" || server.Document["clientSecret"] != nil || server.Document["custom"] != true || server.GrantTypes == nil || !server.SupportState {
+		t.Fatalf("upsert authorization server = %+v, %v", server, err)
+	}
+	got, err := st.GetAuthorizationServer(strings.ToUpper(server.ID()))
+	if err != nil || got.ClientSecret != "secret" || got.ResourceOwnerPassword != "pwd" || got.Document["clientSecret"] != nil || got.Document["properties"].(map[string]any)["clientSecret"] != nil || got.Document["properties"].(map[string]any)["kept"] != true {
+		t.Fatalf("get authorization server = %+v, %v", got, err)
+	}
+	values, err := st.ListAuthorizationServers(strings.ToUpper(service.ID()))
+	if err != nil || len(values) != 1 {
+		t.Fatalf("list authorization servers = %+v, %v", values, err)
+	}
+	if _, err := st.GetAuthorizationServer("missing"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing authorization server = %v", err)
+	}
+	if err := st.DeleteAuthorizationServer(server.ID()); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.DeleteAuthorizationServer(server.ID()); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("second authorization server delete = %v", err)
+	}
+}
+
+func TestAuthorizationServerJSONFailures(t *testing.T) {
+	st, err := Open("", clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	bad := make(chan int)
+	if _, err := st.UpsertAuthorizationServer(model.AuthorizationServer{Document: map[string]any{"bad": bad}}); err == nil {
+		t.Fatal("authorization server document marshal succeeded")
+	}
+	if _, err := st.db.Exec(`PRAGMA foreign_keys = OFF`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.db.Exec(`INSERT INTO authorization_servers VALUES ('auth', 'service', 'auth', '', '', '', '', '', '', '', '', '', '', 0, '{', '{}', '')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.ListAuthorizationServers("service"); err == nil {
+		t.Fatal("malformed authorization server grant types accepted")
+	}
+	if _, err := st.db.Exec(`UPDATE authorization_servers SET grant_types_json='[]', document_json='{'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.ListAuthorizationServers("service"); err == nil {
+		t.Fatal("malformed authorization server document accepted")
+	}
+}
+
+func TestOpenIDConnectProviderLifecycle(t *testing.T) {
+	st, err := Open("", clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	service, err := st.UpsertService(model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "oidcs"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider, err := st.UpsertOpenIDConnectProvider(model.OpenIDConnectProvider{
+		ServiceID: service.ID(), Name: "template", DisplayName: "Template", MetadataEndpoint: "https://issuer.example/.well-known/openid-configuration",
+		ClientID: "app", ClientSecret: "secret",
+		Document: map[string]any{"clientSecret": "root-secret", "custom": true, "properties": map[string]any{"clientSecret": "nested-secret", "kept": true}},
+	})
+	if err != nil || provider.ID() != service.ID()+"/openidConnectProviders/template" || provider.ETag == "" || provider.Document["clientSecret"] != nil || provider.Document["custom"] != true {
+		t.Fatalf("upsert openid connect provider = %+v, %v", provider, err)
+	}
+	got, err := st.GetOpenIDConnectProvider(strings.ToUpper(provider.ID()))
+	if err != nil || got.ClientSecret != "secret" || got.Document["clientSecret"] != nil || got.Document["properties"].(map[string]any)["clientSecret"] != nil || got.Document["properties"].(map[string]any)["kept"] != true {
+		t.Fatalf("get openid connect provider = %+v, %v", got, err)
+	}
+	values, err := st.ListOpenIDConnectProviders(strings.ToUpper(service.ID()))
+	if err != nil || len(values) != 1 {
+		t.Fatalf("list openid connect providers = %+v, %v", values, err)
+	}
+	if _, err := st.GetOpenIDConnectProvider("missing"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing openid connect provider = %v", err)
+	}
+	if err := st.DeleteOpenIDConnectProvider(provider.ID()); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.DeleteOpenIDConnectProvider(provider.ID()); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("second openid connect provider delete = %v", err)
+	}
+}
+
+func TestOpenIDConnectProviderJSONFailures(t *testing.T) {
+	st, err := Open("", clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	bad := make(chan int)
+	if _, err := st.UpsertOpenIDConnectProvider(model.OpenIDConnectProvider{Document: map[string]any{"bad": bad}}); err == nil {
+		t.Fatal("openid connect provider document marshal succeeded")
+	}
+	if _, err := st.db.Exec(`PRAGMA foreign_keys = OFF`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.db.Exec(`INSERT INTO openid_connect_providers VALUES ('oidc', 'service', 'template', '', '', '', '', '', '{', '')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.ListOpenIDConnectProviders("service"); err == nil {
+		t.Fatal("malformed openid connect provider document accepted")
+	}
+}
+
+func TestIdentityProviderLifecycle(t *testing.T) {
+	st, err := Open("", clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	service, err := st.UpsertService(model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "idps"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider, err := st.UpsertIdentityProvider(model.IdentityProvider{
+		ServiceID: service.ID(), Name: "facebook", ClientID: "app", ClientSecret: "secret",
+		Document: map[string]any{"clientSecret": "root-secret", "custom": true, "properties": map[string]any{"clientSecret": "nested-secret", "kept": true}},
+	})
+	if err != nil || provider.ID() != service.ID()+"/identityProviders/facebook" || provider.ETag == "" || provider.Document["clientSecret"] != nil || provider.Document["custom"] != true || provider.AllowedTenants == nil {
+		t.Fatalf("upsert identity provider = %+v, %v", provider, err)
+	}
+	got, err := st.GetIdentityProvider(strings.ToUpper(provider.ID()))
+	if err != nil || got.ClientSecret != "secret" || got.Document["clientSecret"] != nil || got.Document["properties"].(map[string]any)["clientSecret"] != nil || got.Document["properties"].(map[string]any)["kept"] != true {
+		t.Fatalf("get identity provider = %+v, %v", got, err)
+	}
+	values, err := st.ListIdentityProviders(strings.ToUpper(service.ID()))
+	if err != nil || len(values) != 1 {
+		t.Fatalf("list identity providers = %+v, %v", values, err)
+	}
+	if _, err := st.GetIdentityProvider("missing"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing identity provider = %v", err)
+	}
+	if err := st.DeleteIdentityProvider(provider.ID()); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.DeleteIdentityProvider(provider.ID()); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("second identity provider delete = %v", err)
+	}
+}
+
+func TestIdentityProviderJSONFailures(t *testing.T) {
+	st, err := Open("", clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	bad := make(chan int)
+	if _, err := st.UpsertIdentityProvider(model.IdentityProvider{Document: map[string]any{"bad": bad}}); err == nil {
+		t.Fatal("identity provider document marshal succeeded")
+	}
+	if _, err := st.db.Exec(`PRAGMA foreign_keys = OFF`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.db.Exec(`INSERT INTO identity_providers VALUES ('idp', 'service', 'facebook', '', '', '', '', '', '', '', '', '{', '{}', '')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.ListIdentityProviders("service"); err == nil {
+		t.Fatal("malformed identity provider tenants accepted")
+	}
+	if _, err := st.db.Exec(`UPDATE identity_providers SET allowed_tenants_json='[]', document_json='{'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.ListIdentityProviders("service"); err == nil {
+		t.Fatal("malformed identity provider document accepted")
+	}
+}
+
+func TestCacheLifecycle(t *testing.T) {
+	st, err := Open("", clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	service, err := st.UpsertService(model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "caches"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cache, err := st.UpsertCache(model.Cache{
+		ServiceID: service.ID(), Name: "default", Description: "Redis", ConnectionString: "host:6380,password=secret",
+		UseFromLocation: "default", ResourceID: "https://management.azure.com/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Cache/redis/apim",
+		Document: map[string]any{"connectionString": "root-secret", "custom": true, "properties": map[string]any{"connectionString": "nested-secret", "kept": true}},
+	})
+	if err != nil || cache.ID() != service.ID()+"/caches/default" || cache.ETag == "" || cache.Document["connectionString"] != nil || cache.Document["custom"] != true {
+		t.Fatalf("upsert cache = %+v, %v", cache, err)
+	}
+	got, err := st.GetCache(strings.ToUpper(cache.ID()))
+	if err != nil || got.ConnectionString != "host:6380,password=secret" || got.UseFromLocation != "default" || got.Document["connectionString"] != nil || got.Document["properties"].(map[string]any)["connectionString"] != nil || got.Document["properties"].(map[string]any)["kept"] != true {
+		t.Fatalf("get cache = %+v, %v", got, err)
+	}
+	values, err := st.ListCaches(strings.ToUpper(service.ID()))
+	if err != nil || len(values) != 1 {
+		t.Fatalf("list caches = %+v, %v", values, err)
+	}
+	if _, err := st.GetCache("missing"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing cache = %v", err)
+	}
+	if err := st.DeleteCache(cache.ID()); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.DeleteCache(cache.ID()); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("second cache delete = %v", err)
+	}
+}
+
+func TestCacheJSONFailures(t *testing.T) {
+	st, err := Open("", clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	bad := make(chan int)
+	if _, err := st.UpsertCache(model.Cache{Document: map[string]any{"bad": bad}}); err == nil {
+		t.Fatal("cache document marshal succeeded")
+	}
+	if _, err := st.db.Exec(`PRAGMA foreign_keys = OFF`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.db.Exec(`INSERT INTO caches VALUES ('cache', 'service', 'name', '', '', '', '', '{', '')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.ListCaches("service"); err == nil {
+		t.Fatal("malformed cache document accepted")
 	}
 }
 
