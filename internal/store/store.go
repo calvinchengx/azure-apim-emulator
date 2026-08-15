@@ -295,6 +295,12 @@ CREATE TABLE IF NOT EXISTS policies (
 		return fmt.Errorf("migrate: %w", err)
 	}
 	_, _ = s.db.Exec(`ALTER TABLE diagnostic_events ADD COLUMN metadata_json TEXT NOT NULL DEFAULT '{}'`)
+	_, _ = s.db.Exec(`ALTER TABLE named_values ADD COLUMN key_vault_status_code TEXT NOT NULL DEFAULT ''`)
+	_, _ = s.db.Exec(`ALTER TABLE named_values ADD COLUMN key_vault_status_message TEXT NOT NULL DEFAULT ''`)
+	_, _ = s.db.Exec(`ALTER TABLE named_values ADD COLUMN key_vault_status_time INTEGER NOT NULL DEFAULT 0`)
+	_, _ = s.db.Exec(`ALTER TABLE certificates ADD COLUMN key_vault_status_code TEXT NOT NULL DEFAULT ''`)
+	_, _ = s.db.Exec(`ALTER TABLE certificates ADD COLUMN key_vault_status_message TEXT NOT NULL DEFAULT ''`)
+	_, _ = s.db.Exec(`ALTER TABLE certificates ADD COLUMN key_vault_status_time INTEGER NOT NULL DEFAULT 0`)
 	return nil
 }
 
@@ -308,6 +314,20 @@ func NewOpaqueID() string {
 }
 
 func newETag() string { return `"` + NewOpaqueID() + `"` }
+
+func unixTime(value time.Time) int64 {
+	if value.IsZero() {
+		return 0
+	}
+	return value.Unix()
+}
+
+func timeFromUnix(value int64) time.Time {
+	if value == 0 {
+		return time.Time{}
+	}
+	return time.Unix(value, 0).UTC()
+}
 
 // UpsertService creates or replaces a service.
 func (s *Store) UpsertService(v model.Service) (model.Service, error) {
@@ -915,13 +935,16 @@ func (s *Store) UpsertNamedValue(v model.NamedValue) (model.NamedValue, error) {
 	}
 	defer tx.Rollback()
 	_, err = tx.Exec(`INSERT INTO named_values
-        (id, service_id, name, display_name, value, tags_json, secret, key_vault_secret_id, key_vault_identity_id, etag)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET
+        (id, service_id, name, display_name, value, tags_json, secret, key_vault_secret_id, key_vault_identity_id,
+         key_vault_status_code, key_vault_status_message, key_vault_status_time, etag)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET
           display_name=excluded.display_name, value=excluded.value, tags_json=excluded.tags_json,
           secret=excluded.secret, key_vault_secret_id=excluded.key_vault_secret_id,
-          key_vault_identity_id=excluded.key_vault_identity_id, etag=excluded.etag`,
+          key_vault_identity_id=excluded.key_vault_identity_id, key_vault_status_code=excluded.key_vault_status_code,
+          key_vault_status_message=excluded.key_vault_status_message, key_vault_status_time=excluded.key_vault_status_time,
+          etag=excluded.etag`,
 		v.ID(), v.ServiceID, v.Name, v.DisplayName, v.Value, string(tags), v.Secret,
-		v.KeyVaultSecretID, v.KeyVaultIdentityID, v.ETag)
+		v.KeyVaultSecretID, v.KeyVaultIdentityID, v.KeyVaultStatusCode, v.KeyVaultStatusMessage, unixTime(v.KeyVaultStatusTime), v.ETag)
 	if err != nil {
 		return v, err
 	}
@@ -942,16 +965,18 @@ func sanitizeNamedValueDocument(document map[string]any) {
 func (s *Store) GetNamedValue(id string) (model.NamedValue, error) {
 	var v model.NamedValue
 	var tags, document string
+	var statusTime int64
 	err := s.db.QueryRow(`SELECT service_id, name, display_name, value, tags_json, secret,
-		key_vault_secret_id, key_vault_identity_id, etag,
+		key_vault_secret_id, key_vault_identity_id, key_vault_status_code, key_vault_status_message, key_vault_status_time, etag,
 		COALESCE((SELECT document_json FROM named_value_documents WHERE lower(named_value_id)=lower(named_values.id)), '{}')
 		FROM named_values WHERE lower(id)=lower(?)`, id).
 		Scan(&v.ServiceID, &v.Name, &v.DisplayName, &v.Value, &tags, &v.Secret,
-			&v.KeyVaultSecretID, &v.KeyVaultIdentityID, &v.ETag, &document)
+			&v.KeyVaultSecretID, &v.KeyVaultIdentityID, &v.KeyVaultStatusCode, &v.KeyVaultStatusMessage, &statusTime, &v.ETag, &document)
 	if errors.Is(err, sql.ErrNoRows) {
 		return model.NamedValue{}, ErrNotFound
 	}
 	if err == nil {
+		v.KeyVaultStatusTime = timeFromUnix(statusTime)
 		_ = json.Unmarshal([]byte(tags), &v.Tags)
 		_ = json.Unmarshal([]byte(document), &v.Document)
 	}
@@ -961,7 +986,7 @@ func (s *Store) GetNamedValue(id string) (model.NamedValue, error) {
 // ListNamedValues returns named values for a service in stable ID order.
 func (s *Store) ListNamedValues(serviceID string) ([]model.NamedValue, error) {
 	rows, err := s.db.Query(`SELECT service_id, name, display_name, value, tags_json, secret,
-		key_vault_secret_id, key_vault_identity_id, etag,
+		key_vault_secret_id, key_vault_identity_id, key_vault_status_code, key_vault_status_message, key_vault_status_time, etag,
 		COALESCE((SELECT document_json FROM named_value_documents WHERE lower(named_value_id)=lower(named_values.id)), '{}')
 		FROM named_values
         WHERE lower(service_id)=lower(?) ORDER BY id`, serviceID)
@@ -973,10 +998,12 @@ func (s *Store) ListNamedValues(serviceID string) ([]model.NamedValue, error) {
 	for rows.Next() {
 		var v model.NamedValue
 		var tags, document string
+		var statusTime int64
 		if err := rows.Scan(&v.ServiceID, &v.Name, &v.DisplayName, &v.Value, &tags, &v.Secret,
-			&v.KeyVaultSecretID, &v.KeyVaultIdentityID, &v.ETag, &document); err != nil {
+			&v.KeyVaultSecretID, &v.KeyVaultIdentityID, &v.KeyVaultStatusCode, &v.KeyVaultStatusMessage, &statusTime, &v.ETag, &document); err != nil {
 			return nil, err
 		}
+		v.KeyVaultStatusTime = timeFromUnix(statusTime)
 		_ = json.Unmarshal([]byte(tags), &v.Tags)
 		_ = json.Unmarshal([]byte(document), &v.Document)
 		values = append(values, v)
@@ -1617,13 +1644,16 @@ func (s *Store) UpsertCertificate(v model.Certificate) (model.Certificate, error
 	}
 	defer tx.Rollback()
 	_, err = tx.Exec(`INSERT INTO certificates
-        (id, service_id, name, subject, thumbprint, expiration, data, password, key_vault_secret_id, key_vault_identity_id, etag)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET subject=excluded.subject,
+        (id, service_id, name, subject, thumbprint, expiration, data, password, key_vault_secret_id, key_vault_identity_id,
+         key_vault_status_code, key_vault_status_message, key_vault_status_time, etag)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET subject=excluded.subject,
           thumbprint=excluded.thumbprint, expiration=excluded.expiration, data=excluded.data,
           password=excluded.password, key_vault_secret_id=excluded.key_vault_secret_id,
-          key_vault_identity_id=excluded.key_vault_identity_id, etag=excluded.etag`,
+          key_vault_identity_id=excluded.key_vault_identity_id, key_vault_status_code=excluded.key_vault_status_code,
+          key_vault_status_message=excluded.key_vault_status_message, key_vault_status_time=excluded.key_vault_status_time,
+          etag=excluded.etag`,
 		v.ID(), v.ServiceID, v.Name, v.Subject, v.Thumbprint, v.Expiration.Unix(), v.Data, v.Password,
-		v.KeyVaultSecretID, v.KeyVaultIdentityID, v.ETag)
+		v.KeyVaultSecretID, v.KeyVaultIdentityID, v.KeyVaultStatusCode, v.KeyVaultStatusMessage, unixTime(v.KeyVaultStatusTime), v.ETag)
 	if err != nil {
 		return v, err
 	}
@@ -1650,12 +1680,13 @@ func (s *Store) GetCertificate(id string) (model.Certificate, error) {
 	var v model.Certificate
 	var expiration int64
 	var document string
+	var statusTime int64
 	err := s.db.QueryRow(`SELECT service_id, name, subject, thumbprint, expiration, data, password,
-		key_vault_secret_id, key_vault_identity_id, etag,
+		key_vault_secret_id, key_vault_identity_id, key_vault_status_code, key_vault_status_message, key_vault_status_time, etag,
 		COALESCE((SELECT document_json FROM certificate_documents WHERE lower(certificate_id)=lower(certificates.id)), '{}')
 		FROM certificates WHERE lower(id)=lower(?)`, id).
 		Scan(&v.ServiceID, &v.Name, &v.Subject, &v.Thumbprint, &expiration, &v.Data, &v.Password,
-			&v.KeyVaultSecretID, &v.KeyVaultIdentityID, &v.ETag, &document)
+			&v.KeyVaultSecretID, &v.KeyVaultIdentityID, &v.KeyVaultStatusCode, &v.KeyVaultStatusMessage, &statusTime, &v.ETag, &document)
 	if errors.Is(err, sql.ErrNoRows) {
 		return model.Certificate{}, ErrNotFound
 	}
@@ -1663,6 +1694,7 @@ func (s *Store) GetCertificate(id string) (model.Certificate, error) {
 		if expiration != 0 {
 			v.Expiration = time.Unix(expiration, 0).UTC()
 		}
+		v.KeyVaultStatusTime = timeFromUnix(statusTime)
 		_ = json.Unmarshal([]byte(document), &v.Document)
 	}
 	return v, err
@@ -1671,7 +1703,7 @@ func (s *Store) GetCertificate(id string) (model.Certificate, error) {
 // ListCertificates returns certificates for a service in stable ID order.
 func (s *Store) ListCertificates(serviceID string) ([]model.Certificate, error) {
 	rows, err := s.db.Query(`SELECT service_id, name, subject, thumbprint, expiration, data, password,
-		key_vault_secret_id, key_vault_identity_id, etag,
+		key_vault_secret_id, key_vault_identity_id, key_vault_status_code, key_vault_status_message, key_vault_status_time, etag,
 		COALESCE((SELECT document_json FROM certificate_documents WHERE lower(certificate_id)=lower(certificates.id)), '{}')
 		FROM certificates
         WHERE lower(service_id)=lower(?) ORDER BY id`, serviceID)
@@ -1684,13 +1716,15 @@ func (s *Store) ListCertificates(serviceID string) ([]model.Certificate, error) 
 		var v model.Certificate
 		var expiration int64
 		var document string
+		var statusTime int64
 		if err := rows.Scan(&v.ServiceID, &v.Name, &v.Subject, &v.Thumbprint, &expiration, &v.Data,
-			&v.Password, &v.KeyVaultSecretID, &v.KeyVaultIdentityID, &v.ETag, &document); err != nil {
+			&v.Password, &v.KeyVaultSecretID, &v.KeyVaultIdentityID, &v.KeyVaultStatusCode, &v.KeyVaultStatusMessage, &statusTime, &v.ETag, &document); err != nil {
 			return nil, err
 		}
 		if expiration != 0 {
 			v.Expiration = time.Unix(expiration, 0).UTC()
 		}
+		v.KeyVaultStatusTime = timeFromUnix(statusTime)
 		_ = json.Unmarshal([]byte(document), &v.Document)
 		values = append(values, v)
 	}

@@ -141,9 +141,11 @@ Named values retain canonical documents transactionally while their operational
 value remains isolated in its indexed column. Handler, store, and ordinary wire
 projections strip `value`; `listValue` is the explicit disclosure operation.
 PUT replacement and recursive PATCH preserve extension data, tags, secret state,
-and non-secret Key Vault reference metadata with explicit null clearing. The
-official Go SDK witness verifies redacted GET, updated `listValue`, ETags, and
-gateway policy substitution.
+and non-secret Key Vault reference metadata with explicit null clearing. PUT,
+PATCH, and `refreshSecret` resolve `keyVault.secretIdentifier` against a Key
+Vault data-plane endpoint, persist classified `lastStatus`, and keep the last
+known good value when retrieval fails. The official Go SDK witness verifies
+redacted GET, updated `listValue`, ETags, and gateway policy substitution.
 
 Backends retain canonical documents atomically in their primary resource row.
 PUT replacement and recursive PATCH preserve credential, TLS, proxy, circuit
@@ -157,8 +159,10 @@ Certificates retain canonical documents transactionally while inline PFX bytes
 and passwords remain isolated in secret columns. Handler, store, and wire
 boundaries strip `data`/`password`; client-supplied subject, thumbprint, and
 expiration fields are discarded and projected only from parsed PFX state. PUT
-replacement preserves extension and non-secret Key Vault reference metadata,
-and refresh responses use the same redacted projection. Official Go SDK evidence
+replacement preserves extension and non-secret Key Vault reference metadata.
+PUT and `refreshSecret` retrieve the referenced secret, parse PKCS#12 material
+when the payload is a certificate, persist classified `lastStatus`, and keep
+the last known good PFX when retrieval or parse fails. Official Go SDK evidence
 covers PFX create/get/list and Key Vault create/refresh/get workflows.
 
 Caches retain canonical documents while the Redis connection string remains in

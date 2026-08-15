@@ -2,6 +2,7 @@
 package arm
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
@@ -22,6 +23,7 @@ import (
 
 	"github.com/calvinchengx/azure-apim-emulator/internal/auth"
 	certutil "github.com/calvinchengx/azure-apim-emulator/internal/certificate"
+	"github.com/calvinchengx/azure-apim-emulator/internal/keyvault"
 	"github.com/calvinchengx/azure-apim-emulator/internal/model"
 	openapic "github.com/calvinchengx/azure-apim-emulator/internal/openapi"
 	"github.com/calvinchengx/azure-apim-emulator/internal/policy"
@@ -40,6 +42,7 @@ type Handler struct {
 	ValidatePolicy func(string) error
 	ImportClient   *http.Client
 	ExportKey      []byte
+	Secrets        keyvault.Retriever
 	mutationMu     sync.Mutex
 }
 
@@ -1928,6 +1931,9 @@ func (h *Handler) namedValue(w http.ResponseWriter, r *http.Request, rt route) {
 			writeError(w, http.StatusBadRequest, "ValidationError", "displayName must be a valid named-value identifier and either value or keyVault.secretIdentifier is required.", "properties")
 			return
 		}
+		if value.KeyVaultSecretID != "" {
+			h.refreshNamedValueSecret(r.Context(), &value)
+		}
 		got, err := h.Store.UpsertNamedValue(value)
 		if err != nil {
 			h.storeError(w, err, value.ID())
@@ -1975,7 +1981,17 @@ func (h *Handler) namedValueAction(w http.ResponseWriter, r *http.Request, value
 			writeError(w, http.StatusBadRequest, "ValidationError", "refreshSecret requires a Key Vault-backed named value.", value.ID())
 			return
 		}
-		writeResource(w, http.StatusOK, namedValueWire(got), got.ETag)
+		h.refreshNamedValueSecret(r.Context(), &got)
+		updated, err := h.Store.UpsertNamedValue(got)
+		if err != nil {
+			h.storeError(w, err, value.ID())
+			return
+		}
+		if err := h.activate(); err != nil {
+			writeError(w, http.StatusBadRequest, "ConfigurationInvalid", err.Error(), value.ID())
+			return
+		}
+		writeResource(w, http.StatusOK, namedValueWire(updated), updated.ETag)
 	default:
 		writeError(w, http.StatusNotFound, "ResourceNotFound", "The requested named value action was not found.", r.URL.Path)
 	}
@@ -3573,7 +3589,17 @@ func (h *Handler) certificate(w http.ResponseWriter, r *http.Request, rt route) 
 			writeError(w, http.StatusBadRequest, "ValidationError", "refreshSecret requires a Key Vault-backed certificate.", value.ID())
 			return
 		}
-		writeResource(w, http.StatusOK, certificateWire(got), got.ETag)
+		h.refreshCertificateSecret(r.Context(), &got)
+		updated, err := h.Store.UpsertCertificate(got)
+		if err != nil {
+			h.storeError(w, err, value.ID())
+			return
+		}
+		if err := h.activate(); err != nil {
+			writeError(w, http.StatusBadRequest, "ConfigurationInvalid", err.Error(), value.ID())
+			return
+		}
+		writeResource(w, http.StatusOK, certificateWire(updated), updated.ETag)
 		return
 	}
 	switch r.Method {
@@ -3627,6 +3653,8 @@ func (h *Handler) certificate(w http.ResponseWriter, r *http.Request, rt route) 
 				return
 			}
 			value.Subject, value.Thumbprint, value.Expiration = leaf.Subject.String(), thumbprint, leaf.NotAfter.UTC()
+		} else {
+			h.refreshCertificateSecret(r.Context(), &value)
 		}
 		got, err := h.Store.UpsertCertificate(value)
 		if err != nil {
@@ -4377,6 +4405,66 @@ func apiVersionSetWire(v model.APIVersionSet) map[string]any {
 	properties["description"] = v.Description
 	return result
 }
+func (h *Handler) secretRetriever() keyvault.Retriever {
+	if h.Secrets != nil {
+		return h.Secrets
+	}
+	return keyvault.HTTP{Client: h.ImportClient}
+}
+
+func (h *Handler) keyVaultNow() time.Time {
+	if h.Store != nil && h.Store.Clock != nil {
+		return time.Unix(h.Store.Clock.Now(), 0).UTC()
+	}
+	return time.Now().UTC()
+}
+
+func (h *Handler) refreshNamedValueSecret(ctx context.Context, value *model.NamedValue) {
+	secret, err := h.secretRetriever().GetSecret(ctx, value.KeyVaultSecretID)
+	value.KeyVaultStatusCode, value.KeyVaultStatusMessage = keyvault.Classify(err)
+	value.KeyVaultStatusTime = h.keyVaultNow()
+	if err == nil {
+		value.Value = secret.Value
+	}
+}
+
+func (h *Handler) refreshCertificateSecret(ctx context.Context, value *model.Certificate) {
+	secret, err := h.secretRetriever().GetSecret(ctx, value.KeyVaultSecretID)
+	value.KeyVaultStatusCode, value.KeyVaultStatusMessage = keyvault.Classify(err)
+	value.KeyVaultStatusTime = h.keyVaultNow()
+	if err != nil {
+		return
+	}
+	data := decodeKeyVaultCertificate(secret.Value)
+	leaf, thumbprint, parseErr := certutil.ParsePKCS12(data, value.Password)
+	if parseErr != nil {
+		value.KeyVaultStatusCode, value.KeyVaultStatusMessage = "Error", parseErr.Error()
+		return
+	}
+	value.Data, value.Subject, value.Thumbprint, value.Expiration = data, leaf.Subject.String(), thumbprint, leaf.NotAfter.UTC()
+}
+
+func decodeKeyVaultCertificate(value string) []byte {
+	data, err := base64.StdEncoding.DecodeString(value)
+	if err != nil {
+		return []byte(value)
+	}
+	return data
+}
+
+func keyVaultWire(secretID, identityID, code, message string, at time.Time) map[string]any {
+	result := map[string]any{"secretIdentifier": secretID, "identityClientId": identityID}
+	if code == "" && message == "" && at.IsZero() {
+		return result
+	}
+	status := map[string]any{"code": code, "message": message}
+	if !at.IsZero() {
+		status["timeStampUtc"] = at.UTC().Format(time.RFC3339)
+	}
+	result["lastStatus"] = status
+	return result
+}
+
 func namedValueWire(v model.NamedValue) map[string]any {
 	result := cloneObject(v.Document)
 	result["id"], result["name"], result["type"] = v.ID(), v.Name, "Microsoft.ApiManagement/service/namedValues"
@@ -4389,7 +4477,7 @@ func namedValueWire(v model.NamedValue) map[string]any {
 	delete(properties, "value")
 	properties["displayName"], properties["secret"], properties["tags"] = v.DisplayName, v.Secret, v.Tags
 	if v.KeyVaultSecretID != "" {
-		properties["keyVault"] = map[string]any{"secretIdentifier": v.KeyVaultSecretID, "identityClientId": v.KeyVaultIdentityID}
+		properties["keyVault"] = keyVaultWire(v.KeyVaultSecretID, v.KeyVaultIdentityID, v.KeyVaultStatusCode, v.KeyVaultStatusMessage, v.KeyVaultStatusTime)
 	} else {
 		delete(properties, "keyVault")
 	}
@@ -4430,7 +4518,7 @@ func certificateWire(v model.Certificate) map[string]any {
 		properties["expirationDate"] = v.Expiration.UTC().Format(time.RFC3339)
 	}
 	if v.KeyVaultSecretID != "" {
-		properties["keyVault"] = map[string]any{"secretIdentifier": v.KeyVaultSecretID, "identityClientId": v.KeyVaultIdentityID}
+		properties["keyVault"] = keyVaultWire(v.KeyVaultSecretID, v.KeyVaultIdentityID, v.KeyVaultStatusCode, v.KeyVaultStatusMessage, v.KeyVaultStatusTime)
 	}
 	return result
 }

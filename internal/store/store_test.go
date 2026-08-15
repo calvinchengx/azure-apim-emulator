@@ -591,9 +591,9 @@ func TestScanFunctionsRejectMalformedRows(t *testing.T) {
 		},
 		{
 			"named values",
-			`CREATE TABLE named_values (id, service_id, name, display_name, value, tags_json, secret, key_vault_secret_id, key_vault_identity_id, etag);
+			`CREATE TABLE named_values (id, service_id, name, display_name, value, tags_json, secret, key_vault_secret_id, key_vault_identity_id, key_vault_status_code, key_vault_status_message, key_vault_status_time, etag);
 			 CREATE TABLE named_value_documents (named_value_id, document_json)`,
-			`INSERT INTO named_values VALUES ('id', 'service', NULL, '', '', '[]', 0, '', '', '')`,
+			`INSERT INTO named_values VALUES ('id', 'service', NULL, '', '', '[]', 0, '', '', '', '', 0, '')`,
 			func(db *sql.DB) error { _, err := (&Store{db: db}).ListNamedValues("service"); return err },
 		},
 		{
@@ -604,9 +604,9 @@ func TestScanFunctionsRejectMalformedRows(t *testing.T) {
 		},
 		{
 			"certificates",
-			`CREATE TABLE certificates (id, service_id, name, subject, thumbprint, expiration, data, password, key_vault_secret_id, key_vault_identity_id, etag);
+			`CREATE TABLE certificates (id, service_id, name, subject, thumbprint, expiration, data, password, key_vault_secret_id, key_vault_identity_id, key_vault_status_code, key_vault_status_message, key_vault_status_time, etag);
 			 CREATE TABLE certificate_documents (certificate_id, document_json)`,
-			`INSERT INTO certificates VALUES ('id', 'service', NULL, '', '', 0, x'', '', '', '', '')`,
+			`INSERT INTO certificates VALUES ('id', 'service', NULL, '', '', 0, x'', '', '', '', '', '', 0, '')`,
 			func(db *sql.DB) error { _, err := (&Store{db: db}).ListCertificates("service"); return err },
 		},
 		{
@@ -1859,12 +1859,12 @@ func TestNamedValueLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	value, err := st.UpsertNamedValue(model.NamedValue{ServiceID: service.ID(), Name: "token", DisplayName: "Token", Value: "secret", Tags: []string{"auth"}, Secret: true, Document: map[string]any{"value": "root-secret", "custom": true, "properties": map[string]any{"value": "nested-secret"}}})
+	value, err := st.UpsertNamedValue(model.NamedValue{ServiceID: service.ID(), Name: "token", DisplayName: "Token", Value: "secret", Tags: []string{"auth"}, Secret: true, KeyVaultSecretID: "https://vault/secrets/token", KeyVaultStatusCode: "Success", KeyVaultStatusTime: time.Unix(1, 0).UTC(), Document: map[string]any{"value": "root-secret", "custom": true, "properties": map[string]any{"value": "nested-secret"}}})
 	if err != nil || value.ID() != service.ID()+"/namedValues/token" || value.ETag == "" || value.Document["value"] != nil || value.Document["custom"] != true {
 		t.Fatalf("upsert named value = %+v, %v", value, err)
 	}
 	got, err := st.GetNamedValue(strings.ToUpper(value.ID()))
-	if err != nil || got.Value != "secret" || len(got.Tags) != 1 || !got.Secret || got.Document["value"] != nil || got.Document["properties"].(map[string]any)["value"] != nil {
+	if err != nil || got.Value != "secret" || len(got.Tags) != 1 || !got.Secret || got.KeyVaultSecretID == "" || got.KeyVaultStatusCode != "Success" || got.KeyVaultStatusTime.IsZero() || got.Document["value"] != nil || got.Document["properties"].(map[string]any)["value"] != nil {
 		t.Fatalf("get named value = %+v, %v", got, err)
 	}
 	values, err := st.ListNamedValues(service.ID())
@@ -1944,11 +1944,11 @@ func TestCertificateLifecycle(t *testing.T) {
 	if err != nil || len(values) != 1 || !values[0].Expiration.Equal(expires) {
 		t.Fatalf("list certificates = %+v, %v", values, err)
 	}
-	keyVault, err := st.UpsertCertificate(model.Certificate{ServiceID: service.ID(), Name: "vault", KeyVaultSecretID: "https://vault/secret"})
+	keyVault, err := st.UpsertCertificate(model.Certificate{ServiceID: service.ID(), Name: "vault", KeyVaultSecretID: "https://vault/secret", KeyVaultStatusCode: "NotFound", KeyVaultStatusMessage: "missing", KeyVaultStatusTime: time.Unix(2, 0).UTC()})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, err := st.GetCertificate(keyVault.ID()); err != nil || !got.Expiration.IsZero() {
+	if got, err := st.GetCertificate(keyVault.ID()); err != nil || !got.Expiration.IsZero() || got.KeyVaultStatusCode != "NotFound" || got.KeyVaultStatusMessage != "missing" || got.KeyVaultStatusTime.IsZero() {
 		t.Fatalf("key vault certificate = %+v, %v", got, err)
 	}
 	if err := st.DeleteCertificate(certificate.ID()); err != nil {
@@ -1959,6 +1959,12 @@ func TestCertificateLifecycle(t *testing.T) {
 	}
 	if err := st.DeleteCertificate(certificate.ID()); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("second delete = %v", err)
+	}
+}
+
+func TestKeyVaultStatusTimeHelpers(t *testing.T) {
+	if unixTime(time.Time{}) != 0 || !timeFromUnix(0).IsZero() || unixTime(time.Unix(5, 0).UTC()) != 5 || timeFromUnix(5).Unix() != 5 {
+		t.Fatal("key vault status time helpers")
 	}
 }
 

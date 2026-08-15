@@ -89,16 +89,19 @@ func (v APIVersionSet) ID() string { return v.ServiceID + "/apiVersionSets/" + v
 
 // NamedValue is a reusable value referenced from APIM policy XML.
 type NamedValue struct {
-	ServiceID          string
-	Name               string
-	DisplayName        string
-	Value              string
-	Tags               []string
-	Secret             bool
-	KeyVaultSecretID   string
-	KeyVaultIdentityID string
-	ETag               string
-	Document           map[string]any
+	ServiceID             string
+	Name                  string
+	DisplayName           string
+	Value                 string
+	Tags                  []string
+	Secret                bool
+	KeyVaultSecretID      string
+	KeyVaultIdentityID    string
+	KeyVaultStatusCode    string
+	KeyVaultStatusMessage string
+	KeyVaultStatusTime    time.Time
+	ETag                  string
+	Document              map[string]any
 }
 
 // ID returns the named value ARM resource ID.
@@ -209,17 +212,20 @@ func (v Documentation) ID() string { return v.ServiceID + "/documentations/" + v
 
 // Certificate is backend client-certificate material or a Key Vault reference.
 type Certificate struct {
-	ServiceID          string
-	Name               string
-	Subject            string
-	Thumbprint         string
-	Expiration         time.Time
-	Data               []byte
-	Password           string
-	KeyVaultSecretID   string
-	KeyVaultIdentityID string
-	ETag               string
-	Document           map[string]any
+	ServiceID             string
+	Name                  string
+	Subject               string
+	Thumbprint            string
+	Expiration            time.Time
+	Data                  []byte
+	Password              string
+	KeyVaultSecretID      string
+	KeyVaultIdentityID    string
+	KeyVaultStatusCode    string
+	KeyVaultStatusMessage string
+	KeyVaultStatusTime    time.Time
+	ETag                  string
+	Document              map[string]any
 }
 
 // ID returns the certificate ARM resource ID.

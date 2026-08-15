@@ -306,7 +306,7 @@ func TestControlAndDispatchEndpoints(t *testing.T) {
 		t.Fatalf("portal subscription redaction = %d %s", subscriptionRead.Code, subscriptionRead.Body.String())
 	}
 	subscriptionUpdate := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(subscriptionUpdate, httptest.NewRequest(http.MethodPut, subscriptionURL, strings.NewReader(`{"displayName":"Updated Subscription","state":"suspended"}`)))
+	srv.Handler().ServeHTTP(subscriptionUpdate, httptest.NewRequest(http.MethodPut, subscriptionURL, strings.NewReader(`{"displayName":"Updated Subscription","scope":"/updated","state":"suspended"}`)))
 	if subscriptionUpdate.Code != http.StatusOK || !strings.Contains(subscriptionUpdate.Body.String(), "suspended") {
 		t.Fatalf("portal subscription update = %d %s", subscriptionUpdate.Code, subscriptionUpdate.Body.String())
 	}
@@ -321,7 +321,7 @@ func TestControlAndDispatchEndpoints(t *testing.T) {
 		t.Fatalf("portal user redaction = %d %s", userRead.Code, userRead.Body.String())
 	}
 	userUpdate := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(userUpdate, httptest.NewRequest(http.MethodPut, userURL, strings.NewReader(`{"firstName":"Updated","email":"updated@example.test","state":"blocked","note":"review"}`)))
+	srv.Handler().ServeHTTP(userUpdate, httptest.NewRequest(http.MethodPut, userURL, strings.NewReader(`{"firstName":"Updated","lastName":"Person","email":"updated@example.test","state":"blocked","note":"review"}`)))
 	if userUpdate.Code != http.StatusOK || !strings.Contains(userUpdate.Body.String(), "updated@example.test") {
 		t.Fatalf("portal user update = %d %s", userUpdate.Code, userUpdate.Body.String())
 	}

@@ -28,11 +28,16 @@ The emulator never accepts an unsigned or unverified token merely for convenienc
 Named values and certificates can reference `azure-keyvault-emulator` through
 the same managed-identity and HTTPS flow used by Azure:
 
-- versioned and versionless secret references
+- versioned and versionless secret references resolved on PUT/PATCH/`refreshSecret`
+- classified `lastStatus` codes and last-known-good values when retrieval fails
+- `isKeyVaultRefreshFailed` collection projection from last status
 - background refresh on the controllable clock
-- last-known-good behavior and observable resolution errors
 - identity selection and permission failures
 - certificate rotation and hostname/backend TLS activation
+
+Live retrieval of the secret payload is implemented. Challenge-based
+managed-identity token acquisition against `entra-emulator` remains assigned
+to the companion-auth slice.
 
 Static local named values remain available without a companion emulator.
 
