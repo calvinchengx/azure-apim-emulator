@@ -93,8 +93,11 @@ variables, member access, indexing, and calls (`ToString`, `Length`,
 runtime evaluation of `set-header`, `set-query-parameter`, `set-variable`,
 `set-body`, `set-method`, `return-response` children, `send-request` /
 `send-one-way-request` url/method/header/body, `set-backend-service`,
-`rewrite-uri`, `find-and-replace` from/to, and value-cache key/value
-fields are implemented;
+`rewrite-uri`, `find-and-replace` from/to, value-cache key/value fields,
+CORS allowed-origins/allowed-methods/allowed-headers/expose-headers/max-age,
+`check-header` name/values/error message, `limit-concurrency` key,
+rate-limit/quota `counter-key`, and authentication-basic /
+managed-identity / oauth2 / certificate attributes are implemented;
 other statements, remaining context members, other expression-bearing
 fields, and the public allowlist remain open.
 
