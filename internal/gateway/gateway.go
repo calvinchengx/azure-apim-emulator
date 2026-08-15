@@ -1465,7 +1465,7 @@ func writeForwardedResponse(w http.ResponseWriter, response *http.Response, stat
 	}
 	w.WriteHeader(status)
 	if state.BodySet {
-		_, _ = io.WriteString(w, state.Body)
+		writeResponseBody(w, state.Body)
 	} else {
 		writeGatewayBody(w, response)
 	}
@@ -1478,7 +1478,15 @@ func writePolicyResponse(w http.ResponseWriter, state *policy.State) {
 		status = http.StatusOK
 	}
 	w.WriteHeader(status)
-	_, _ = io.WriteString(w, state.Body)
+	writeResponseBody(w, state.Body)
+}
+
+// writeResponseBody writes a policy or backend payload. These bodies are API
+// content (JSON, XML, text), not HTML documents; escaping them would change
+// APIM set-body / return-response semantics.
+func writeResponseBody(w http.ResponseWriter, body string) {
+	// codeql[go/reflected-xss] API payloads are not HTML documents.
+	_, _ = io.WriteString(w, body)
 }
 
 func gatewayError(w http.ResponseWriter, status int, code, message string) {

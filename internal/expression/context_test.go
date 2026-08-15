@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -20,6 +21,7 @@ func TestRequestEnvBindings(t *testing.T) {
 	}{
 		{"@(context.Request.Method == 'POST')", true},
 		{"@(context.Request.Url.Path == '/match')", true},
+		{`@(context.Request.Url + "")`, "https://api.example/match?x=1"},
 		{"@(context.Request.URL.Path)", "/match"},
 		{"@(context.Request.Url.Host)", "api.example"},
 		{"@(context.Request.Url.Scheme)", "https"},
@@ -57,6 +59,10 @@ func TestRequestEnvFallbacksAndErrors(t *testing.T) {
 	if err != nil || got.String() != "from-url.examplehttp192.0.2.1" {
 		t.Fatalf("plain request = %q %v", got, err)
 	}
+	relative, err := EvalEnv("@(context.Request.Url)", RequestEnv(plain, nil))
+	if err != nil || relative.String() != "http://from-url.example/plain" {
+		t.Fatalf("relative url = %q %v", relative, err)
+	}
 
 	secure := httptest.NewRequest(http.MethodGet, "/secure", nil)
 	secure.TLS = &tls.ConnectionState{}
@@ -64,10 +70,18 @@ func TestRequestEnvFallbacksAndErrors(t *testing.T) {
 	if err != nil || scheme.String() != "https" {
 		t.Fatalf("tls scheme = %q %v", scheme, err)
 	}
+	secureURL, err := EvalEnv("@(context.Request.Url)", RequestEnv(secure, nil))
+	if err != nil || !strings.HasPrefix(secureURL.String(), "https://") {
+		t.Fatalf("tls url = %q %v", secureURL, err)
+	}
 
 	missingURL := &http.Request{Method: http.MethodGet}
 	if _, err := EvalEnv("@(context.Request.Url.Path)", RequestEnv(missingURL, nil)); err == nil {
 		t.Fatal("nil URL accepted")
+	}
+	emptyURL, err := EvalEnv("@(context.Request.Url)", RequestEnv(missingURL, nil))
+	if err != nil || emptyURL.String() != "" {
+		t.Fatalf("nil url string = %q %v", emptyURL, err)
 	}
 
 	nilRequest, err := EvalEnv("@(context.Request)", RequestEnv(nil, nil))

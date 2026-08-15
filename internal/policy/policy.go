@@ -729,14 +729,26 @@ func compileNode(item node, strict bool) (Action, bool, error) {
 		return Action{Kind: ActionCacheRemoveValue, ValueCacheKey: key}, true, nil
 	case "set-backend-service":
 		value, backendID := item.Attrs["base-url"], item.Attrs["backend-id"]
-		if (value == "") == (backendID == "") || expression(value) || expression(backendID) {
+		if (value == "") == (backendID == "") {
 			return unsupported(item.Name), true, nil
+		}
+		value, err := compileValue(value)
+		if err != nil {
+			return Action{}, false, err
+		}
+		backendID, err = compileValue(backendID)
+		if err != nil {
+			return Action{}, false, err
 		}
 		return Action{Kind: ActionSetBackend, Value: value, BackendID: backendID}, true, nil
 	case "rewrite-uri":
 		value := item.Attrs["template"]
-		if value == "" || expression(value) {
+		if value == "" {
 			return unsupported(item.Name), true, nil
+		}
+		value, err := compileValue(value)
+		if err != nil {
+			return Action{}, false, err
 		}
 		return Action{Kind: ActionRewriteURI, Value: value}, true, nil
 	case "forward-request":
@@ -921,28 +933,38 @@ func compileSendRequest(item node) (Action, bool, error) {
 	for _, child := range item.Children {
 		switch child.Name {
 		case "set-url":
-			action.SendURL = strings.TrimSpace(child.Text)
+			value, err := compileValue(strings.TrimSpace(child.Text))
+			if err != nil {
+				return Action{}, false, err
+			}
+			action.SendURL = value
 		case "set-method":
-			action.SendMethod = strings.ToUpper(strings.TrimSpace(child.Text))
+			value, err := compileValue(strings.TrimSpace(child.Text))
+			if err != nil {
+				return Action{}, false, err
+			}
+			action.SendMethod = value
 		case "set-header":
-			value := childText(child, "value")
-			if expression(value) {
-				return unsupported(item.Name), true, nil
+			value, err := compileValue(childText(child, "value"))
+			if err != nil {
+				return Action{}, false, err
 			}
 			action.Headers = append(action.Headers, Header{Name: child.Attrs["name"], Value: value, Action: child.Attrs["exists-action"]})
 		case "set-body":
-			action.Body = strings.TrimSpace(child.Text)
-			if action.Body == "" {
-				action.Body = childText(child, "value")
+			body := strings.TrimSpace(child.Text)
+			if body == "" {
+				body = childText(child, "value")
 			}
-			if expression(action.Body) {
-				return unsupported(item.Name), true, nil
+			body, err := compileValue(body)
+			if err != nil {
+				return Action{}, false, err
 			}
+			action.Body = body
 		default:
 			return unsupported(item.Name + "/" + child.Name), true, nil
 		}
 	}
-	if action.SendURL == "" || expression(action.SendURL) || action.SendMethod == "" {
+	if action.SendURL == "" || action.SendMethod == "" {
 		return unsupported(item.Name), true, nil
 	}
 	return action, true, nil
@@ -1234,12 +1256,28 @@ func Execute(actions []Action, state *State) error {
 				}
 				return fmt.Errorf("send-request requires a configured transport")
 			}
-			request, err := http.NewRequest(action.SendMethod, action.SendURL, strings.NewReader(action.Body))
+			sendURL, err := evalValue(action.SendURL, state)
+			if err != nil {
+				return err
+			}
+			sendMethod, err := evalValue(action.SendMethod, state)
+			if err != nil {
+				return err
+			}
+			body, err := evalValue(action.Body, state)
+			if err != nil {
+				return err
+			}
+			request, err := http.NewRequest(strings.ToUpper(sendMethod), sendURL, strings.NewReader(body))
 			if err != nil {
 				return err
 			}
 			for _, header := range action.Headers {
-				setHeader(request.Header, header)
+				value, err := evalValue(header.Value, state)
+				if err != nil {
+					return err
+				}
+				setHeader(request.Header, Header{Name: header.Name, Value: value, Action: header.Action})
 			}
 			response, err := state.SendRequest(request)
 			if action.Kind == ActionSendOneWay {
@@ -1617,10 +1655,22 @@ func Execute(actions []Action, state *State) error {
 			}
 			state.ValueCacheRemove(action.ValueCacheKey)
 		case ActionSetBackend:
-			state.BackendURL = action.Value
-			state.BackendID = action.BackendID
+			value, err := evalValue(action.Value, state)
+			if err != nil {
+				return err
+			}
+			backendID, err := evalValue(action.BackendID, state)
+			if err != nil {
+				return err
+			}
+			state.BackendURL = value
+			state.BackendID = backendID
 		case ActionRewriteURI:
-			state.Path = action.Value
+			value, err := evalValue(action.Value, state)
+			if err != nil {
+				return err
+			}
+			state.Path = value
 		case ActionForward:
 			// Forwarding is performed by the gateway after the backend section.
 		case ActionReturnResponse:

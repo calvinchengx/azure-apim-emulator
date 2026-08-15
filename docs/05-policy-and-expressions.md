@@ -91,7 +91,9 @@ method/URL/headers/IP, response status/headers, last-error message, policy
 variables, member access, indexing, and calls (`ToString`, `Length`,
 `GetValueOrDefault`, `ContainsKey`). Single-`return` statement blocks and
 runtime evaluation of `set-header`, `set-query-parameter`, `set-variable`,
-`set-body`, `set-method`, and `return-response` children are implemented;
+`set-body`, `set-method`, `return-response` children, `send-request` /
+`send-one-way-request` url/method/header/body, `set-backend-service`, and
+`rewrite-uri` are implemented;
 other statements, remaining context members, other expression-bearing
 fields, and the public allowlist remain open.
 

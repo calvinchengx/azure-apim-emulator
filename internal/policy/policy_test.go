@@ -1420,8 +1420,6 @@ func TestUnsupportedActionForms(t *testing.T) {
 	values := []string{
 		`<policies><inbound><set-backend-service/> </inbound></policies>`,
 		`<policies><inbound><set-backend-service base-url="https://backend" backend-id="named"/></inbound></policies>`,
-		`<policies><inbound><set-backend-service base-url="@(context.Request.Url)"/></inbound></policies>`,
-		`<policies><inbound><rewrite-uri template="@(context.Request.Url.Path)"/></inbound></policies>`,
 		`<policies><inbound><return-response><set-header name="X"><value>@(context.Request.Body)</value></set-header></return-response></inbound></policies>`,
 		`<policies><inbound><return-response><set-body>@(context.Request.Body)</set-body></return-response></inbound></policies>`,
 		`<policies><inbound><return-response><choose/></return-response></inbound></policies>`,
@@ -1441,6 +1439,73 @@ func TestCompileBackendReference(t *testing.T) {
 	plan, err := Compile(`<policies><inbound><set-backend-service backend-id="named"/></inbound></policies>`, true)
 	if err != nil || len(plan.Inbound) != 1 || plan.Inbound[0].BackendID != "named" {
 		t.Fatalf("backend reference = %+v, %v", plan, err)
+	}
+}
+
+func TestDispatchExpressionPolicies(t *testing.T) {
+	plan, err := Compile(`<policies><inbound><set-backend-service base-url="@(context.Request.Url)"/><rewrite-uri template="@(context.Request.Url.Path)"/><send-request response-variable-name="probe"><set-url>@(context.Request.Url)</set-url><set-method>@(context.Request.Method)</set-method><set-header name="X-Probe"><value>@(context.Variables['route'])</value></set-header><set-body>@(1)</set-body></send-request></inbound></policies>`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPut, "https://api.example/items", nil)
+	var probed *http.Request
+	var probeBody string
+	state := &State{Request: request, Variables: map[string]string{"route": "blue"}, SendRequest: func(got *http.Request) (*http.Response, error) {
+		probed = got
+		body, _ := io.ReadAll(got.Body)
+		probeBody = string(body)
+		return &http.Response{StatusCode: http.StatusAccepted, Body: io.NopCloser(strings.NewReader(""))}, nil
+	}}
+	if err := Execute(plan.Inbound, state); err != nil {
+		t.Fatal(err)
+	}
+	if state.BackendURL != "https://api.example/items" || state.Path != "/items" || state.Variables["probe"] != "202" {
+		t.Fatalf("dispatch state = %+v", state)
+	}
+	if probed == nil || probed.Method != http.MethodPut || probed.URL.String() != "https://api.example/items" || probed.Header.Get("X-Probe") != "blue" || probeBody != "1" {
+		t.Fatalf("probe = %+v body %q", probed, probeBody)
+	}
+
+	named, err := Compile(`<policies><inbound><set-backend-service backend-id="@(context.Variables['backend'])"/></inbound></policies>`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	namedState := &State{Variables: map[string]string{"backend": "orders"}}
+	if err := Execute(named.Inbound, namedState); err != nil || namedState.BackendID != "orders" {
+		t.Fatalf("backend-id expression = %+v, %v", namedState, err)
+	}
+
+	for _, value := range []string{
+		`<policies><inbound><set-backend-service base-url="@(1 + )"/></inbound></policies>`,
+		`<policies><inbound><set-backend-service backend-id="@(1 + )"/></inbound></policies>`,
+		`<policies><inbound><rewrite-uri template="@(1 + )"/></inbound></policies>`,
+		`<policies><inbound><send-request><set-url>@(1 + )</set-url></send-request></inbound></policies>`,
+		`<policies><inbound><send-request><set-url>https://probe.example</set-url><set-method>@(1 + )</set-method></send-request></inbound></policies>`,
+		`<policies><inbound><send-request><set-url>https://probe.example</set-url><set-header name="X"><value>@(1 + )</value></set-header></send-request></inbound></policies>`,
+		`<policies><inbound><send-request><set-url>https://probe.example</set-url><set-body>@(1 + )</set-body></send-request></inbound></policies>`,
+	} {
+		if _, err := Compile(value, false); err == nil {
+			t.Fatalf("invalid dispatch expression accepted: %s", value)
+		}
+	}
+	for _, value := range []string{
+		`<policies><inbound><set-backend-service base-url="@(context.Request.Body)"/></inbound></policies>`,
+		`<policies><inbound><set-backend-service backend-id="@(context.Request.Body)"/></inbound></policies>`,
+		`<policies><inbound><rewrite-uri template="@(context.Request.Body)"/></inbound></policies>`,
+		`<policies><inbound><send-request><set-url>@(context.Request.Body)</set-url></send-request></inbound></policies>`,
+		`<policies><inbound><send-request><set-url>https://probe.example</set-url><set-method>@(context.Request.Body)</set-method></send-request></inbound></policies>`,
+		`<policies><inbound><send-request><set-url>https://probe.example</set-url><set-header name="X"><value>@(context.Request.Body)</value></set-header></send-request></inbound></policies>`,
+		`<policies><inbound><send-request><set-url>https://probe.example</set-url><set-body>@(context.Request.Body)</set-body></send-request></inbound></policies>`,
+	} {
+		compiled, err := Compile(value, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := Execute(compiled.Inbound, &State{Request: httptest.NewRequest(http.MethodGet, "/", nil), SendRequest: func(*http.Request) (*http.Response, error) {
+			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(""))}, nil
+		}}); err == nil {
+			t.Fatalf("unknown dispatch member accepted: %s", value)
+		}
 	}
 }
 
