@@ -109,7 +109,7 @@ network outcomes are parity-classified and differential-tested.
 
 ## P7 - Observability, authorizations, and ecosystem integrations
 
-- Azure Monitor schema, diagnostics settings, resource logs, metrics, analytics, and reports.
+- Azure Monitor schema, diagnostics settings, resource logs, metrics, analytics, and reports. Local gateway events now capture request/response bodies up to configured byte limits with the same secret masking as headers; Azure differential remains open.
 - Application Insights and OpenTelemetry correlations, sampling, masking, and exporters.
 - Authorization providers, credential manager, Service Bus, Event Hub-style logging,
   Dapr, Service Fabric, external cache, and documented backend integrations.
