@@ -113,8 +113,10 @@ code/reason, `mock-response` status-code/content-type, `json-to-xml`
 root-element-name, `jsonp` callback-parameter-name, and
 `validate-azure-ad-token` tenant-id/header-name/query-parameter-name/
 failed-validation-httpcode/failed-validation-error-message are implemented;
-other statements, remaining context members, other expression-bearing
-fields, and the public allowlist remain open.
+other statements, remaining context members, and other expression-bearing
+fields remain open. The binder publishes a checked-in type/member allowlist
+(`docs/generated/expression-members.json`); unknown members still fail at
+runtime, and documented-but-unbound names stay `planned` until implemented.
 
 The pure-Go engine has these stages:
 
