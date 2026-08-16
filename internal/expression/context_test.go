@@ -3,6 +3,7 @@ package expression
 import (
 	"crypto/tls"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -35,6 +36,7 @@ func TestRequestEnvBindings(t *testing.T) {
 		{"@(context.Request.Headers.GetValueOrDefault('Missing', 'fallback'))", "fallback"},
 		{"@(context.Request.Headers.GetValueOrDefault('Missing'))", ""},
 		{"@(context.Request.Url.Port)", int64(443)},
+		{"@(context.Request.Body.AsString())", ""},
 		{"@(context.Variables['route'])", "blue"},
 		{"@(context.Variables.ContainsKey('route'))", true},
 		{"@(context.Variables.ContainsKey('missing'))", false},
@@ -124,8 +126,9 @@ func TestRequestEnvFallbacksAndErrors(t *testing.T) {
 
 	for _, source := range []string{
 		"@(context.Api)",
-		"@(context.Request.Body)",
-		"@(context.Response.Body)",
+		"@(context.Request.Missing)",
+		"@(context.Request.Body.AsJObject())",
+		"@(context.Response.Body.AsJObject())",
 		"@(context.LastError.Message)",
 		"@(context.Request.Url.Fragment)",
 		"@(context.Request.Headers.Missing)",
@@ -200,13 +203,111 @@ func TestResponseAndLastErrorBindings(t *testing.T) {
 	if _, err := EvalEnv("@(context.Response.StatusCode)", Bind(Context{})); err == nil {
 		t.Fatal("null response member accepted")
 	}
+	if _, err := EvalEnv("@(context.Response.Missing)", env); err == nil {
+		t.Fatal("unknown response member accepted")
+	}
 	if _, err := EvalEnv("@(context.LastError.Reason)", Bind(Context{LastError: errors.New("temporary")})); err == nil {
 		t.Fatal("unknown last-error member accepted")
 	}
-	if _, err := EvalEnv("@(context.Response.Body)", env); err == nil {
-		t.Fatal("unknown response member accepted")
+	if _, err := EvalEnv("@(context.Response.Body.AsJObject())", env); err == nil {
+		t.Fatal("unknown response body member accepted")
 	}
 }
+
+func TestRequestAndResponseBodyAsString(t *testing.T) {
+	request := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("payload"))
+	got, err := EvalEnv("@(context.Request.Body.AsString())", RequestEnv(request, nil))
+	if err != nil || got.String() != "payload" {
+		t.Fatalf("request body = %q %v", got, err)
+	}
+	replay, err := request.GetBody()
+	if err != nil {
+		t.Fatal(err)
+	}
+	replayed, _ := io.ReadAll(replay)
+	if string(replayed) != "payload" {
+		t.Fatalf("replayed request body = %q", replayed)
+	}
+
+	cached := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("ignored"))
+	cached.GetBody = func() (io.ReadCloser, error) {
+		return io.NopCloser(strings.NewReader("cached")), nil
+	}
+	fromCache, err := EvalEnv("@(context.Request.Body.AsString())", RequestEnv(cached, nil))
+	if err != nil || fromCache.String() != "cached" {
+		t.Fatalf("GetBody = %q %v", fromCache, err)
+	}
+
+	emptyReq := httptest.NewRequest(http.MethodGet, "/", nil)
+	emptyReq.Body = nil
+	emptyReq.GetBody = nil
+	empty, err := EvalEnv("@(context.Request.Body.AsString())", RequestEnv(emptyReq, nil))
+	if err != nil || empty.String() != "" {
+		t.Fatalf("empty request body = %q %v", empty, err)
+	}
+	nilBody, err := EvalEnv("@(context.Request.Body.AsString())", RequestEnv(&http.Request{Method: http.MethodGet}, nil))
+	if err != nil || nilBody.String() != "" {
+		t.Fatalf("nil request body = %q %v", nilBody, err)
+	}
+	if _, err := EvalEnv("@(context.Request.Missing)", RequestEnv(emptyReq, nil)); err == nil {
+		t.Fatal("unknown request member accepted")
+	}
+	if _, err := EvalEnv("@(context.Response.Missing)", Bind(Context{Response: &http.Response{}})); err == nil {
+		t.Fatal("unknown response member accepted")
+	}
+
+	response := &http.Response{Body: io.NopCloser(strings.NewReader(`{"ok":true}`))}
+	fromResponse, err := EvalEnv("@(context.Response.Body.AsString())", Bind(Context{Response: response}))
+	if err != nil || fromResponse.String() != `{"ok":true}` {
+		t.Fatalf("response body = %q %v", fromResponse, err)
+	}
+	second, _ := io.ReadAll(response.Body)
+	if string(second) != `{"ok":true}` {
+		t.Fatalf("replayed response body = %q", second)
+	}
+
+	noBody, err := EvalEnv("@(context.Response.Body.AsString())", Bind(Context{Response: &http.Response{}}))
+	if err != nil || noBody.String() != "" {
+		t.Fatalf("nil response body = %q %v", noBody, err)
+	}
+
+	if _, err := EvalEnv("@(context.Request.Body.AsString(1))", RequestEnv(request, nil)); err == nil {
+		t.Fatal("AsString arity accepted")
+	}
+	if _, err := EvalEnv("@(context.Request.Body.AsJson())", RequestEnv(request, nil)); err == nil {
+		t.Fatal("AsJson accepted")
+	}
+	if _, err := readRequestBody(nil); err != nil {
+		t.Fatalf("nil request = %v", err)
+	}
+	if _, err := readResponseBody(nil); err != nil {
+		t.Fatalf("nil response = %v", err)
+	}
+
+	failGet := httptest.NewRequest(http.MethodPost, "/", nil)
+	failGet.GetBody = func() (io.ReadCloser, error) { return nil, errors.New("get body failed") }
+	if _, err := EvalEnv("@(context.Request.Body.AsString())", RequestEnv(failGet, nil)); err == nil {
+		t.Fatal("GetBody error accepted")
+	}
+	failRead := httptest.NewRequest(http.MethodPost, "/", nil)
+	failRead.GetBody = func() (io.ReadCloser, error) { return errorReader{}, nil }
+	if _, err := EvalEnv("@(context.Request.Body.AsString())", RequestEnv(failRead, nil)); err == nil {
+		t.Fatal("GetBody read error accepted")
+	}
+	failBody := httptest.NewRequest(http.MethodPost, "/", nil)
+	failBody.Body = errorReader{}
+	if _, err := EvalEnv("@(context.Request.Body.AsString())", RequestEnv(failBody, nil)); err == nil {
+		t.Fatal("request body read error accepted")
+	}
+	if _, err := EvalEnv("@(context.Response.Body.AsString())", Bind(Context{Response: &http.Response{Body: errorReader{}}})); err == nil {
+		t.Fatal("response body read error accepted")
+	}
+}
+
+type errorReader struct{}
+
+func (errorReader) Read([]byte) (int, error) { return 0, errors.New("read failed") }
+func (errorReader) Close() error             { return nil }
 
 func TestValueMembersIndexAndCall(t *testing.T) {
 	host := Object(struct{}{})

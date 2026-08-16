@@ -212,12 +212,29 @@ func TestSetBodyPolicy(t *testing.T) {
 	if _, err := Compile(`<policies><inbound><set-body>@(</set-body></inbound></policies>`, true); err == nil {
 		t.Fatal("invalid set-body expression accepted")
 	}
-	unsupportedBody, err := Compile(`<policies><inbound><set-body>@(context.Request.Body)</set-body></inbound></policies>`, true)
+	unsupportedBody, err := Compile(`<policies><inbound><set-body>@(context.Request.Body.AsJObject())</set-body></inbound></policies>`, true)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := Execute(unsupportedBody.Inbound, &State{Request: httptest.NewRequest(http.MethodGet, "/", nil)}); err == nil {
 		t.Fatal("unknown set-body member accepted")
+	}
+	copied, err := Compile(`<policies><inbound><set-variable name="copy"><value>@(context.Request.Body.AsString())</value></set-variable></inbound></policies>`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("payload"))
+	copiedState := &State{Request: source}
+	if err := Execute(copied.Inbound, copiedState); err != nil || copiedState.Variables["copy"] != "payload" {
+		t.Fatalf("body AsString = %+v, %v", copiedState, err)
+	}
+	replay, err := source.GetBody()
+	if err != nil {
+		t.Fatal(err)
+	}
+	replayedBody, _ := io.ReadAll(replay)
+	if string(replayedBody) != "payload" {
+		t.Fatalf("forwarded body = %q", replayedBody)
 	}
 }
 
@@ -967,6 +984,23 @@ func TestChoosePolicy(t *testing.T) {
 	if err := Execute(portPlan.Inbound, state); err != nil || state.Variables["picked"] != "port" {
 		t.Fatalf("url port choose = %+v, %v", state, err)
 	}
+	bodyPlan, err := Compile(`<policies><inbound><set-variable name="payload"><value>@(context.Request.Body.AsString())</value></set-variable></inbound></policies>`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bodyRequest := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("hello"))
+	state = &State{Request: bodyRequest}
+	if err := Execute(bodyPlan.Inbound, state); err != nil || state.Variables["payload"] != "hello" {
+		t.Fatalf("body as-string = %+v, %v", state, err)
+	}
+	replayed, err := bodyRequest.GetBody()
+	if err != nil {
+		t.Fatal(err)
+	}
+	replayBody, err := io.ReadAll(replayed)
+	if err != nil || string(replayBody) != "hello" {
+		t.Fatalf("replayed body after AsString = %q %v", replayBody, err)
+	}
 	lastErrorPlan, err := Compile(`<policies><on-error><choose><when condition="@(context.LastError.Message == 'boom')"><set-variable name="picked"><value>err</value></set-variable></when></choose></on-error></policies>`, true)
 	if err != nil {
 		t.Fatal(err)
@@ -978,7 +1012,7 @@ func TestChoosePolicy(t *testing.T) {
 	if err := Execute([]Action{{Kind: ActionChoose, Branches: []ChooseBranch{{Condition: "@(context.LastError.Reason == 'boom')"}}}}, &State{LastError: errors.New("boom")}); err == nil {
 		t.Fatal("unknown last-error member accepted")
 	}
-	unsupportedPlan, err := Compile(`<policies><inbound><choose><when condition="@(context.Request.Body != null)"/></choose></inbound></policies>`, true)
+	unsupportedPlan, err := Compile(`<policies><inbound><choose><when condition="@(context.Request.Body.AsJObject() != null)"/></choose></inbound></policies>`, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1517,9 +1551,9 @@ func TestMutationExpressionModes(t *testing.T) {
 		}
 	}
 	for _, value := range []string{
-		`<policies><inbound><set-query-parameter name="x"><value>@(context.Request.Body)</value></set-query-parameter></inbound></policies>`,
-		`<policies><inbound><set-variable name="x"><value>@(context.Request.Body)</value></set-variable></inbound></policies>`,
-		`<policies><inbound><set-method>@(context.Request.Body)</set-method></inbound></policies>`,
+		`<policies><inbound><set-query-parameter name="x"><value>@(context.Request.Body.AsJObject())</value></set-query-parameter></inbound></policies>`,
+		`<policies><inbound><set-variable name="x"><value>@(context.Request.Body.AsJObject())</value></set-variable></inbound></policies>`,
+		`<policies><inbound><set-method>@(context.Request.Body.AsJObject())</set-method></inbound></policies>`,
 	} {
 		plan, err := Compile(value, true)
 		if err != nil {
@@ -1600,8 +1634,8 @@ func TestUnsupportedActionForms(t *testing.T) {
 	values := []string{
 		`<policies><inbound><set-backend-service/> </inbound></policies>`,
 		`<policies><inbound><set-backend-service base-url="https://backend" backend-id="named"/></inbound></policies>`,
-		`<policies><inbound><return-response><set-header name="X"><value>@(context.Request.Body)</value></set-header></return-response></inbound></policies>`,
-		`<policies><inbound><return-response><set-body>@(context.Request.Body)</set-body></return-response></inbound></policies>`,
+		`<policies><inbound><return-response><set-header name="X"><value>@(context.Request.Body.AsJObject())</value></set-header></return-response></inbound></policies>`,
+		`<policies><inbound><return-response><set-body>@(context.Request.Body.AsJObject())</set-body></return-response></inbound></policies>`,
 		`<policies><inbound><return-response><choose/></return-response></inbound></policies>`,
 	}
 	for _, value := range values {
@@ -1672,15 +1706,15 @@ func TestDispatchExpressionPolicies(t *testing.T) {
 		}
 	}
 	for _, value := range []string{
-		`<policies><inbound><set-backend-service base-url="@(context.Request.Body)"/></inbound></policies>`,
-		`<policies><inbound><set-backend-service backend-id="@(context.Request.Body)"/></inbound></policies>`,
-		`<policies><inbound><rewrite-uri template="@(context.Request.Body)"/></inbound></policies>`,
-		`<policies><inbound><send-request><set-url>@(context.Request.Body)</set-url></send-request></inbound></policies>`,
-		`<policies><inbound><send-request><set-url>https://probe.example</set-url><set-method>@(context.Request.Body)</set-method></send-request></inbound></policies>`,
-		`<policies><inbound><send-request><set-url>https://probe.example</set-url><set-header name="X"><value>@(context.Request.Body)</value></set-header></send-request></inbound></policies>`,
-		`<policies><inbound><send-request><set-url>https://probe.example</set-url><set-body>@(context.Request.Body)</set-body></send-request></inbound></policies>`,
-		`<policies><inbound><send-one-way-request mode="@(context.Request.Body)"><set-url>https://hooks.example</set-url></send-one-way-request></inbound></policies>`,
-		`<policies><inbound><send-one-way-request timeout="@(context.Request.Body)"><set-url>https://hooks.example</set-url></send-one-way-request></inbound></policies>`,
+		`<policies><inbound><set-backend-service base-url="@(context.Request.Body.AsJObject())"/></inbound></policies>`,
+		`<policies><inbound><set-backend-service backend-id="@(context.Request.Body.AsJObject())"/></inbound></policies>`,
+		`<policies><inbound><rewrite-uri template="@(context.Request.Body.AsJObject())"/></inbound></policies>`,
+		`<policies><inbound><send-request><set-url>@(context.Request.Body.AsJObject())</set-url></send-request></inbound></policies>`,
+		`<policies><inbound><send-request><set-url>https://probe.example</set-url><set-method>@(context.Request.Body.AsJObject())</set-method></send-request></inbound></policies>`,
+		`<policies><inbound><send-request><set-url>https://probe.example</set-url><set-header name="X"><value>@(context.Request.Body.AsJObject())</value></set-header></send-request></inbound></policies>`,
+		`<policies><inbound><send-request><set-url>https://probe.example</set-url><set-body>@(context.Request.Body.AsJObject())</set-body></send-request></inbound></policies>`,
+		`<policies><inbound><send-one-way-request mode="@(context.Request.Body.AsJObject())"><set-url>https://hooks.example</set-url></send-one-way-request></inbound></policies>`,
+		`<policies><inbound><send-one-way-request timeout="@(context.Request.Body.AsJObject())"><set-url>https://hooks.example</set-url></send-one-way-request></inbound></policies>`,
 	} {
 		compiled, err := Compile(value, true)
 		if err != nil {
@@ -1749,13 +1783,13 @@ func TestCacheAndReplaceExpressionPolicies(t *testing.T) {
 		}
 	}
 	for _, value := range []string{
-		`<policies><inbound><find-and-replace from="@(context.Request.Body)" to="new"/></inbound></policies>`,
-		`<policies><inbound><find-and-replace from="old" to="@(context.Request.Body)"/></inbound></policies>`,
-		`<policies><inbound><cache-lookup-value key="@(context.Request.Body)" variable-name="cached"/></inbound></policies>`,
-		`<policies><inbound><cache-lookup-value key="user" variable-name="@(context.Request.Body)"/></inbound></policies>`,
-		`<policies><outbound><cache-store-value key="@(context.Request.Body)" value="Ada"/></outbound></policies>`,
-		`<policies><outbound><cache-store-value key="user" value="@(context.Request.Body)"/></outbound></policies>`,
-		`<policies><inbound><cache-remove-value key="@(context.Request.Body)"/></inbound></policies>`,
+		`<policies><inbound><find-and-replace from="@(context.Request.Body.AsJObject())" to="new"/></inbound></policies>`,
+		`<policies><inbound><find-and-replace from="old" to="@(context.Request.Body.AsJObject())"/></inbound></policies>`,
+		`<policies><inbound><cache-lookup-value key="@(context.Request.Body.AsJObject())" variable-name="cached"/></inbound></policies>`,
+		`<policies><inbound><cache-lookup-value key="user" variable-name="@(context.Request.Body.AsJObject())"/></inbound></policies>`,
+		`<policies><outbound><cache-store-value key="@(context.Request.Body.AsJObject())" value="Ada"/></outbound></policies>`,
+		`<policies><outbound><cache-store-value key="user" value="@(context.Request.Body.AsJObject())"/></outbound></policies>`,
+		`<policies><inbound><cache-remove-value key="@(context.Request.Body.AsJObject())"/></inbound></policies>`,
 	} {
 		compiled, err := Compile(value, true)
 		if err != nil {
@@ -1799,24 +1833,24 @@ func TestAccessExpressionPolicies(t *testing.T) {
 		}
 	}
 	for _, value := range []string{
-		`<policies><inbound><check-header name="@(context.Request.Body)"/></inbound></policies>`,
-		`<policies><inbound><check-header name="X"><value>@(context.Request.Body)</value></check-header></inbound></policies>`,
-		`<policies><inbound><check-header name="X" failed-check-error-message="@(context.Request.Body)"/></inbound></policies>`,
-		`<policies><inbound><cors allowed-origins="@(context.Request.Body)"/></inbound></policies>`,
-		`<policies><inbound><cors allowed-methods="@(context.Request.Body)"/></inbound></policies>`,
-		`<policies><inbound><cors allowed-headers="@(context.Request.Body)"/></inbound></policies>`,
-		`<policies><inbound><cors expose-headers="@(context.Request.Body)"/></inbound></policies>`,
-		`<policies><inbound><cors max-age="@(context.Request.Body)"/></inbound></policies>`,
-		`<policies><inbound><limit-concurrency max-count="1" key="@(context.Request.Body)"/></inbound></policies>`,
-		`<policies><inbound><rate-limit-by-key calls="1" renewal-period="1" counter-key="@(context.Request.Body)"/></inbound></policies>`,
-		`<policies><backend><authentication-basic username="@(context.Request.Body)" password="secret"/></backend></policies>`,
-		`<policies><backend><authentication-basic username="user" password="@(context.Request.Body)"/></backend></policies>`,
-		`<policies><backend><authentication-managed-identity resource="@(context.Request.Body)"/></backend></policies>`,
-		`<policies><backend><authentication-oauth2 client-id="@(context.Request.Body)" client-secret="secret" token-endpoint="https://login.test/token"/></backend></policies>`,
-		`<policies><backend><authentication-oauth2 client-id="client" client-secret="@(context.Request.Body)" token-endpoint="https://login.test/token"/></backend></policies>`,
-		`<policies><backend><authentication-oauth2 client-id="client" client-secret="secret" token-endpoint="@(context.Request.Body)"/></backend></policies>`,
-		`<policies><backend><authentication-oauth2 client-id="client" client-secret="secret" token-endpoint="https://login.test/token" resource="@(context.Request.Body)"/></backend></policies>`,
-		`<policies><backend><authentication-certificate certificate-id="@(context.Request.Body)"/></backend></policies>`,
+		`<policies><inbound><check-header name="@(context.Request.Body.AsJObject())"/></inbound></policies>`,
+		`<policies><inbound><check-header name="X"><value>@(context.Request.Body.AsJObject())</value></check-header></inbound></policies>`,
+		`<policies><inbound><check-header name="X" failed-check-error-message="@(context.Request.Body.AsJObject())"/></inbound></policies>`,
+		`<policies><inbound><cors allowed-origins="@(context.Request.Body.AsJObject())"/></inbound></policies>`,
+		`<policies><inbound><cors allowed-methods="@(context.Request.Body.AsJObject())"/></inbound></policies>`,
+		`<policies><inbound><cors allowed-headers="@(context.Request.Body.AsJObject())"/></inbound></policies>`,
+		`<policies><inbound><cors expose-headers="@(context.Request.Body.AsJObject())"/></inbound></policies>`,
+		`<policies><inbound><cors max-age="@(context.Request.Body.AsJObject())"/></inbound></policies>`,
+		`<policies><inbound><limit-concurrency max-count="1" key="@(context.Request.Body.AsJObject())"/></inbound></policies>`,
+		`<policies><inbound><rate-limit-by-key calls="1" renewal-period="1" counter-key="@(context.Request.Body.AsJObject())"/></inbound></policies>`,
+		`<policies><backend><authentication-basic username="@(context.Request.Body.AsJObject())" password="secret"/></backend></policies>`,
+		`<policies><backend><authentication-basic username="user" password="@(context.Request.Body.AsJObject())"/></backend></policies>`,
+		`<policies><backend><authentication-managed-identity resource="@(context.Request.Body.AsJObject())"/></backend></policies>`,
+		`<policies><backend><authentication-oauth2 client-id="@(context.Request.Body.AsJObject())" client-secret="secret" token-endpoint="https://login.test/token"/></backend></policies>`,
+		`<policies><backend><authentication-oauth2 client-id="client" client-secret="@(context.Request.Body.AsJObject())" token-endpoint="https://login.test/token"/></backend></policies>`,
+		`<policies><backend><authentication-oauth2 client-id="client" client-secret="secret" token-endpoint="@(context.Request.Body.AsJObject())"/></backend></policies>`,
+		`<policies><backend><authentication-oauth2 client-id="client" client-secret="secret" token-endpoint="https://login.test/token" resource="@(context.Request.Body.AsJObject())"/></backend></policies>`,
+		`<policies><backend><authentication-certificate certificate-id="@(context.Request.Body.AsJObject())"/></backend></policies>`,
 	} {
 		compiled, err := Compile(value, true)
 		if err != nil {
@@ -1867,10 +1901,10 @@ func TestStatusExpressionPolicies(t *testing.T) {
 		}
 	}
 	for _, value := range []string{
-		`<policies><inbound><set-status code="@(context.Request.Body)" reason="Unauthorized"/></inbound></policies>`,
-		`<policies><inbound><set-status code="401" reason="@(context.Request.Body)"/></inbound></policies>`,
-		`<policies><inbound><mock-response status-code="@(context.Request.Body)"/></inbound></policies>`,
-		`<policies><inbound><mock-response content-type="@(context.Request.Body)"/></inbound></policies>`,
+		`<policies><inbound><set-status code="@(context.Request.Body.AsJObject())" reason="Unauthorized"/></inbound></policies>`,
+		`<policies><inbound><set-status code="401" reason="@(context.Request.Body.AsJObject())"/></inbound></policies>`,
+		`<policies><inbound><mock-response status-code="@(context.Request.Body.AsJObject())"/></inbound></policies>`,
+		`<policies><inbound><mock-response content-type="@(context.Request.Body.AsJObject())"/></inbound></policies>`,
 	} {
 		compiled, err := Compile(value, true)
 		if err != nil {
@@ -1906,8 +1940,8 @@ func TestJSONTransformExpressionPolicies(t *testing.T) {
 		}
 	}
 	for _, value := range []string{
-		`<policies><outbound><json-to-xml root-element-name="@(context.Request.Body)"/></outbound></policies>`,
-		`<policies><outbound><jsonp callback-parameter-name="@(context.Request.Body)"/></outbound></policies>`,
+		`<policies><outbound><json-to-xml root-element-name="@(context.Request.Body.AsJObject())"/></outbound></policies>`,
+		`<policies><outbound><jsonp callback-parameter-name="@(context.Request.Body.AsJObject())"/></outbound></policies>`,
 	} {
 		compiled, err := Compile(value, true)
 		if err != nil {
@@ -1937,11 +1971,11 @@ func TestAzureADTokenExpressionPolicies(t *testing.T) {
 		}
 	}
 	for _, value := range []string{
-		`<policies><inbound><validate-azure-ad-token tenant-id="@(context.Request.Body)"/></inbound></policies>`,
-		`<policies><inbound><validate-azure-ad-token tenant-id="tid" header-name="@(context.Request.Body)"/></inbound></policies>`,
-		`<policies><inbound><validate-azure-ad-token tenant-id="tid" query-parameter-name="@(context.Request.Body)"/></inbound></policies>`,
-		`<policies><inbound><validate-azure-ad-token tenant-id="tid" failed-validation-httpcode="@(context.Request.Body)"/></inbound></policies>`,
-		`<policies><inbound><validate-azure-ad-token tenant-id="tid" failed-validation-error-message="@(context.Request.Body)"/></inbound></policies>`,
+		`<policies><inbound><validate-azure-ad-token tenant-id="@(context.Request.Body.AsJObject())"/></inbound></policies>`,
+		`<policies><inbound><validate-azure-ad-token tenant-id="tid" header-name="@(context.Request.Body.AsJObject())"/></inbound></policies>`,
+		`<policies><inbound><validate-azure-ad-token tenant-id="tid" query-parameter-name="@(context.Request.Body.AsJObject())"/></inbound></policies>`,
+		`<policies><inbound><validate-azure-ad-token tenant-id="tid" failed-validation-httpcode="@(context.Request.Body.AsJObject())"/></inbound></policies>`,
+		`<policies><inbound><validate-azure-ad-token tenant-id="tid" failed-validation-error-message="@(context.Request.Body.AsJObject())"/></inbound></policies>`,
 	} {
 		compiled, err := Compile(value, true)
 		if err != nil {

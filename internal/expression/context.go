@@ -2,9 +2,11 @@ package expression
 
 import (
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"strconv"
+	"strings"
 )
 
 // Context is the APIM `context` binding for one evaluation.
@@ -72,6 +74,8 @@ func (r *requestHost) member(name string) (Value, error) {
 		return Object(&headerHost{header: r.request.Header}), nil
 	case "IpAddress":
 		return String(clientIP(r.request.RemoteAddr)), nil
+	case "Body":
+		return Object(&bodyHost{read: func() (string, error) { return readRequestBody(r.request) }}), nil
 	default:
 		return Null(), fmt.Errorf("unknown member %s", name)
 	}
@@ -92,6 +96,8 @@ func (r *responseHost) member(name string) (Value, error) {
 		return String(http.StatusText(r.response.StatusCode)), nil
 	case "Headers":
 		return Object(&headerHost{header: r.response.Header}), nil
+	case "Body":
+		return Object(&bodyHost{read: func() (string, error) { return readResponseBody(r.response) }}), nil
 	default:
 		return Null(), fmt.Errorf("unknown member %s", name)
 	}
@@ -260,6 +266,73 @@ func (m *mapHost) index(key Value) (Value, error) {
 		return Null(), nil
 	}
 	return String(value), nil
+}
+
+type bodyHost struct {
+	read func() (string, error)
+}
+
+func (b *bodyHost) member(name string) (Value, error) {
+	if name != "AsString" {
+		return Null(), fmt.Errorf("unknown member %s", name)
+	}
+	return Object(funcValue{fn: b.asString}), nil
+}
+
+func (b *bodyHost) asString(args []Value) (Value, error) {
+	if len(args) != 0 {
+		return Null(), fmt.Errorf("AsString takes no arguments")
+	}
+	value, err := b.read()
+	if err != nil {
+		return Null(), err
+	}
+	return String(value), nil
+}
+
+func readRequestBody(request *http.Request) (string, error) {
+	if request == nil {
+		return "", nil
+	}
+	if request.GetBody != nil {
+		body, err := request.GetBody()
+		if err != nil {
+			return "", err
+		}
+		defer body.Close()
+		value, err := io.ReadAll(body)
+		if err != nil {
+			return "", err
+		}
+		return string(value), nil
+	}
+	if request.Body == nil {
+		return "", nil
+	}
+	value, err := io.ReadAll(request.Body)
+	if err != nil {
+		return "", err
+	}
+	_ = request.Body.Close()
+	request.Body = io.NopCloser(strings.NewReader(string(value)))
+	request.GetBody = func() (io.ReadCloser, error) {
+		return io.NopCloser(strings.NewReader(string(value))), nil
+	}
+	request.ContentLength = int64(len(value))
+	return string(value), nil
+}
+
+func readResponseBody(response *http.Response) (string, error) {
+	if response == nil || response.Body == nil {
+		return "", nil
+	}
+	value, err := io.ReadAll(response.Body)
+	if err != nil {
+		return "", err
+	}
+	_ = response.Body.Close()
+	response.Body = io.NopCloser(strings.NewReader(string(value)))
+	return string(value), nil
 }
 
 func clientIP(remote string) string {
