@@ -4,6 +4,7 @@ import (
 	"crypto/sha1"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -350,6 +351,108 @@ func TestValidateJWTPolicy(t *testing.T) {
 	if err := Execute(plan.Inbound, &State{Request: request}); err == nil {
 		t.Fatal("unconfigured validate-jwt accepted")
 	}
+	constrained, err := Compile(`<policies><inbound><validate-jwt failed-validation-httpcode="401" failed-validation-error-message="claims rejected"><audience>api://demo</audience><issuers><issuer>https://issuer.example</issuer></issuers><required-claims><claim name="role" match="any"><value>admin</value><value>owner</value></claim><claim name="scope" match="all" separator=" "><value>read</value><value>write</value></claim></required-claims></validate-jwt></inbound></policies>`, true)
+	if err != nil || len(constrained.Inbound[0].Audiences) != 1 || len(constrained.Inbound[0].Issuers) != 1 || len(constrained.Inbound[0].Claims) != 2 {
+		t.Fatalf("jwt constraints = %+v, %v", constrained, err)
+	}
+	token := testJWT(t, map[string]any{"iss": "https://issuer.example", "aud": []any{"api://demo", "other"}, "role": "admin", "scope": "read write"})
+	okReq := httptest.NewRequest(http.MethodGet, "/", nil)
+	okReq.Header.Set("Authorization", "Bearer "+token)
+	okState := &State{Request: okReq, ValidateToken: func(string) error { return nil }}
+	if err := Execute(constrained.Inbound, okState); err != nil || okState.Returned {
+		t.Fatalf("matching jwt claims = %+v, %v", okState, err)
+	}
+	badToken := testJWT(t, map[string]any{"iss": "https://other.example", "aud": "api://demo", "role": "admin", "scope": "read write"})
+	badReq := httptest.NewRequest(http.MethodGet, "/", nil)
+	badReq.Header.Set("Authorization", "Bearer "+badToken)
+	badState := &State{Request: badReq, ValidateToken: func(string) error { return nil }}
+	if err := Execute(constrained.Inbound, badState); err != nil || !badState.Returned || badState.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("issuer mismatch = %+v, %v", badState, err)
+	}
+	audMiss := testJWT(t, map[string]any{"iss": "https://issuer.example", "aud": "api://other", "role": "admin", "scope": "read write"})
+	audReq := httptest.NewRequest(http.MethodGet, "/", nil)
+	audReq.Header.Set("Authorization", "Bearer "+audMiss)
+	audState := &State{Request: audReq, ValidateToken: func(string) error { return nil }}
+	if err := Execute(constrained.Inbound, audState); err != nil || !audState.Returned {
+		t.Fatalf("audience mismatch = %+v, %v", audState, err)
+	}
+	roleMiss := testJWT(t, map[string]any{"iss": "https://issuer.example", "aud": "api://demo", "role": "guest", "scope": "read write"})
+	roleReq := httptest.NewRequest(http.MethodGet, "/", nil)
+	roleReq.Header.Set("Authorization", "Bearer "+roleMiss)
+	roleState := &State{Request: roleReq, ValidateToken: func(string) error { return nil }}
+	if err := Execute(constrained.Inbound, roleState); err != nil || !roleState.Returned {
+		t.Fatalf("claim mismatch = %+v, %v", roleState, err)
+	}
+	wrapped, err := Compile(`<policies><inbound><validate-jwt><audiences><audience>api://demo</audience></audiences></validate-jwt></inbound></policies>`, true)
+	if err != nil || len(wrapped.Inbound[0].Audiences) != 1 {
+		t.Fatalf("audiences wrapper = %+v, %v", wrapped, err)
+	}
+	notJWT := httptest.NewRequest(http.MethodGet, "/", nil)
+	notJWT.Header.Set("Authorization", "Bearer good")
+	notJWTState := &State{Request: notJWT, ValidateToken: func(string) error { return nil }}
+	if err := Execute(constrained.Inbound, notJWTState); err != nil || !notJWTState.Returned {
+		t.Fatalf("non-jwt with constraints = %+v, %v", notJWTState, err)
+	}
+	for _, value := range []string{
+		`<policies><inbound><validate-jwt><openid-config url="https://issuer.example/.well-known/openid-configuration"/></validate-jwt></inbound></policies>`,
+		`<policies><inbound><validate-jwt><client-application-ids><application-id>app</application-id></client-application-ids></validate-jwt></inbound></policies>`,
+		`<policies><inbound><validate-jwt><audiences><unknown/></audiences></validate-jwt></inbound></policies>`,
+		`<policies><inbound><validate-jwt><issuers><unknown/></issuers></validate-jwt></inbound></policies>`,
+		`<policies><inbound><validate-jwt><required-claims><unknown/></required-claims></validate-jwt></inbound></policies>`,
+		`<policies><inbound><validate-jwt><required-claims><claim><value>x</value></claim></required-claims></validate-jwt></inbound></policies>`,
+		`<policies><inbound><validate-jwt><required-claims><claim name="role" match="maybe"><value>x</value></claim></required-claims></validate-jwt></inbound></policies>`,
+		`<policies><inbound><validate-jwt><required-claims><claim name="role"><unknown/></claim></required-claims></validate-jwt></inbound></policies>`,
+		`<policies><inbound><validate-jwt><unknown/></validate-jwt></inbound></policies>`,
+	} {
+		compiled, err := Compile(value, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := Execute(compiled.Inbound, &State{Request: httptest.NewRequest(http.MethodGet, "/", nil), ValidateToken: func(string) error { return nil }}); err == nil {
+			t.Fatalf("expected unsupported jwt child for %s", value)
+		}
+	}
+	if _, err := jwtPayload("a.%%%"); err == nil {
+		t.Fatal("invalid jwt payload accepted")
+	}
+	if _, err := jwtPayload("a." + base64.RawURLEncoding.EncodeToString([]byte("not-json"))); err == nil {
+		t.Fatal("non-json jwt payload accepted")
+	}
+	padded := "a." + base64.URLEncoding.EncodeToString([]byte(`{"iss":"padded"}`)) + ".sig"
+	if claims, err := jwtPayload(padded); err != nil || claims["iss"] != "padded" {
+		t.Fatalf("padded jwt payload = %v %v", claims, err)
+	}
+	if got := claimStrings(nil, ""); got != nil {
+		t.Fatalf("nil claim = %#v", got)
+	}
+	if got := claimStrings(3.0, ""); len(got) != 1 || got[0] != "3" {
+		t.Fatalf("numeric claim = %#v", got)
+	}
+	if got := claimStrings(true, ""); len(got) != 1 || got[0] != "true" {
+		t.Fatalf("bool claim = %#v", got)
+	}
+	if got := claimStrings(map[string]any{"k": "v"}, ""); len(got) != 1 || !strings.Contains(got[0], "k") {
+		t.Fatalf("object claim = %#v", got)
+	}
+	if got := claimStrings("a, b", ","); len(got) != 2 || got[0] != "a" || got[1] != "b" {
+		t.Fatalf("separated claim = %#v", got)
+	}
+	if matchClaimValues([]string{"a"}, nil, false) == false || matchClaimValues(nil, nil, true) {
+		t.Fatal("empty required claim matching")
+	}
+}
+
+func testJWT(t *testing.T, claims map[string]any) string {
+	t.Helper()
+	header, err := json.Marshal(map[string]string{"alg": "none", "typ": "JWT"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := json.Marshal(claims)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return base64.RawURLEncoding.EncodeToString(header) + "." + base64.RawURLEncoding.EncodeToString(payload) + ".sig"
 }
 
 func TestIPFilterPolicy(t *testing.T) {
@@ -616,6 +719,17 @@ func TestSharedLimitAndResponsePolicies(t *testing.T) {
 	if err := Execute(mockExpr.Inbound, mockState); err != nil || !mockState.Returned || mockState.StatusCode != http.StatusCreated || mockState.Headers.Get("Content-Type") != "application/json" {
 		t.Fatalf("mock-response expression = %+v, %v", mockState, err)
 	}
+	example, err := Compile(`<policies><inbound><mock-response status-code="200" content-type="application/json"><example>{"ok":true}</example></mock-response></inbound></policies>`, true)
+	if err != nil || example.Inbound[0].Body != `{"ok":true}` {
+		t.Fatalf("mock-response example plan = %+v, %v", example, err)
+	}
+	exampleState := &State{}
+	if err := Execute(example.Inbound, exampleState); err != nil || !exampleState.Returned || exampleState.Body != `{"ok":true}` {
+		t.Fatalf("mock-response example execute = %+v, %v", exampleState, err)
+	}
+	if _, err := Compile(`<policies><inbound><mock-response><example>@(1 + )</example></mock-response></inbound></policies>`, true); err == nil {
+		t.Fatal("invalid mock-response example expression accepted")
+	}
 
 	for _, value := range []string{
 		`<policies><inbound><rate-limit calls="0" renewal-period="1"/></inbound></policies>`,
@@ -818,6 +932,7 @@ func TestSharedLimitAndResponsePolicies(t *testing.T) {
 		`<policies><inbound><rewrite-uri/></inbound></policies>`,
 		`<policies><inbound><set-status code="401" reason="Unauthorized"><unknown/></set-status></inbound></policies>`,
 		`<policies><inbound><mock-response><unknown/></mock-response></inbound></policies>`,
+		`<policies><inbound><mock-response><schema>{"type":"object"}</schema></mock-response></inbound></policies>`,
 	} {
 		compiled, err := Compile(value, false)
 		if err != nil {
@@ -2467,6 +2582,35 @@ func TestIntegrationPolicies(t *testing.T) {
 	if err := Execute(expressed.Inbound, exprState); err != nil || !exprState.Returned || exprState.StatusCode != http.StatusForbidden || exprState.Body != "aad rejected" {
 		t.Fatalf("expressed entra rejection = %+v, %v", exprState, err)
 	}
+	apps, err := Compile(`<policies><inbound><validate-azure-ad-token tenant-id="organizations"><client-application-ids><application-id>app-1</application-id></client-application-ids><required-claims><claim name="roles" match="all"><value>reader</value></claim></required-claims></validate-azure-ad-token></inbound></policies>`, true)
+	if err != nil || len(apps.Inbound[0].ClientAppIDs) != 1 || len(apps.Inbound[0].Claims) != 1 {
+		t.Fatalf("entra constraints = %+v, %v", apps, err)
+	}
+	appToken := testJWT(t, map[string]any{"azp": "app-1", "roles": []any{"reader", "writer"}})
+	appReq := httptest.NewRequest(http.MethodGet, "/", nil)
+	appReq.Header.Set("Authorization", "Bearer "+appToken)
+	appState := &State{Request: appReq, ValidateToken: func(string) error { return nil }}
+	if err := Execute(apps.Inbound, appState); err != nil || appState.Returned {
+		t.Fatalf("matching entra claims = %+v, %v", appState, err)
+	}
+	wrongApp := testJWT(t, map[string]any{"appid": "other", "roles": []any{"reader"}})
+	wrongReq := httptest.NewRequest(http.MethodGet, "/", nil)
+	wrongReq.Header.Set("Authorization", "Bearer "+wrongApp)
+	wrongState := &State{Request: wrongReq, ValidateToken: func(string) error { return nil }}
+	if err := Execute(apps.Inbound, wrongState); err != nil || !wrongState.Returned {
+		t.Fatalf("entra app mismatch = %+v, %v", wrongState, err)
+	}
+	missingRole := testJWT(t, map[string]any{"azp": "app-1", "roles": []any{"writer"}})
+	missingReq := httptest.NewRequest(http.MethodGet, "/", nil)
+	missingReq.Header.Set("Authorization", "Bearer "+missingRole)
+	missingState := &State{Request: missingReq, ValidateToken: func(string) error { return nil }}
+	if err := Execute(apps.Inbound, missingState); err != nil || !missingState.Returned {
+		t.Fatalf("entra claim mismatch = %+v, %v", missingState, err)
+	}
+	emptyKids, err := Compile(`<policies><inbound><validate-jwt><audience></audience><issuer></issuer></validate-jwt></inbound></policies>`, true)
+	if err != nil || len(emptyKids.Inbound[0].Audiences) != 0 || len(emptyKids.Inbound[0].Issuers) != 0 {
+		t.Fatalf("empty jwt children = %+v, %v", emptyKids, err)
+	}
 
 	cross, err := Compile(`<policies><inbound><cross-domain><cross-domain-policy><allow-http-request-headers-from domain="*" headers="*"/><site-control permitted-cross-domain-policies="all">note</site-control></cross-domain-policy></cross-domain></inbound></policies>`, true)
 	if err != nil || cross.Inbound[0].Kind != ActionReturnResponse || !strings.Contains(cross.Inbound[0].Body, `domain="*"`) || !strings.Contains(cross.Inbound[0].Body, ">note</site-control>") {
@@ -2549,7 +2693,8 @@ func TestIntegrationPolicies(t *testing.T) {
 		`<policies><inbound><validate-azure-ad-token/></inbound></policies>`,
 		`<policies><inbound><validate-azure-ad-token tenant-id="tid" token-value="@(token)"/></inbound></policies>`,
 		`<policies><inbound><validate-azure-ad-token tenant-id="tid" token-value="raw"/></inbound></policies>`,
-		`<policies><inbound><validate-azure-ad-token tenant-id="tid"><client-application-ids><application-id>app</application-id></client-application-ids></validate-azure-ad-token></inbound></policies>`,
+		`<policies><inbound><validate-azure-ad-token tenant-id="tid"><client-application-ids><unknown/></client-application-ids></validate-azure-ad-token></inbound></policies>`,
+		`<policies><inbound><validate-azure-ad-token tenant-id="tid"><unknown/></validate-azure-ad-token></inbound></policies>`,
 		`<policies><inbound><redirect-content-urls><unknown/></redirect-content-urls></inbound></policies>`,
 	} {
 		compiled, err := Compile(value, false)

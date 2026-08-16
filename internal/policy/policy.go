@@ -110,6 +110,10 @@ type Action struct {
 	UnspecifiedHeaderAction string
 	ParameterRules          []ParameterRule
 	CertificateThumbprints  []string
+	Audiences               []string
+	Issuers                 []string
+	ClientAppIDs            []string
+	Claims                  []ClaimConstraint
 	Branches                []ChooseBranch
 	Otherwise               []Action
 	TraceSource             string
@@ -155,6 +159,14 @@ type ParameterRule struct {
 	Name   string
 	Values []string
 	Action string
+}
+
+// ClaimConstraint is a required JWT or Entra claim check.
+type ClaimConstraint struct {
+	Name      string
+	Values    []string
+	MatchAny  bool
+	Separator string
 }
 
 // ChooseBranch is a conditional policy branch.
@@ -948,8 +960,20 @@ func compileNode(item node, strict bool) (Action, bool, error) {
 		}
 		return Action{Kind: ActionRedirectContentURLs}, true, nil
 	case "mock-response":
-		if len(item.Children) > 0 {
-			return unsupported(item.Name + "/" + item.Children[0].Name), true, nil
+		body := ""
+		for _, child := range item.Children {
+			switch child.Name {
+			case "example":
+				value, err := compileValue(strings.TrimSpace(child.Text))
+				if err != nil {
+					return Action{}, false, err
+				}
+				body = value
+			case "schema":
+				return unsupported(item.Name + "/schema"), true, nil
+			default:
+				return unsupported(item.Name + "/" + child.Name), true, nil
+			}
 		}
 		codeValue, err := compileValue(item.Attrs["status-code"])
 		if err != nil {
@@ -959,7 +983,7 @@ func compileNode(item node, strict bool) (Action, bool, error) {
 		if err != nil {
 			return Action{}, false, err
 		}
-		result := Action{Kind: ActionReturnResponse, StatusCode: http.StatusOK}
+		result := Action{Kind: ActionReturnResponse, StatusCode: http.StatusOK, Body: body}
 		if expression(codeValue) {
 			result.Value = codeValue
 			result.StatusCode = 0
@@ -1110,7 +1134,11 @@ func compileValidateJWT(item node) (Action, bool, error) {
 			return Action{}, false, fmt.Errorf("invalid validate-jwt status")
 		}
 	}
-	return Action{Kind: ActionValidateJWT, Value: item.Attrs["failed-validation-error-message"], FailedCode: code}, true, nil
+	constraints, source := compileTokenConstraints(item)
+	if source != "" {
+		return unsupported(source), true, nil
+	}
+	return Action{Kind: ActionValidateJWT, Value: item.Attrs["failed-validation-error-message"], FailedCode: code, Audiences: constraints.Audiences, Issuers: constraints.Issuers, Claims: constraints.Claims}, true, nil
 }
 
 func compileValidateAzureADToken(item node) (Action, bool, error) {
@@ -1141,10 +1169,11 @@ func compileValidateAzureADToken(item node) (Action, bool, error) {
 	if strings.TrimSpace(tenantID) == "" || tokenValue != "" {
 		return unsupported(item.Name), true, nil
 	}
-	if len(item.Children) > 0 {
-		return unsupported(item.Name + "/" + item.Children[0].Name), true, nil
+	constraints, source := compileTokenConstraints(item)
+	if source != "" {
+		return unsupported(source), true, nil
 	}
-	action := Action{Kind: ActionValidateJWT, Name: headerName, Variable: queryName, Value: message, Body: tenantID, FailedCode: http.StatusUnauthorized}
+	action := Action{Kind: ActionValidateJWT, Name: headerName, Variable: queryName, Value: message, Body: tenantID, FailedCode: http.StatusUnauthorized, Audiences: constraints.Audiences, Issuers: constraints.Issuers, ClientAppIDs: constraints.ClientAppIDs, Claims: constraints.Claims}
 	if expression(httpcode) {
 		action.Reason = httpcode
 		action.FailedCode = 0
@@ -1156,6 +1185,87 @@ func compileValidateAzureADToken(item node) (Action, bool, error) {
 		action.FailedCode = code
 	}
 	return action, true, nil
+}
+
+type tokenConstraints struct {
+	Audiences    []string
+	Issuers      []string
+	ClientAppIDs []string
+	Claims       []ClaimConstraint
+}
+
+func compileTokenConstraints(item node) (tokenConstraints, string) {
+	var result tokenConstraints
+	for _, child := range item.Children {
+		switch child.Name {
+		case "openid-config":
+			return tokenConstraints{}, item.Name + "/openid-config"
+		case "audience":
+			if text := strings.TrimSpace(child.Text); text != "" {
+				result.Audiences = append(result.Audiences, text)
+			}
+		case "audiences":
+			values, bad := childTexts(child, "audience")
+			if bad != "" {
+				return tokenConstraints{}, item.Name + "/audiences/" + bad
+			}
+			result.Audiences = append(result.Audiences, values...)
+		case "issuer":
+			if text := strings.TrimSpace(child.Text); text != "" {
+				result.Issuers = append(result.Issuers, text)
+			}
+		case "issuers":
+			values, bad := childTexts(child, "issuer")
+			if bad != "" {
+				return tokenConstraints{}, item.Name + "/issuers/" + bad
+			}
+			result.Issuers = append(result.Issuers, values...)
+		case "required-claims":
+			for _, claim := range child.Children {
+				if claim.Name != "claim" {
+					return tokenConstraints{}, item.Name + "/required-claims/" + claim.Name
+				}
+				name := strings.TrimSpace(claim.Attrs["name"])
+				if name == "" {
+					return tokenConstraints{}, item.Name + "/required-claims/claim"
+				}
+				values, bad := childTexts(claim, "value")
+				if bad != "" {
+					return tokenConstraints{}, item.Name + "/required-claims/claim/" + bad
+				}
+				match := strings.ToLower(strings.TrimSpace(claim.Attrs["match"]))
+				if match != "" && match != "all" && match != "any" {
+					return tokenConstraints{}, item.Name + "/required-claims/claim"
+				}
+				result.Claims = append(result.Claims, ClaimConstraint{Name: name, Values: values, MatchAny: match == "any", Separator: claim.Attrs["separator"]})
+			}
+		case "client-application-ids":
+			if item.Name != "validate-azure-ad-token" {
+				return tokenConstraints{}, item.Name + "/client-application-ids"
+			}
+			values, bad := childTexts(child, "application-id")
+			if bad != "" {
+				return tokenConstraints{}, item.Name + "/client-application-ids/" + bad
+			}
+			result.ClientAppIDs = append(result.ClientAppIDs, values...)
+		default:
+			return tokenConstraints{}, item.Name + "/" + child.Name
+		}
+	}
+	return result, ""
+}
+
+func childTexts(item node, want string) ([]string, string) {
+	var values []string
+	for _, child := range item.Children {
+		if child.Name != want {
+			return nil, child.Name
+		}
+		if text := strings.TrimSpace(child.Text); text != "" {
+			values = append(values, text)
+		}
+	}
+	return values, ""
 }
 
 func compileSendRequest(item node) (Action, bool, error) {
@@ -1247,6 +1357,118 @@ func writeNodeXML(body *strings.Builder, item node) {
 	body.WriteString("</")
 	body.WriteString(item.Name)
 	body.WriteByte('>')
+}
+
+func enforceTokenConstraints(action Action, token string) bool {
+	if len(action.Audiences)+len(action.Issuers)+len(action.ClientAppIDs)+len(action.Claims) == 0 {
+		return true
+	}
+	claims, err := jwtPayload(token)
+	if err != nil {
+		return false
+	}
+	if len(action.Issuers) > 0 && !containsAny(claimStrings(claims["iss"], ""), action.Issuers) {
+		return false
+	}
+	if len(action.Audiences) > 0 && !containsAny(claimStrings(claims["aud"], ""), action.Audiences) {
+		return false
+	}
+	if len(action.ClientAppIDs) > 0 {
+		apps := append(claimStrings(claims["appid"], ""), claimStrings(claims["azp"], "")...)
+		if !containsAny(apps, action.ClientAppIDs) {
+			return false
+		}
+	}
+	for _, constraint := range action.Claims {
+		if !matchClaimValues(claimStrings(claims[constraint.Name], constraint.Separator), constraint.Values, constraint.MatchAny) {
+			return false
+		}
+	}
+	return true
+}
+
+func jwtPayload(token string) (map[string]any, error) {
+	parts := strings.Split(token, ".")
+	if len(parts) < 2 {
+		return nil, fmt.Errorf("invalid jwt")
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		payload, err = base64.URLEncoding.DecodeString(parts[1])
+		if err != nil {
+			return nil, err
+		}
+	}
+	var claims map[string]any
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		return nil, err
+	}
+	return claims, nil
+}
+
+func claimStrings(value any, separator string) []string {
+	var raw []string
+	switch typed := value.(type) {
+	case nil:
+		return nil
+	case string:
+		raw = []string{typed}
+	case float64:
+		raw = []string{strconv.FormatFloat(typed, 'f', -1, 64)}
+	case bool:
+		raw = []string{strconv.FormatBool(typed)}
+	case []any:
+		for _, item := range typed {
+			raw = append(raw, claimStrings(item, "")...)
+		}
+	default:
+		raw = []string{fmt.Sprint(typed)}
+	}
+	if separator == "" {
+		return raw
+	}
+	var split []string
+	for _, item := range raw {
+		for _, part := range strings.Split(item, separator) {
+			if part = strings.TrimSpace(part); part != "" {
+				split = append(split, part)
+			}
+		}
+	}
+	return split
+}
+
+func containsAny(actual, allowed []string) bool {
+	for _, have := range actual {
+		for _, want := range allowed {
+			if have == want {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func matchClaimValues(actual, required []string, matchAny bool) bool {
+	if len(required) == 0 {
+		return !matchAny
+	}
+	if matchAny {
+		return containsAny(actual, required)
+	}
+	for _, want := range required {
+		found := false
+		for _, have := range actual {
+			if have == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
 }
 
 func tokenFromRequest(request *http.Request, action Action) string {
@@ -1486,7 +1708,8 @@ func Execute(actions []Action, state *State) error {
 			if err != nil {
 				return err
 			}
-			if state.ValidateToken(tokenFromRequest(state.Request, Action{Name: headerName, Variable: queryName})) != nil {
+			token := tokenFromRequest(state.Request, Action{Name: headerName, Variable: queryName})
+			if state.ValidateToken(token) != nil || !enforceTokenConstraints(action, token) {
 				state.Returned, state.StatusCode, state.Body = true, code, message
 				return nil
 			}
