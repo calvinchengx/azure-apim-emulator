@@ -33,6 +33,8 @@ IGNORE_CASES = {
     "append",
     "skip",
     "delete",
+    "example",
+    "schema",
 }
 CASE_RE = re.compile(r'case\s+((?:"[^"]+"\s*,\s*)*"[^"]+")')
 
