@@ -692,7 +692,8 @@ func (r *Runtime) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	diagnosticStart := time.Now()
-	diagnosticOutput := &diagnosticWriter{ResponseWriter: w}
+	reqLimit, respLimit := diagnosticBodyLimits(append(append([]model.Diagnostic{}, service.Diagnostics...), route.Diagnostics...))
+	diagnosticOutput := &diagnosticWriter{ResponseWriter: w, bodyLimit: respLimit, requestBody: snapshotRequestBody(req, reqLimit)}
 	w = diagnosticOutput
 	defer r.emitDiagnostics(req, service, route, diagnosticOutput, diagnosticStart)
 	if trace != nil {
@@ -1039,7 +1040,10 @@ func parseAPIMDuration(value any, fallback time.Duration) time.Duration {
 
 type diagnosticWriter struct {
 	http.ResponseWriter
-	status int
+	status      int
+	body        []byte
+	bodyLimit   int
+	requestBody string
 }
 
 func (w *diagnosticWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
@@ -1066,6 +1070,14 @@ func (w *diagnosticWriter) WriteHeader(status int) {
 func (w *diagnosticWriter) Write(value []byte) (int, error) {
 	if w.status == 0 {
 		w.WriteHeader(http.StatusOK)
+	}
+	if w.bodyLimit > 0 && len(w.body) < w.bodyLimit {
+		need := w.bodyLimit - len(w.body)
+		if len(value) > need {
+			w.body = append(w.body, value[:need]...)
+		} else {
+			w.body = append(w.body, value...)
+		}
 	}
 	return w.ResponseWriter.Write(value)
 }
@@ -1117,26 +1129,131 @@ func (r *Runtime) emitDiagnostics(req *http.Request, service *Service, route *Ro
 func diagnosticMetadata(diagnostic model.Diagnostic, req *http.Request, output *diagnosticWriter) map[string]any {
 	properties, _ := diagnostic.Document["properties"].(map[string]any)
 	logHeaders, _ := properties["logHeaders"].(bool)
-	if !logHeaders {
+	reqBytes := diagnosticBytes(properties, "frontend", "request")
+	respBytes := diagnosticBytes(properties, "frontend", "response")
+	if !logHeaders && reqBytes <= 0 && respBytes <= 0 {
 		return nil
 	}
-	return map[string]any{
-		"requestHeaders":  maskedHeaders(req.Header),
-		"responseHeaders": maskedHeaders(output.Header()),
+	result := map[string]any{}
+	if logHeaders {
+		result["requestHeaders"] = maskedHeaders(req.Header)
+		result["responseHeaders"] = maskedHeaders(output.Header())
 	}
+	if reqBytes > 0 {
+		result["requestBody"] = maskedBody(truncateBody(output.requestBody, reqBytes), req.Header)
+	}
+	if respBytes > 0 {
+		result["responseBody"] = maskedBody(truncateBody(string(output.body), respBytes), output.Header())
+	}
+	return result
+}
+
+func diagnosticBodyLimits(values []model.Diagnostic) (requestLimit, responseLimit int) {
+	for _, diagnostic := range values {
+		properties, _ := diagnostic.Document["properties"].(map[string]any)
+		if n := diagnosticBytes(properties, "frontend", "request"); n > requestLimit {
+			requestLimit = n
+		}
+		if n := diagnosticBytes(properties, "frontend", "response"); n > responseLimit {
+			responseLimit = n
+		}
+	}
+	return requestLimit, responseLimit
+}
+
+const maxDiagnosticBodyBytes = 8192
+
+func diagnosticBytes(properties map[string]any, section, direction string) int {
+	frontend, _ := properties[section].(map[string]any)
+	side, _ := frontend[direction].(map[string]any)
+	body, _ := side["body"].(map[string]any)
+	var n int
+	switch value := body["bytes"].(type) {
+	case float64:
+		n = int(value)
+	case int:
+		n = value
+	default:
+		return 0
+	}
+	if n <= 0 {
+		return 0
+	}
+	if n > maxDiagnosticBodyBytes {
+		return maxDiagnosticBodyBytes
+	}
+	return n
+}
+
+func snapshotRequestBody(req *http.Request, limit int) string {
+	if req == nil || limit <= 0 || (req.Body == nil && req.GetBody == nil) {
+		return ""
+	}
+	var body io.ReadCloser
+	var err error
+	if req.GetBody != nil {
+		body, err = req.GetBody()
+		if err != nil {
+			return ""
+		}
+	} else {
+		body = req.Body
+	}
+	value, err := io.ReadAll(body)
+	_ = body.Close()
+	if err != nil {
+		return ""
+	}
+	if req.GetBody == nil {
+		req.Body = io.NopCloser(bytes.NewReader(value))
+		req.GetBody = func() (io.ReadCloser, error) {
+			return io.NopCloser(bytes.NewReader(value)), nil
+		}
+		req.ContentLength = int64(len(value))
+	}
+	return truncateBody(string(value), limit)
+}
+
+func truncateBody(value string, limit int) string {
+	if limit <= 0 || len(value) <= limit {
+		return value
+	}
+	return value[:limit]
 }
 
 func maskedHeaders(headers http.Header) map[string][]string {
 	result := make(map[string][]string, len(headers))
 	for name, values := range headers {
-		lower := strings.ToLower(name)
-		if lower == "authorization" || lower == "cookie" || lower == "set-cookie" || lower == "ocp-apim-subscription-key" || lower == "x-api-key" {
+		if secretHeader(name) {
 			result[name] = []string{"[REDACTED]"}
 			continue
 		}
 		result[name] = append([]string(nil), values...)
 	}
 	return result
+}
+
+func maskedBody(value string, headers http.Header) string {
+	for name, values := range headers {
+		if !secretHeader(name) {
+			continue
+		}
+		for _, secret := range values {
+			if secret != "" {
+				value = strings.ReplaceAll(value, secret, "[REDACTED]")
+			}
+		}
+	}
+	return value
+}
+
+func secretHeader(name string) bool {
+	switch strings.ToLower(name) {
+	case "authorization", "cookie", "set-cookie", "ocp-apim-subscription-key", "x-api-key":
+		return true
+	default:
+		return false
+	}
 }
 
 func diagnosticSampled(correlationID string, percentage float64) bool {

@@ -1183,6 +1183,80 @@ func TestDiagnosticEmissionAndSampling(t *testing.T) {
 	if !seenTrue || !seenFalse {
 		t.Fatal("deterministic sampling did not exercise both outcomes")
 	}
+
+	bodies := model.Diagnostic{ServiceID: serviceModel.ID(), ScopeID: serviceModel.ID(), Name: "bodies", SamplingPercentage: 100, Document: map[string]any{"properties": map[string]any{
+		"frontend": map[string]any{
+			"request":  map[string]any{"body": map[string]any{"bytes": 8.0}},
+			"response": map[string]any{"body": map[string]any{"bytes": 4}},
+		},
+	}}}
+	bodyReq := httptest.NewRequest(http.MethodPost, "/api/body", strings.NewReader("tok-data"))
+	bodyReq.Header.Set("Authorization", "tok")
+	bodyReq.GetBody = nil
+	bodyWriter := httptest.NewRecorder()
+	bodyWriter.Header().Set("Set-Cookie", "tok")
+	output := &diagnosticWriter{ResponseWriter: bodyWriter, bodyLimit: 4, requestBody: snapshotRequestBody(bodyReq, 8)}
+	_, _ = output.Write([]byte("tok!extra"))
+	runtime.emitDiagnostics(bodyReq, &Service{Diagnostics: []model.Diagnostic{bodies}}, &Route{API: apiModel}, output, time.Now())
+	events, _ = st.ListDiagnosticEvents(serviceModel.ID())
+	var bodyEvent model.DiagnosticEvent
+	for _, event := range events {
+		if event.DiagnosticID == bodies.ID() {
+			bodyEvent = event
+		}
+	}
+	if bodyEvent.Metadata["requestBody"] != "[REDACTED]-data" || bodyEvent.Metadata["responseBody"] != "[REDACTED]!" {
+		t.Fatalf("body metadata = %#v", bodyEvent.Metadata)
+	}
+	if snapshotRequestBody(nil, 8) != "" || snapshotRequestBody(&http.Request{}, 8) != "" {
+		t.Fatal("empty request snapshot")
+	}
+	if bodyReq.GetBody == nil {
+		t.Fatal("request GetBody not restored")
+	}
+	replayed, err := bodyReq.GetBody()
+	if err != nil {
+		t.Fatal(err)
+	}
+	replayedBody, _ := io.ReadAll(replayed)
+	if string(replayedBody) != "tok-data" {
+		t.Fatalf("restored request body = %q", replayedBody)
+	}
+	failGet := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("abcd"))
+	failGet.GetBody = func() (io.ReadCloser, error) { return nil, fmt.Errorf("get-body") }
+	if snapshotRequestBody(failGet, 8) != "" {
+		t.Fatal("GetBody error snapshot")
+	}
+	failRead := &http.Request{Body: io.NopCloser(&errReader{})}
+	if snapshotRequestBody(failRead, 8) != "" {
+		t.Fatal("read error snapshot")
+	}
+	if diagnosticBytes(nil, "frontend", "request") != 0 || truncateBody("abcd", 0) != "abcd" || truncateBody("abcd", 8) != "abcd" {
+		t.Fatal("body helpers")
+	}
+	if diagnosticBytes(map[string]any{"frontend": map[string]any{"request": map[string]any{"body": map[string]any{"bytes": -4}}}}, "frontend", "request") != 0 {
+		t.Fatal("negative body limit")
+	}
+	if diagnosticBytes(map[string]any{"frontend": map[string]any{"response": map[string]any{"body": map[string]any{"bytes": 9000.0}}}}, "frontend", "response") != maxDiagnosticBodyBytes {
+		t.Fatal("capped body limit")
+	}
+	if maskedBody("plain", http.Header{"Authorization": {""}, "X-Visible": {"keep"}}) != "plain" {
+		t.Fatal("empty secret body mask")
+	}
+	ready := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("abcd"))
+	if snapshotRequestBody(ready, 2) != "ab" {
+		t.Fatal("GetBody snapshot")
+	}
+	reqLimit, respLimit := diagnosticBodyLimits([]model.Diagnostic{bodies})
+	if reqLimit != 8 || respLimit != 4 {
+		t.Fatalf("body limits = %d %d", reqLimit, respLimit)
+	}
+	limited := &diagnosticWriter{ResponseWriter: httptest.NewRecorder(), bodyLimit: 3}
+	_, _ = limited.Write([]byte("ab"))
+	_, _ = limited.Write([]byte("cdef"))
+	if string(limited.body) != "abc" {
+		t.Fatalf("truncated writer = %q", limited.body)
+	}
 }
 
 func TestActivatedGatewayPersistsDiagnosticEvent(t *testing.T) {
@@ -1215,6 +1289,58 @@ func TestActivatedGatewayPersistsDiagnosticEvent(t *testing.T) {
 	events, err := st.ListDiagnosticEvents(service.ID())
 	if err != nil || len(events) != 1 || events[0].DiagnosticID != diagnostic.ID() || events[0].CorrelationID != "integration-correlation" || events[0].StatusCode != http.StatusCreated || events[0].ClientIP != "10.0.0.1" {
 		t.Fatalf("gateway diagnostic event = %+v, %v", events, err)
+	}
+}
+
+func TestActivatedGatewayCapturesDiagnosticBodies(t *testing.T) {
+	var received []byte
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		received, _ = io.ReadAll(request.Body)
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte("response-body"))
+	}))
+	defer backend.Close()
+	st, err := store.Open("", clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	service, _ := st.UpsertService(model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "emulator"})
+	api, _ := st.UpsertAPI(model.API{ServiceID: service.ID(), Name: "api", Path: "api", ServiceURL: backend.URL})
+	_, _ = st.UpsertOperation(model.Operation{APIID: api.ID(), Name: "post", Method: http.MethodPost, URLTemplate: "/items"})
+	logger, _ := st.UpsertLogger(model.Logger{ServiceID: service.ID(), Name: "local", LoggerType: "azureMonitor"})
+	_, _ = st.UpsertDiagnostic(model.Diagnostic{
+		ServiceID: service.ID(), ScopeID: api.ID(), Name: "local", LoggerID: logger.ID(),
+		SamplingType: "fixed", SamplingPercentage: 100,
+		Document: map[string]any{"properties": map[string]any{
+			"logHeaders": true,
+			"frontend": map[string]any{
+				"request":  map[string]any{"body": map[string]any{"bytes": 6.0}},
+				"response": map[string]any{"body": map[string]any{"bytes": 8}},
+			},
+		}},
+	})
+	runtime := New("emulator", backend.Client())
+	if err := runtime.Activate(st, false); err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/items", strings.NewReader("request-body"))
+	request.Header.Set("Authorization", "Bearer secret")
+	recorder := httptest.NewRecorder()
+	runtime.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusCreated || recorder.Body.String() != "response-body" || string(received) != "request-body" {
+		t.Fatalf("gateway = %d %q backend=%q", recorder.Code, recorder.Body.String(), received)
+	}
+	events, err := st.ListDiagnosticEvents(service.ID())
+	if err != nil || len(events) != 1 {
+		t.Fatalf("events = %+v, %v", events, err)
+	}
+	if events[0].Metadata["requestBody"] != "reques" || events[0].Metadata["responseBody"] != "response" {
+		t.Fatalf("captured bodies = %#v", events[0].Metadata)
+	}
+	requestHeaders := events[0].Metadata["requestHeaders"].(map[string]any)
+	if requestHeaders["Authorization"].([]any)[0] != "[REDACTED]" {
+		t.Fatalf("integration headers = %#v", requestHeaders)
 	}
 }
 
@@ -1772,3 +1898,7 @@ func assertGatewayStatus(t *testing.T, runtime *Runtime, request *http.Request, 
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) { return f(request) }
+
+type errReader struct{}
+
+func (errReader) Read([]byte) (int, error) { return 0, errors.New("read") }
