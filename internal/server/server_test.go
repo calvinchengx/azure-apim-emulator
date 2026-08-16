@@ -104,7 +104,7 @@ func TestManagementToGatewayVerticalSlice(t *testing.T) {
 
 func TestExpressionAndUnsupportedPolicyModes(t *testing.T) {
 	expressionXML := `<policies><inbound><set-header name="X"><value>@(context.Request.Method)</value></set-header></inbound><backend><forward-request/></backend><outbound/><on-error/></policies>`
-	unsupportedXML := `<policies><inbound><wait/></inbound><backend><forward-request/></backend><outbound/><on-error/></policies>`
+	unsupportedXML := `<policies><inbound><xsl-transform/></inbound><backend><forward-request/></backend><outbound/><on-error/></policies>`
 	expressionBody, _ := json.Marshal(map[string]any{"properties": map[string]any{"format": "rawxml", "value": expressionXML}})
 	unsupportedBody, _ := json.Marshal(map[string]any{"properties": map[string]any{"format": "rawxml", "value": unsupportedXML}})
 

@@ -4,11 +4,11 @@
   "status": "classified",
   "policies": [
     {"name":"base","status":"implemented","sections":["inbound","backend","outbound","on-error"],"gateways":["classic","v2","consumption","self-hosted","workspace"],"expression_fields":[]},
-    {"name":"rate-limit","status":"partial","sections":["inbound","outbound"],"gateways":["classic","v2","consumption","self-hosted","workspace"],"expression_fields":["counter-key"],"notes":"nested children and subscription counters remain open"},
-    {"name":"rate-limit-by-key","status":"partial","sections":["inbound","outbound"],"gateways":["classic","v2","self-hosted","workspace"],"expression_fields":["counter-key"],"notes":"nested children remain open"},
-    {"name":"quota","status":"partial","sections":["inbound","outbound"],"gateways":["classic","v2","consumption","self-hosted","workspace"],"expression_fields":["counter-key"],"notes":"nested children and bandwidth remain open"},
-    {"name":"quota-by-key","status":"partial","sections":["inbound","outbound"],"gateways":["classic","v2","self-hosted","workspace"],"expression_fields":["counter-key"],"notes":"nested children and bandwidth remain open"},
-    {"name":"limit-concurrency","status":"partial","sections":["inbound","backend","outbound","on-error"],"gateways":["classic","v2","consumption","self-hosted","workspace"],"expression_fields":["key"],"notes":"wait children remain open"},
+    {"name":"rate-limit","status":"partial","sections":["inbound","outbound"],"gateways":["classic","v2","consumption","self-hosted","workspace"],"expression_fields":["counter-key"],"notes":"nested api/operation children and bandwidth are implemented; subscription counters remain open"},
+    {"name":"rate-limit-by-key","status":"implemented","sections":["inbound","outbound"],"gateways":["classic","v2","self-hosted","workspace"],"expression_fields":["counter-key"]},
+    {"name":"quota","status":"partial","sections":["inbound","outbound"],"gateways":["classic","v2","consumption","self-hosted","workspace"],"expression_fields":["counter-key"],"notes":"nested api/operation children and bandwidth are implemented; subscription counters remain open"},
+    {"name":"quota-by-key","status":"implemented","sections":["inbound","outbound"],"gateways":["classic","v2","self-hosted","workspace"],"expression_fields":["counter-key"]},
+    {"name":"limit-concurrency","status":"implemented","sections":["inbound","backend","outbound","on-error"],"gateways":["classic","v2","consumption","self-hosted","workspace"],"expression_fields":["key"]},
     {"name":"llm-token-limit","status":"unsupported","sections":["inbound"],"gateways":["classic","v2","self-hosted","workspace"],"expression_fields":[]},
     {"name":"check-header","status":"implemented","sections":["inbound"],"gateways":["classic","v2","consumption","self-hosted","workspace"],"expression_fields":["name","value","failed-check-error-message"]},
     {"name":"get-authorization-context","status":"external-adapter","sections":["inbound"],"gateways":["classic","v2","consumption"],"expression_fields":[]},
@@ -69,7 +69,7 @@
     {"name":"publish-event","status":"unsupported","sections":["inbound"],"gateways":["classic","v2","consumption"],"expression_fields":[]},
     {"name":"choose","status":"implemented","sections":["inbound","backend","outbound","on-error"],"gateways":["classic","v2","consumption","self-hosted","workspace"],"expression_fields":["condition"]},
     {"name":"include-fragment","status":"implemented","sections":["inbound","backend","outbound","on-error"],"gateways":["classic","v2","consumption","self-hosted","workspace"],"expression_fields":[]},
-    {"name":"retry","status":"partial","sections":["backend"],"gateways":["classic","v2","consumption","self-hosted","workspace"],"expression_fields":["condition"],"notes":"wait children remain open"},
-    {"name":"wait","status":"unsupported","sections":["inbound","backend","outbound","on-error"],"gateways":["classic","v2","consumption","self-hosted","workspace"],"expression_fields":[]}
+    {"name":"retry","status":"implemented","sections":["backend"],"gateways":["classic","v2","consumption","self-hosted","workspace"],"expression_fields":["condition"]},
+    {"name":"wait","status":"partial","sections":["inbound","backend","outbound","on-error"],"gateways":["classic","v2","consumption","self-hosted","workspace"],"expression_fields":[],"notes":"sequential all/any/self over send-request, cache-lookup-value, and choose; parallel wait remains open"}
   ]
 }
