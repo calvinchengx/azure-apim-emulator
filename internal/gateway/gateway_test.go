@@ -946,7 +946,7 @@ func TestServeHTTPFailuresAndPolicyResponses(t *testing.T) {
 	assertGatewayStatus(t, runtime, httptest.NewRequest(http.MethodGet, "/api/items", nil), http.StatusInternalServerError)
 
 	route.Plan.Inbound = []policy.Action{{Kind: policy.ActionUnsupported, Source: "unsupported"}}
-	route.Plan.OnError = []policy.Action{{Kind: policy.ActionReturnResponse, StatusCode: 599, Body: "handled"}}
+	route.Plan.OnError = []policy.Action{{Kind: policy.ActionChoose, Branches: []policy.ChooseBranch{{Condition: "@(context.LastError != null)", Actions: []policy.Action{{Kind: policy.ActionReturnResponse, StatusCode: 599, Body: "handled"}}}}}}
 	recorder = httptest.NewRecorder()
 	runtime.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/items", nil))
 	if recorder.Code != 599 || recorder.Body.String() != "handled" {

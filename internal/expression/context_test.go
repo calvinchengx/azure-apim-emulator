@@ -29,9 +29,12 @@ func TestRequestEnvBindings(t *testing.T) {
 		{"@(context.Request.Url.QueryString)", "?x=1"},
 		{"@(context.Request.IpAddress)", "10.0.0.8"},
 		{"@(context.Request.Headers['X-Test'])", "yes"},
+		{"@(context.Request.Headers.Get('X-Test'))", "yes"},
+		{"@(context.Request.Headers.Get('Missing'))", ""},
 		{"@(context.Request.Headers.GetValueOrDefault('X-Test'))", "yes"},
 		{"@(context.Request.Headers.GetValueOrDefault('Missing', 'fallback'))", "fallback"},
 		{"@(context.Request.Headers.GetValueOrDefault('Missing'))", ""},
+		{"@(context.Request.Url.Port)", int64(443)},
 		{"@(context.Variables['route'])", "blue"},
 		{"@(context.Variables.ContainsKey('route'))", true},
 		{"@(context.Variables.ContainsKey('missing'))", false},
@@ -55,8 +58,8 @@ func TestRequestEnvFallbacksAndErrors(t *testing.T) {
 	plain.Host = ""
 	plain.URL.Host = "from-url.example"
 	plain.RemoteAddr = "192.0.2.1"
-	got, err := EvalEnv("@(context.Request.Url.Host + context.Request.Url.Scheme + context.Request.Url.QueryString + context.Request.IpAddress)", RequestEnv(plain, nil))
-	if err != nil || got.String() != "from-url.examplehttp192.0.2.1" {
+	got, err := EvalEnv("@(context.Request.Url.Host + context.Request.Url.Scheme + context.Request.Url.QueryString + context.Request.IpAddress + context.Request.Url.Port.ToString())", RequestEnv(plain, nil))
+	if err != nil || got.String() != "from-url.examplehttp192.0.2.180" {
 		t.Fatalf("plain request = %q %v", got, err)
 	}
 	relative, err := EvalEnv("@(context.Request.Url)", RequestEnv(plain, nil))
@@ -73,6 +76,28 @@ func TestRequestEnvFallbacksAndErrors(t *testing.T) {
 	secureURL, err := EvalEnv("@(context.Request.Url)", RequestEnv(secure, nil))
 	if err != nil || !strings.HasPrefix(secureURL.String(), "https://") {
 		t.Fatalf("tls url = %q %v", secureURL, err)
+	}
+	tlsPort, err := EvalEnv("@(context.Request.Url.Port)", RequestEnv(secure, nil))
+	if err != nil || tlsPort.Interface() != int64(443) {
+		t.Fatalf("tls port = %+v %v", tlsPort, err)
+	}
+
+	explicit := httptest.NewRequest(http.MethodGet, "http://api.example:8080/match", nil)
+	explicitPort, err := EvalEnv("@(context.Request.Url.Port)", RequestEnv(explicit, nil))
+	if err != nil || explicitPort.Interface() != int64(8080) {
+		t.Fatalf("explicit port = %+v %v", explicitPort, err)
+	}
+	hostPort := httptest.NewRequest(http.MethodGet, "/plain", nil)
+	hostPort.Host = "from-host.example:9090"
+	fromHost, err := EvalEnv("@(context.Request.Url.Port)", RequestEnv(hostPort, nil))
+	if err != nil || fromHost.Interface() != int64(9090) {
+		t.Fatalf("host port = %+v %v", fromHost, err)
+	}
+	invalidHostPort := httptest.NewRequest(http.MethodGet, "/plain", nil)
+	invalidHostPort.Host = "from-host.example:abc"
+	fallbackPort, err := EvalEnv("@(context.Request.Url.Port)", RequestEnv(invalidHostPort, nil))
+	if err != nil || fallbackPort.Interface() != int64(80) {
+		t.Fatalf("invalid host port = %+v %v", fallbackPort, err)
 	}
 
 	missingURL := &http.Request{Method: http.MethodGet}
@@ -102,8 +127,11 @@ func TestRequestEnvFallbacksAndErrors(t *testing.T) {
 		"@(context.Request.Body)",
 		"@(context.Response.Body)",
 		"@(context.LastError.Message)",
-		"@(context.Request.Url.Port)",
-		"@(context.Request.Headers.Get('X'))",
+		"@(context.Request.Url.Fragment)",
+		"@(context.Request.Headers.Missing)",
+		"@(context.Request.Headers.Get())",
+		"@(context.Request.Headers.Get(1))",
+		"@(context.Request.Headers.Get('a', 'b'))",
 		"@(context.Request.Headers[1])",
 		"@(context.Request.Headers.GetValueOrDefault())",
 		"@(context.Request.Headers.GetValueOrDefault(1))",

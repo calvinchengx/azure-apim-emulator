@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"strconv"
 )
 
 // Context is the APIM `context` binding for one evaluation.
@@ -158,9 +159,33 @@ func (u *urlHost) member(name string) (Value, error) {
 			return String(""), nil
 		}
 		return String("?" + url.RawQuery), nil
+	case "Port":
+		return Int(u.port()), nil
 	default:
 		return Null(), fmt.Errorf("unknown member %s", name)
 	}
+}
+
+func (u *urlHost) port() int64 {
+	if url := u.request.URL; url != nil {
+		if port := url.Port(); port != "" {
+			n, _ := strconv.Atoi(port)
+			return int64(n)
+		}
+	}
+	host := u.request.Host
+	if host == "" && u.request.URL != nil {
+		host = u.request.URL.Host
+	}
+	if _, port, err := net.SplitHostPort(host); err == nil {
+		if n, err := strconv.Atoi(port); err == nil {
+			return int64(n)
+		}
+	}
+	if (u.request.URL != nil && u.request.URL.Scheme == "https") || u.request.TLS != nil {
+		return 443
+	}
+	return 80
 }
 
 type headerHost struct {
@@ -168,10 +193,21 @@ type headerHost struct {
 }
 
 func (h *headerHost) member(name string) (Value, error) {
-	if name != "GetValueOrDefault" {
+	switch name {
+	case "Get":
+		return Object(funcValue{fn: h.get}), nil
+	case "GetValueOrDefault":
+		return Object(funcValue{fn: h.getValueOrDefault}), nil
+	default:
 		return Null(), fmt.Errorf("unknown member %s", name)
 	}
-	return Object(funcValue{fn: h.getValueOrDefault}), nil
+}
+
+func (h *headerHost) get(args []Value) (Value, error) {
+	if len(args) != 1 || args[0].kind != KindString {
+		return Null(), fmt.Errorf("Get requires a header name")
+	}
+	return String(h.header.Get(args[0].str)), nil
 }
 
 func (h *headerHost) index(key Value) (Value, error) {
