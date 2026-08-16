@@ -1,0 +1,12 @@
+{
+  "name": "azure-apim-emulator-soap-witness",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "preinstall": "npx only-allow pnpm",
+    "test": "node witness.js"
+  },
+  "dependencies": {
+    "soap": "1.1.5"
+  }
+}

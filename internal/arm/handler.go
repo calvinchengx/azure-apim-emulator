@@ -27,6 +27,7 @@ import (
 	"github.com/calvinchengx/azure-apim-emulator/internal/model"
 	openapic "github.com/calvinchengx/azure-apim-emulator/internal/openapi"
 	"github.com/calvinchengx/azure-apim-emulator/internal/policy"
+	soapc "github.com/calvinchengx/azure-apim-emulator/internal/soap"
 	"github.com/calvinchengx/azure-apim-emulator/internal/store"
 )
 
@@ -1375,37 +1376,58 @@ func (h *Handler) apiResource(w http.ResponseWriter, r *http.Request, api model.
 				writeError(w, http.StatusBadRequest, "ValidationError", err.Error(), "properties.value")
 				return
 			}
-			parsed, err := openapic.Parse(source)
-			if err != nil {
-				writeError(w, http.StatusBadRequest, "ValidationError", err.Error(), "properties.value")
-				return
-			}
-			if body.Properties.DisplayName == nil {
-				api.DisplayName = parsed.Title
-			}
-			if body.Properties.ServiceURL == nil {
-				api.ServiceURL = parsed.ServiceURL
-			}
-			if body.Properties.Protocols == nil && api.ServiceURL != "" {
-				protocol := "http"
-				if parsedURL, err := url.Parse(api.ServiceURL); err == nil && parsedURL.Scheme == "https" {
-					protocol = "https"
+			// WSDL is a different document with a different parser. Azure
+			// imports SOAP through this same format/value pair rather than
+			// through a schema sub-resource, so following that shape is what
+			// keeps a caller's import script portable.
+			if isWSDLFormat(*body.Properties.Format) {
+				wsdl, err := soapc.Parse(source)
+				if err != nil {
+					writeError(w, http.StatusBadRequest, "ValidationError", err.Error(), "properties.value")
+					return
 				}
-				api.Protocols = []string{protocol}
-			}
-			var schema *model.APISchema
-			if len(parsed.Schemas) != 0 {
-				contentType, key := "application/vnd.oai.openapi.components+json", "components"
-				if parsed.Version == "2.0" {
-					contentType, key = "application/vnd.ms-azure-apim.swagger.definitions+json", "definitions"
+				if body.Properties.DisplayName == nil && wsdl.ServiceName != "" {
+					api.DisplayName = wsdl.ServiceName
 				}
-				schema = &model.APISchema{ContentType: contentType, Document: map[string]any{key: parsed.Schemas}}
+				markSOAPAPIType(api.Document)
+				imported = &struct {
+					definition model.APIDefinition
+					operations []model.Operation
+					schema     *model.APISchema
+				}{model.APIDefinition{Format: *body.Properties.Format, Value: source, SourceURL: sourceURL}, wsdlOperations(wsdl), nil}
+			} else {
+				parsed, err := openapic.Parse(source)
+				if err != nil {
+					writeError(w, http.StatusBadRequest, "ValidationError", err.Error(), "properties.value")
+					return
+				}
+				if body.Properties.DisplayName == nil {
+					api.DisplayName = parsed.Title
+				}
+				if body.Properties.ServiceURL == nil {
+					api.ServiceURL = parsed.ServiceURL
+				}
+				if body.Properties.Protocols == nil && api.ServiceURL != "" {
+					protocol := "http"
+					if parsedURL, err := url.Parse(api.ServiceURL); err == nil && parsedURL.Scheme == "https" {
+						protocol = "https"
+					}
+					api.Protocols = []string{protocol}
+				}
+				var schema *model.APISchema
+				if len(parsed.Schemas) != 0 {
+					contentType, key := "application/vnd.oai.openapi.components+json", "components"
+					if parsed.Version == "2.0" {
+						contentType, key = "application/vnd.ms-azure-apim.swagger.definitions+json", "definitions"
+					}
+					schema = &model.APISchema{ContentType: contentType, Document: map[string]any{key: parsed.Schemas}}
+				}
+				imported = &struct {
+					definition model.APIDefinition
+					operations []model.Operation
+					schema     *model.APISchema
+				}{model.APIDefinition{Format: *body.Properties.Format, Value: source, SourceURL: sourceURL}, parsed.Operations, schema}
 			}
-			imported = &struct {
-				definition model.APIDefinition
-				operations []model.Operation
-				schema     *model.APISchema
-			}{model.APIDefinition{Format: *body.Properties.Format, Value: source, SourceURL: sourceURL}, parsed.Operations, schema}
 		}
 		// A SYNTHETIC GraphQL API has no backend by definition: its fields come
 		// from resolvers, and requiring a serviceUrl would make the shape
@@ -1534,9 +1556,10 @@ func importDialControl(_, address string, _ syscall.RawConn) error {
 }
 
 func (h *Handler) resolveImport(r *http.Request, format, value string) (string, string, error) {
-	linked := format == "openapi-link" || format == "openapi+json-link" || format == "swagger-link-json"
+	linked := format == "openapi-link" || format == "openapi+json-link" || format == "swagger-link-json" ||
+		strings.EqualFold(format, "wsdl-link")
 	if !linked {
-		if format != "openapi" && format != "openapi+json" && format != "swagger-json" {
+		if format != "openapi" && format != "openapi+json" && format != "swagger-json" && !strings.EqualFold(format, "wsdl") {
 			return "", "", fmt.Errorf("unsupported import format %q", format)
 		}
 		if len(value) > maxImportBytes {
@@ -5030,4 +5053,37 @@ func isGraphQLAPIDocument(document map[string]any) bool {
 	properties, _ := document["properties"].(map[string]any)
 	apiType, _ := properties["apiType"].(string)
 	return strings.EqualFold(apiType, "graphql")
+}
+
+// isWSDLFormat reports whether an import format carries a WSDL document.
+func isWSDLFormat(format string) bool {
+	return strings.EqualFold(format, "wsdl") || strings.EqualFold(format, "wsdl-link")
+}
+
+// markSOAPAPIType stamps apiType=soap on an imported WSDL API, which is what
+// Azure does and what puts the API on the gateway's SOAP path.
+func markSOAPAPIType(document map[string]any) {
+	properties, ok := document["properties"].(map[string]any)
+	if !ok {
+		properties = map[string]any{}
+		document["properties"] = properties
+	}
+	properties["apiType"] = "soap"
+}
+
+// wsdlOperations renders a WSDL's operations as APIM operations.
+//
+// Every SOAP operation is a POST to the same URL; the operation is chosen by
+// SOAPAction or by the body element, not by the path. Giving them distinct
+// URL templates would invent a REST shape the WSDL does not describe.
+func wsdlOperations(schema *soapc.Schema) []model.Operation {
+	operations := make([]model.Operation, 0)
+	for _, operation := range schema.Operations() {
+		operations = append(operations, model.Operation{
+			Name: operation.Name, DisplayName: operation.Name,
+			Method: http.MethodPost, URLTemplate: "/",
+			Document: map[string]any{"properties": map[string]any{"soapAction": operation.Action}},
+		})
+	}
+	return operations
 }

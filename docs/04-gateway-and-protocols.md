@@ -70,8 +70,39 @@ OpenAPI enriches validation and portal documentation but is not required to prox
 
 ### SOAP
 
-Support SOAP pass-through, WSDL import, SOAP action routing, REST-to-SOAP and
-SOAP-to-REST transformations, XML policies, fault envelopes, and content types.
+**Implemented: pass-through.** A WSDL is imported through `format: "wsdl"` or
+`"wsdl-link"` on the API itself, not through a schema sub-resource, because that
+is where Azure puts it; following the same shape is what keeps an import script
+portable. The import derives one APIM operation per WSDL operation and stamps
+`apiType: soap`, which is what puts the API on this path.
+
+Every SOAP operation is a POST to the same URL, so operations are not chosen by
+path. The gateway resolves them by SOAPAction first, then by the local name of
+the first element inside the envelope Body. The fallback is not a nicety: SOAP
+1.2 carries the action as a content-type parameter rather than a header, and
+WS-I Basic Profile permits an empty SOAPAction, so an action-only gateway would
+reject perfectly valid callers.
+
+Only requests whose content type is `text/xml`, `application/soap+xml` or
+`application/xml` take this path. A SOAP API's WSDL is fetched with a plain GET,
+and answering that with a fault would be nonsense.
+
+The envelope is forwarded **byte for byte**. Re-serialising the parsed document
+would change whitespace, prefixes and attribute order, and a WS-Security signed
+envelope would stop verifying.
+
+An operation the WSDL does not define is refused at the gateway as a SOAP
+**fault**, not a bare HTTP error, because a fault is what a client's stack
+decodes into an exception; an HTTP error surfaces as a transport failure
+instead, and the two are not interchangeable to anyone debugging. The fault is
+shaped for the caller's version: SOAP 1.1 uses `faultcode`/`faultstring`, SOAP
+1.2 restructured them into `Code`/`Value` and `Reason`/`Text`, so answering a
+1.2 caller with a 1.1 body produces something their library cannot decode. The
+message is XML-escaped, since it carries a caller-supplied operation name and an
+unescaped `<` would turn a clear refusal into a parse error.
+
+**Pending.** SOAP-to-REST transformation, serving the WSDL at `?wsdl`,
+`wsdlSelector` service and endpoint filtering, and XSD-level request validation.
 
 ### GraphQL
 
