@@ -242,10 +242,12 @@ type lastErrorHost struct {
 }
 
 func (e *lastErrorHost) member(name string) (Value, error) {
-	if name != "Message" {
+	switch name {
+	case "Message":
+		return String(e.err.Error()), nil
+	default:
 		return Null(), fmt.Errorf("unknown member %s", name)
 	}
-	return String(e.err.Error()), nil
 }
 
 type urlHost struct {
@@ -373,19 +375,21 @@ type mapHost struct {
 }
 
 func (m *mapHost) member(name string) (Value, error) {
-	if name != "ContainsKey" {
+	switch name {
+	case "ContainsKey":
+		return Object(funcValue{fn: func(args []Value) (Value, error) {
+			if len(args) != 1 || args[0].kind != KindString {
+				return Null(), fmt.Errorf("ContainsKey requires a string")
+			}
+			if m.values == nil {
+				return Bool(false), nil
+			}
+			_, ok := m.values[args[0].str]
+			return Bool(ok), nil
+		}}), nil
+	default:
 		return Null(), fmt.Errorf("unknown member %s", name)
 	}
-	return Object(funcValue{fn: func(args []Value) (Value, error) {
-		if len(args) != 1 || args[0].kind != KindString {
-			return Null(), fmt.Errorf("ContainsKey requires a string")
-		}
-		if m.values == nil {
-			return Bool(false), nil
-		}
-		_, ok := m.values[args[0].str]
-		return Bool(ok), nil
-	}}), nil
 }
 
 func (m *mapHost) index(key Value) (Value, error) {
@@ -407,10 +411,12 @@ type bodyHost struct {
 }
 
 func (b *bodyHost) member(name string) (Value, error) {
-	if name != "AsString" {
+	switch name {
+	case "AsString":
+		return Object(funcValue{fn: b.asString}), nil
+	default:
 		return Null(), fmt.Errorf("unknown member %s", name)
 	}
-	return Object(funcValue{fn: b.asString}), nil
 }
 
 func (b *bodyHost) asString(args []Value) (Value, error) {
