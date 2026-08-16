@@ -3,6 +3,7 @@ packages:
   - e2e/javascript
   - e2e/graphql
   - e2e/grpc
+  - e2e/soap
 
 # pnpm 10 blocks dependency build scripts by default; allow the ones Astro
 # needs to compile native/optimized assets.

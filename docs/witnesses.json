@@ -189,6 +189,12 @@
       "go:TestGRPCForwardsTrailersAndStatus",
       "go:TestGRPCReachesTheBackendOverHTTP2",
       "go:TestGRPCRefusesMethodsAbsentFromTheSchema"
+    ],
+    "SOAP": [
+      "ci:soap-witness",
+      "go:TestWSDLImportDerivesOperationsAndMarksTheAPI",
+      "go:TestSOAPForwardsTheEnvelopeVerbatim",
+      "go:TestSOAPRefusesUnknownOperationsWithAFault"
     ]
   }
 }
