@@ -107,12 +107,17 @@ stable contract.
 
 ## Emulator family
 
-- `entra-emulator` issues and validates the identities used by management,
-  gateway, portal, and managed-identity flows.
-- `azure-keyvault-emulator` supplies Key Vault-backed named values and certificates.
-- `fabric-emulator` can be placed behind the gateway as a realistic protected backend.
-- `arm-emulator` is deliberately not a dependency: this emulator serves its own
-  `Microsoft.ApiManagement` ARM surface rather than calling out to arm-emulator's.
+- [`entra-emulator`](https://github.com/calvinchengx/entra-emulator) issues and validates the identities used
+  by management, gateway, portal, and managed-identity flows.
+- [`azure-keyvault-emulator`](https://github.com/calvinchengx/azure-keyvault-emulator) supplies Key Vault-backed
+  named values and certificates.
+- [`fabric-emulator`](https://github.com/calvinchengx/fabric-emulator) can be placed behind the gateway as a
+  realistic protected backend.
+- [`databricks-emulator`](https://github.com/calvinchengx/databricks-emulator) can sit behind it the same way;
+  it is a sibling workspace emulator rather than a dependency of this one.
+- [`arm-emulator`](https://github.com/calvinchengx/arm-emulator) is deliberately **not** a dependency: this
+  emulator serves its own `Microsoft.ApiManagement` ARM surface rather than
+  calling out to arm-emulator's.
 
 To run them together, see [**azure-emulators**](https://github.com/calvinchengx/azure-emulators): a composition-only
 repo holding the family `docker-compose.yml`, the shared issuer wiring, and the
