@@ -55,6 +55,7 @@ official SDKs and documented policies.
 - Complete APIM context object and documented allowed .NET type/member surface in pure Go.
 - Multi-statement blocks, lambdas/LINQ, JSON/XML/JWT/crypto semantics, and exception behavior.
 - Every policy-reference entry implemented or carrying an explicit external dependency adapter.
+  The checked-in Learn catalog is fully classified (`implemented` / `partial` / `unsupported` / `external-adapter`) and CI rejects `unclassified` names and compiler drift; remaining families still need implementations or adapters.
 - Scope inheritance across service, product, API, operation, fragments, and workspace governance.
 - Generated member- and policy-level compatibility documentation.
 - Large Azure differential corpus for error paths and edge semantics.
