@@ -12,7 +12,7 @@ endif
 COMPOSE = docker compose -f compose.yaml
 
 .PHONY: build docs test test-coverage test-differential test-sdks setup-sdks \
-        setup-graphql test-graphql verify \
+        setup-graphql test-graphql setup-grpc test-grpc verify \
         check-inventory up down clean status doctor ps logs
 
 build:
@@ -48,6 +48,14 @@ setup-graphql:
 
 test-graphql:
 	APIM_RUN_EXTERNAL_SDK_TESTS=1 go test -count=1 -v -run 'TestOfficialManagementSDKs/graphql' ./e2e/sdk
+
+# Same reasoning as the GraphQL witness: Go and pnpm only, and its own job so a
+# break in the dotnet or python suites cannot hide a gRPC regression.
+setup-grpc:
+	pnpm install --frozen-lockfile
+
+test-grpc:
+	APIM_RUN_EXTERNAL_SDK_TESTS=1 go test -count=1 -v -run 'TestOfficialManagementSDKs/grpc' ./e2e/sdk
 
 docs:
 	pnpm --filter azure-apim-emulator-docs build

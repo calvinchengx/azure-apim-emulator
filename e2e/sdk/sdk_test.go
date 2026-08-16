@@ -49,6 +49,7 @@ func TestOfficialManagementSDKs(t *testing.T) {
 	}{
 		{"javascript", "pnpm", []string{"test"}, filepath.Join(root, "e2e", "javascript")},
 		{"graphql", "pnpm", []string{"test"}, filepath.Join(root, "e2e", "graphql")},
+		{"grpc", "pnpm", []string{"test"}, filepath.Join(root, "e2e", "grpc")},
 		{"python", venvPython(root), []string{"witness.py"}, filepath.Join(root, "e2e", "python")},
 		{"dotnet", "dotnet", []string{"run", "--project", "Witness.csproj"}, filepath.Join(root, "e2e", "dotnet")},
 	}

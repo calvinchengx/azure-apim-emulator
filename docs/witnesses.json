@@ -183,6 +183,12 @@
       "go:TestSyntheticGraphQLPassesArgumentsAndParent",
       "go:TestEachResolverCallSeesOnlyItsOwnArguments",
       "go:TestIntrospectionAdvertisesOnlyDirectivesWeHonour"
+    ],
+    "gRPC": [
+      "ci:grpc-witness",
+      "go:TestGRPCForwardsTrailersAndStatus",
+      "go:TestGRPCReachesTheBackendOverHTTP2",
+      "go:TestGRPCRefusesMethodsAbsentFromTheSchema"
     ]
   }
 }
