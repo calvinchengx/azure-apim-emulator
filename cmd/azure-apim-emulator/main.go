@@ -14,6 +14,8 @@ import (
 	"github.com/calvinchengx/azure-apim-emulator/internal/config"
 	"github.com/calvinchengx/azure-apim-emulator/internal/server"
 	"github.com/calvinchengx/azure-apim-emulator/internal/tlscert"
+	"golang.org/x/net/http2"
+	"golang.org/x/net/http2/h2c"
 )
 
 var version = "dev"
@@ -81,10 +83,22 @@ func run(args []string) error {
 		if err != nil {
 			return err
 		}
-		listener = tls.NewListener(listener, &tls.Config{Certificates: []tls.Certificate{certificate}, MinVersion: tls.VersionTLS12})
+		// NextProtos advertises h2 in ALPN. Without it the handshake settles on
+		// HTTP/1.1 no matter what the client offers, and gRPC cannot run at
+		// all: it is defined over HTTP/2 and needs trailers, which HTTP/1.1
+		// responses cannot carry.
+		listener = tls.NewListener(listener, &tls.Config{
+			Certificates: []tls.Certificate{certificate},
+			MinVersion:   tls.VersionTLS12,
+			NextProtos:   []string{"h2", "http/1.1"},
+		})
 	}
 	fmt.Printf("azure-apim-emulator listening on %s://%s (default service: %s)\n", scheme, listener.Addr(), cfg.DefaultService)
-	return serve(listener, srv.Handler())
+	// h2c carries HTTP/2 over cleartext, for the compose stack and any caller
+	// running with TLS disabled. The wrapper is inert on an HTTP/1.1
+	// connection and on a TLS connection that already negotiated h2, so one
+	// handler serves every combination.
+	return serve(listener, h2c.NewHandler(srv.Handler(), &http2.Server{}))
 }
 
 func healthcheck(addr string) error {

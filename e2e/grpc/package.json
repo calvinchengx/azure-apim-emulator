@@ -1,0 +1,13 @@
+{
+  "name": "azure-apim-emulator-grpc-witness",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "preinstall": "npx only-allow pnpm",
+    "test": "node witness.js"
+  },
+  "dependencies": {
+    "@grpc/grpc-js": "1.12.6",
+    "@grpc/proto-loader": "0.7.13"
+  }
+}

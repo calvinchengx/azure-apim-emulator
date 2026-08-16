@@ -149,6 +149,42 @@ Support pass-through where the selected gateway/tier permits it, protobuf
 imports, HTTP/2 requirements, metadata forwarding, status/trailers, deadlines,
 streaming modes, and documented transcoding if exposed publicly.
 
+**Implemented: pass-through.** An API is gRPC when `properties.apiType` is
+`grpc` *and* it carries a schema resource with content type
+`application/vnd.ms-azure-apim.grpc.schema`. Only requests whose content type
+begins `application/grpc` take the gRPC path, so an ordinary HTTP probe to the
+same API is not framed as a gRPC response.
+
+Calls route by their `/package.Service/Method` path. A method the schema does
+not define is refused at the gateway with `UNIMPLEMENTED` and never reaches the
+backend, which is the same bargain the GraphQL schema makes: the caller gets one
+answer regardless of which backend is behind the API.
+
+**HTTP/2 is not optional, and it was not previously enabled.** gRPC is defined
+over HTTP/2 and puts the call status in TRAILERS, which an HTTP/1.1 response
+cannot carry. Two changes were needed:
+
+- **Inbound.** The TLS listener now advertises `h2` in ALPN, and the handler is
+  wrapped in `h2c` so cleartext callers can use HTTP/2 as well. Without ALPN the
+  handshake settled on HTTP/1.1 no matter what the client offered.
+- **Outbound.** Go's default transport negotiates HTTP/2 only over TLS, so a
+  cleartext gRPC backend received an HTTP/1.1 request and replied with HTTP/2
+  frames the transport reported as a malformed response. gRPC forwarding uses an
+  explicit HTTP/2 transport, with the h2c prior-knowledge handshake for `http://`
+  backends. A transport the caller already configured keeps its TLS settings, so
+  a backend requiring mutual TLS still works.
+
+A call arriving over HTTP/1.1 is refused with a status rather than proxied,
+because its result could never be delivered. Bodies are streamed rather than
+buffered and flushed per chunk, so a server-streaming call delivers messages as
+they arrive. Trailers are announced before the body is written, since there is
+no way to add one afterwards, and `grpc-status` is announced even when the
+backend omits it so a client is never left waiting on a status that was dropped.
+
+**Pending.** Client-streaming and bidirectional streaming are unproven; the
+witness covers unary and server streaming. Deadline propagation, gRPC-Web
+transcoding, and tier constraints are not implemented.
+
 ### MCP and AI gateway traffic
 
 Track APIM's public MCP and model gateway contracts as versioned protocol and

@@ -23,6 +23,7 @@ import (
 	certutil "github.com/calvinchengx/azure-apim-emulator/internal/certificate"
 	"github.com/calvinchengx/azure-apim-emulator/internal/expression"
 	"github.com/calvinchengx/azure-apim-emulator/internal/graphql"
+	"github.com/calvinchengx/azure-apim-emulator/internal/grpcapi"
 	"github.com/calvinchengx/azure-apim-emulator/internal/model"
 	"github.com/calvinchengx/azure-apim-emulator/internal/policy"
 	"github.com/calvinchengx/azure-apim-emulator/internal/store"
@@ -78,6 +79,9 @@ type Route struct {
 	// whose schema failed to compile stays a plain HTTP proxy rather than
 	// half-serving GraphQL.
 	GraphQL *graphql.Schema
+	// GRPC is the compiled protobuf schema of a gRPC API, nil for every other
+	// API type.
+	GRPC *grpcapi.Schema
 	// Resolvers make the API SYNTHETIC: present means fields are produced by
 	// resolvers and no GraphQL backend is contacted. Empty means pass-through.
 	// The two are mutually exclusive by construction rather than by a flag,
@@ -525,6 +529,13 @@ func (r *Runtime) Activate(st *store.Store, strict bool) error {
 			}
 			schema = nil
 		}
+		grpcSchema, err := grpcSchemaFor(st, api)
+		if err != nil {
+			if strict {
+				return err
+			}
+			grpcSchema = nil
+		}
 		resolvers, err := graphQLResolversFor(st, api, schema)
 		if err != nil {
 			if strict {
@@ -532,7 +543,7 @@ func (r *Runtime) Activate(st *store.Store, strict bool) error {
 			}
 			resolvers = nil
 		}
-		service.Routes = append(service.Routes, &Route{API: api, VersionSet: versionSet, Operations: operationList, OperationPlans: operationPlans, SubscriptionPlans: subscriptionPlans, Plan: plan, AcceptedKeys: keysByAPI[strings.ToLower(api.ID())], Diagnostics: diagnostics[strings.ToLower(api.ID())], GraphQL: schema, Resolvers: resolvers})
+		service.Routes = append(service.Routes, &Route{API: api, VersionSet: versionSet, Operations: operationList, OperationPlans: operationPlans, SubscriptionPlans: subscriptionPlans, Plan: plan, AcceptedKeys: keysByAPI[strings.ToLower(api.ID())], Diagnostics: diagnostics[strings.ToLower(api.ID())], GraphQL: schema, Resolvers: resolvers, GRPC: grpcSchema})
 	}
 	for _, service := range snapshot.Services {
 		sort.SliceStable(service.Routes, func(i, j int) bool { return len(service.Routes[i].API.Path) > len(service.Routes[j].API.Path) })
@@ -742,11 +753,15 @@ func (r *Runtime) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		// A GraphQL API is one endpoint, not a set of REST operations, so there
 		// is nothing for the matcher to match. The schema decides what is valid
 		// here, and it does so per GraphQL field rather than per URL.
-		if route.GraphQL == nil {
+		if route.GraphQL == nil && route.GRPC == nil {
 			gatewayError(w, http.StatusNotFound, "OperationNotFound", "Unable to match incoming request to an operation.")
 			return
 		}
-		operation = model.Operation{APIID: route.API.ID(), Name: graphQLAPIType, DisplayName: "GraphQL", Method: req.Method, URLTemplate: relative}
+		name, display := graphQLAPIType, "GraphQL"
+		if route.GRPC != nil {
+			name, display = grpcAPIType, "gRPC"
+		}
+		operation = model.Operation{APIID: route.API.ID(), Name: name, DisplayName: display, Method: req.Method, URLTemplate: relative}
 	}
 	activePlan := route.Plan
 	operationID := operation.APIID + "/operations/" + operation.Name
@@ -792,6 +807,10 @@ func (r *Runtime) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 	if isWebSocketRequest(req) {
 		r.serveWebSocket(w, req, state.BackendURL, state.Path)
+		return
+	}
+	if route.GRPC != nil && isGRPCRequest(req) {
+		r.serveGRPC(w, req, service, route, state, activePlan)
 		return
 	}
 	if route.GraphQL != nil {

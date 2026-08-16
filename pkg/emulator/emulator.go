@@ -15,6 +15,9 @@ import (
 	"github.com/calvinchengx/azure-apim-emulator/internal/auth"
 	"github.com/calvinchengx/azure-apim-emulator/internal/config"
 	"github.com/calvinchengx/azure-apim-emulator/internal/server"
+
+	"golang.org/x/net/http2"
+	"golang.org/x/net/http2/h2c"
 )
 
 const (
@@ -127,11 +130,19 @@ func Start(opts ...Option) (*Emulator, error) {
 	}
 	var httpServer *httptest.Server
 	var caCertificate []byte
+	// HTTP/2 in both modes, so a fixture exercises the same protocol surface
+	// the binary serves. gRPC is defined over HTTP/2 and needs trailers, so a
+	// harness pinned to HTTP/1.1 could not witness it at all.
 	if options.TLS {
-		httpServer = httptest.NewTLSServer(core.Handler())
+		httpServer = httptest.NewUnstartedServer(core.Handler())
+		httpServer.EnableHTTP2 = true
+		httpServer.StartTLS()
 		caCertificate = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: httpServer.Certificate().Raw})
 	} else {
-		httpServer = httptest.NewServer(core.Handler())
+		// httptest has no cleartext HTTP/2 mode, so h2c does it here the same
+		// way the binary does.
+		httpServer = httptest.NewUnstartedServer(h2c.NewHandler(core.Handler(), &http2.Server{}))
+		httpServer.Start()
 	}
 	failed = false
 	return &Emulator{
