@@ -949,7 +949,36 @@ func TestChoosePolicy(t *testing.T) {
 			t.Fatalf("invalid choose accepted: %s", value)
 		}
 	}
-	unsupportedPlan, err := Compile(`<policies><inbound><choose><when condition="@(context.Request.Headers.Get('X') == 'yes')"/></choose></inbound></policies>`, true)
+	getPlan, err := Compile(`<policies><inbound><choose><when condition="@(context.Request.Headers.Get('X-Test') == 'yes')"><set-variable name="picked"><value>get</value></set-variable></when></choose></inbound></policies>`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	getRequest := httptest.NewRequest(http.MethodGet, "/", nil)
+	getRequest.Header.Set("X-Test", "yes")
+	state = &State{Request: getRequest}
+	if err := Execute(getPlan.Inbound, state); err != nil || state.Variables["picked"] != "get" {
+		t.Fatalf("headers get choose = %+v, %v", state, err)
+	}
+	portPlan, err := Compile(`<policies><inbound><choose><when condition="@(context.Request.Url.Port == 443)"><set-variable name="picked"><value>port</value></set-variable></when></choose></inbound></policies>`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state = &State{Request: httptest.NewRequest(http.MethodGet, "https://api.example/match", nil)}
+	if err := Execute(portPlan.Inbound, state); err != nil || state.Variables["picked"] != "port" {
+		t.Fatalf("url port choose = %+v, %v", state, err)
+	}
+	lastErrorPlan, err := Compile(`<policies><on-error><choose><when condition="@(context.LastError.Message == 'boom')"><set-variable name="picked"><value>err</value></set-variable></when></choose></on-error></policies>`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state = &State{LastError: errors.New("boom")}
+	if err := Execute(lastErrorPlan.OnError, state); err != nil || state.Variables["picked"] != "err" {
+		t.Fatalf("last-error choose = %+v, %v", state, err)
+	}
+	if err := Execute([]Action{{Kind: ActionChoose, Branches: []ChooseBranch{{Condition: "@(context.LastError.Reason == 'boom')"}}}}, &State{LastError: errors.New("boom")}); err == nil {
+		t.Fatal("unknown last-error member accepted")
+	}
+	unsupportedPlan, err := Compile(`<policies><inbound><choose><when condition="@(context.Request.Body != null)"/></choose></inbound></policies>`, true)
 	if err != nil {
 		t.Fatal(err)
 	}

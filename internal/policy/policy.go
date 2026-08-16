@@ -198,6 +198,7 @@ type State struct {
 	CacheGet                func(string) (int, http.Header, string, bool)
 	CacheSet                func(string, int, http.Header, string, time.Duration)
 	CacheKey                string
+	LastError               error
 }
 
 type node struct {
@@ -2039,7 +2040,7 @@ func Execute(actions []Action, state *State) error {
 }
 
 func stateEnv(state *State) *expr.Env {
-	return expr.Bind(expr.Context{Request: state.Request, Response: state.Response, Variables: state.Variables})
+	return expr.Bind(expr.Context{Request: state.Request, Response: state.Response, Variables: state.Variables, LastError: state.LastError})
 }
 
 func evaluateCondition(condition string, state *State) (bool, error) {

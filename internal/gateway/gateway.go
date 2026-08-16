@@ -1128,6 +1128,7 @@ func (r *Runtime) GetTrace(id string) (Trace, bool) {
 }
 
 func (r *Runtime) policyFailure(w http.ResponseWriter, req *http.Request, plan policy.Plan, state *policy.State, cause error) {
+	state.LastError = cause
 	state.Response = &http.Response{Header: make(http.Header)}
 	if err := policy.Execute(plan.OnError, state); err == nil && state.Returned {
 		writePolicyResponse(w, state)
