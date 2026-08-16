@@ -125,6 +125,7 @@ func TestRequestEnvFallbacksAndErrors(t *testing.T) {
 	}
 
 	for _, source := range []string{
+		"@(context.Missing)",
 		"@(context.Api.Revision)",
 		"@(context.Request.Missing)",
 		"@(context.Request.Body.AsJObject())",

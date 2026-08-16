@@ -164,8 +164,16 @@ func TestQueryParameterAndVariablePolicies(t *testing.T) {
 	if err := Execute(exprPlan.Inbound, state); err != nil || request.URL.Query().Get("n") != "3" || state.Variables["flag"] != "True" {
 		t.Fatalf("expression mutation = query %v variables %v, %v", request.URL.Query(), state.Variables, err)
 	}
-	if _, err := Compile(`<policies><inbound><set-variable name="x"><value>@{ var y = 1; return y; }</value></set-variable></inbound></policies>`, true); err == nil {
-		t.Fatal("invalid mutation expression accepted")
+	varPlan, err := Compile(`<policies><inbound><set-variable name="x"><value>@{ var y = 1; return y; }</value></set-variable></inbound></policies>`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state = &State{Request: httptest.NewRequest(http.MethodGet, "http://example/", nil)}
+	if err := Execute(varPlan.Inbound, state); err != nil || state.Variables["x"] != "1" || state.Variables["y"] != "" {
+		t.Fatalf("var statement = %+v, %v", state.Variables, err)
+	}
+	if _, err := Compile(`<policies><inbound><set-variable name="x"><value>@{ if (true) { return 1; } }</value></set-variable></inbound></policies>`, true); err == nil {
+		t.Fatal("if statement accepted")
 	}
 }
 
@@ -1558,7 +1566,15 @@ func TestMutationExpressionModes(t *testing.T) {
 	if err := Execute(returned.Inbound, state); err != nil || state.Body != "x" || state.Headers.Get("X") != "1" {
 		t.Fatalf("return-response expressions = %+v, %v", state, err)
 	}
-	if _, err := Compile(`<policies><inbound><set-header name="X"><value>@{ var y = 1; return y; }</value></set-header></inbound></policies>`, false); err == nil {
+	varHeader, err := Compile(`<policies><inbound><set-header name="X"><value>@{ var y = 1; return y; }</value></set-header></inbound></policies>`, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	headerRequest := httptest.NewRequest(http.MethodGet, "/", nil)
+	if err := Execute(varHeader.Inbound, &State{Request: headerRequest}); err != nil || headerRequest.Header.Get("X") != "1" {
+		t.Fatalf("set-header var statement = %q, %v", headerRequest.Header.Get("X"), err)
+	}
+	if _, err := Compile(`<policies><inbound><set-header name="X"><value>@(1 + )</value></set-header></inbound></policies>`, false); err == nil {
 		t.Fatal("invalid set-header expression accepted")
 	}
 	for _, value := range []string{

@@ -62,6 +62,8 @@ func TestEvalLiteralsOperatorsAndGrouping(t *testing.T) {
 		{"@{ return true; }", true},
 		{"@{ return null; }", nil},
 		{`@{ return "hi".Length; }`, int64(2)},
+		{"@{ var x = 1; return x; }", int64(1)},
+		{"@{ var x = 1; var y = x + 2; return y; }", int64(3)},
 	}
 	for _, test := range cases {
 		got, err := Eval(test.source)
@@ -91,7 +93,12 @@ func TestEvalAndParseErrors(t *testing.T) {
 		"@{ return 1 }",
 		"@{ return 1 + ; }",
 		"@{ return 1; return 2; }",
-		"@{ var x = 1; return x; }",
+		"@{ var x = 1; }",
+		"@{ var x = 1; return x; return x; }",
+		"@{ var ; return 1; }",
+		"@{ var x; return x; }",
+		"@{ var x = 1 return x; }",
+		"@{ var x = 1 + ; return x; }",
 		"@{ if (true) { return 1; } }",
 		"@{ new System.Uri(\"http://x\"); }",
 		"@(1 2)",
@@ -165,6 +172,19 @@ func TestEvalInternalBranches(t *testing.T) {
 	}
 	if _, err := (identExpr{name: "x"}).eval(&Env{}); err == nil {
 		t.Fatal("empty env identifier accepted")
+	}
+	if _, err := (blockExpr{
+		vars:   []varDecl{{name: "x", expr: binaryExpr{op: TokenSlash, left: literalExpr{value: Int(1)}, right: literalExpr{value: Int(0)}}}},
+		result: identExpr{name: "x"},
+	}).eval(nil); err == nil {
+		t.Fatal("var initializer error accepted")
+	}
+	got, err := (blockExpr{
+		vars:   []varDecl{{name: "x", expr: literalExpr{value: Int(2)}}},
+		result: identExpr{name: "x"},
+	}).eval(&Env{Bindings: map[string]Value{"context": Int(1)}})
+	if err != nil || got.Interface() != int64(2) {
+		t.Fatalf("block locals = %+v %v", got, err)
 	}
 }
 

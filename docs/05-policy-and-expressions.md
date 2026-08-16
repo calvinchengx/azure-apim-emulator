@@ -99,7 +99,9 @@ binds last-error. `context.Api` (`Id`/`Name`/`Path`), `Operation`
 (`Id`/`Name`/`Method`/`UrlTemplate`), `Product`/`Subscription`/`User`
 (`Id`/`Name`), and `Deployment` (`ServiceName`/`Region`) are bound from the
 activated snapshot; missing scopes are null. Other identity members,
-`AsJObject`/`AsJson` remain unknown. Single-`return` statement blocks and
+`AsJObject`/`AsJson` remain unknown. Statement blocks may declare
+expression-scoped `var` locals and must `return`; `if`/`new`/loops stay
+rejected. Single-`return` and `var`+`return` blocks and
 runtime evaluation of `set-header`, `set-query-parameter`, `set-variable`,
 `set-body`, `set-method`, `return-response` children, `send-request` /
 `send-one-way-request` url/method/header/body/mode/timeout, `set-backend-service`,
