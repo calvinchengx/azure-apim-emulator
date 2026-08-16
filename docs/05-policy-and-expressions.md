@@ -66,7 +66,7 @@ Implementation tracks include:
 - control flow, variables, fragments, and return behavior
 - JWT, Entra, certificates, managed identity, Basic, Digest, and authorization context
 - subscription, IP filtering, CORS, validation, and content safety
-- rate limits, quotas, concurrency, cache, and external cache
+- rate limits, quotas (including nested `api`/`operation` children and quota `bandwidth`), concurrency, first-class sequential `wait` (`for=all|any|self` over `send-request`/`cache-lookup-value`/`choose`), cache, and external cache
 - standalone `set-status`, empty-body `mock-response`, compile-time `include-fragment` expansion, Adobe `cross-domain` XML, and gateway/backend `redirect-content-urls`
 - retry, send-request, fire-and-forget one-way request, configured-validator `validate-azure-ad-token`, log/event, and metrics
 - backend pools, load balancing, circuit breakers, Service Fabric, Dapr, and Service Bus

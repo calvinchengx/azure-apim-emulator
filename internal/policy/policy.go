@@ -64,6 +64,7 @@ const (
 	ActionForward
 	ActionReturnResponse
 	ActionRetry
+	ActionWait
 	ActionSetStatus
 	ActionSendOneWay
 	ActionRedirectContentURLs
@@ -96,6 +97,7 @@ type Action struct {
 	SendMethod              string
 	ResponseVar             string
 	LimitCalls              int
+	LimitBandwidth          int64
 	LimitPeriod             time.Duration
 	CacheDuration           time.Duration
 	StatusMin               int
@@ -193,6 +195,7 @@ type State struct {
 	ValueCacheSet           func(string, string, time.Duration)
 	ValueCacheRemove        func(string)
 	RateLimit               func(string, int, time.Duration) bool
+	BandwidthLimit          func(string, int64, int64, time.Duration) bool
 	AcquireConcurrency      func(string, int) func()
 	ConcurrencyReleases     []func()
 	CacheGet                func(string) (int, http.Header, string, bool)
@@ -478,14 +481,25 @@ func compileNode(item node, strict bool) (Action, bool, error) {
 		return compileLimit(item)
 	case "limit-concurrency":
 		count, err := strconv.Atoi(item.Attrs["max-count"])
-		if err != nil || count <= 0 || len(item.Children) > 0 {
+		if err != nil || count <= 0 {
 			return unsupported(item.Name), true, nil
+		}
+		for _, child := range item.Children {
+			if child.Name != "wait" {
+				return unsupported(item.Name + "/" + child.Name), true, nil
+			}
 		}
 		key, err := compileValue(item.Attrs["key"])
 		if err != nil {
 			return Action{}, false, err
 		}
-		return Action{Kind: ActionLimitConcurrency, Value: key, LimitCalls: count, StatusCode: http.StatusTooManyRequests, Body: "concurrency limit exceeded"}, true, nil
+		children, err := compileNodes(item.Children, strict)
+		if err != nil {
+			return Action{}, false, err
+		}
+		return Action{Kind: ActionLimitConcurrency, Value: key, LimitCalls: count, StatusCode: http.StatusTooManyRequests, Body: "concurrency limit exceeded", Children: children}, true, nil
+	case "wait":
+		return compileWait(item, strict)
 	case "cache-lookup":
 		return Action{Kind: ActionCacheLookup}, true, nil
 	case "cache-store":
@@ -966,48 +980,127 @@ func compileNode(item node, strict bool) (Action, bool, error) {
 }
 
 func compileLimit(item node) (Action, bool, error) {
-	if len(item.Children) > 0 {
-		return unsupported(item.Name + "/" + item.Children[0].Name), true, nil
-	}
-	if item.Name == "quota" && item.Attrs["bandwidth"] != "" {
-		return unsupported(item.Name), true, nil
-	}
-	calls, period := 0, time.Duration(0)
-	if value := item.Attrs["calls"]; value != "" {
-		if _, err := fmt.Sscanf(value, "%d", &calls); err != nil || calls <= 0 {
-			return Action{}, false, fmt.Errorf("invalid %s calls", item.Name)
-		}
-	}
-	if value := item.Attrs["renewal-period"]; value != "" {
-		seconds, err := time.ParseDuration(value + "s")
-		if err != nil || seconds <= 0 {
-			return Action{}, false, fmt.Errorf("invalid %s renewal period", item.Name)
-		}
-		period = seconds
-	}
-	if item.Name == "rate-limit" && period > 300*time.Second {
-		return Action{}, false, fmt.Errorf("invalid rate-limit renewal period")
+	calls, period, bandwidth, err := parseLimitBudget(item)
+	if err != nil {
+		return Action{}, false, err
 	}
 	key := item.Attrs["counter-key"]
 	if key == "" && (item.Name == "rate-limit" || item.Name == "quota") {
 		key = item.Name
 	}
-	key, err := compileValue(key)
+	key, err = compileValue(key)
 	if err != nil {
 		return Action{}, false, err
 	}
-	if calls == 0 || period == 0 || key == "" {
+	if (calls == 0 && bandwidth == 0) || period == 0 || key == "" {
 		return unsupported(item.Name), true, nil
 	}
+	children := make([]Action, 0, len(item.Children))
+	for _, child := range item.Children {
+		if child.Name != "api" && child.Name != "operation" {
+			return unsupported(item.Name + "/" + child.Name), true, nil
+		}
+		nested, err := compileNestedLimit(item.Name, period, child)
+		if err != nil {
+			return Action{}, false, err
+		}
+		if nested.Kind == ActionUnsupported {
+			return nested, true, nil
+		}
+		children = append(children, nested)
+	}
 	status := http.StatusTooManyRequests
-	if item.Name == "quota" {
+	if item.Name == "quota" || item.Name == "quota-by-key" {
 		status = http.StatusForbidden
 	}
 	retryAfter := item.Attrs["retry-after-header-name"]
 	if retryAfter == "" && (item.Name == "rate-limit" || item.Name == "quota") {
 		retryAfter = "Retry-After"
 	}
-	return Action{Kind: ActionRateLimit, Value: key, LimitCalls: calls, LimitPeriod: period, StatusCode: status, Body: retryAfter}, true, nil
+	return Action{Kind: ActionRateLimit, Value: key, LimitCalls: calls, LimitBandwidth: bandwidth, LimitPeriod: period, StatusCode: status, Body: retryAfter, Children: children}, true, nil
+}
+
+func compileNestedLimit(parent string, parentPeriod time.Duration, item node) (Action, error) {
+	name := strings.TrimSpace(item.Attrs["name"])
+	if name == "" {
+		return unsupported(parent + "/" + item.Name), nil
+	}
+	calls, period, bandwidth, err := parseLimitBudget(item)
+	if err != nil {
+		return Action{}, err
+	}
+	if period == 0 {
+		period = parentPeriod
+	}
+	if calls == 0 && bandwidth == 0 {
+		return unsupported(parent + "/" + item.Name), nil
+	}
+	children := make([]Action, 0, len(item.Children))
+	for _, child := range item.Children {
+		if item.Name != "api" || child.Name != "operation" {
+			return unsupported(parent + "/" + item.Name + "/" + child.Name), nil
+		}
+		nested, err := compileNestedLimit(parent+"/"+item.Name, period, child)
+		if err != nil {
+			return Action{}, err
+		}
+		if nested.Kind == ActionUnsupported {
+			return nested, nil
+		}
+		children = append(children, nested)
+	}
+	status := http.StatusTooManyRequests
+	if strings.HasPrefix(parent, "quota") {
+		status = http.StatusForbidden
+	}
+	return Action{Kind: ActionRateLimit, Value: parent + "/" + item.Name + "/" + name, LimitCalls: calls, LimitBandwidth: bandwidth, LimitPeriod: period, StatusCode: status, Children: children}, nil
+}
+
+func parseLimitBudget(item node) (int, time.Duration, int64, error) {
+	calls, period, bandwidth := 0, time.Duration(0), int64(0)
+	if value := item.Attrs["calls"]; value != "" {
+		if _, err := fmt.Sscanf(value, "%d", &calls); err != nil || calls <= 0 {
+			return 0, 0, 0, fmt.Errorf("invalid %s calls", item.Name)
+		}
+	}
+	if value := item.Attrs["renewal-period"]; value != "" {
+		seconds, err := time.ParseDuration(value + "s")
+		if err != nil || seconds <= 0 {
+			return 0, 0, 0, fmt.Errorf("invalid %s renewal period", item.Name)
+		}
+		period = seconds
+	}
+	if value := item.Attrs["bandwidth"]; value != "" {
+		if _, err := fmt.Sscanf(value, "%d", &bandwidth); err != nil || bandwidth <= 0 {
+			return 0, 0, 0, fmt.Errorf("invalid %s bandwidth", item.Name)
+		}
+	}
+	if item.Name == "rate-limit" && period > 300*time.Second {
+		return 0, 0, 0, fmt.Errorf("invalid rate-limit renewal period")
+	}
+	return calls, period, bandwidth, nil
+}
+
+func compileWait(item node, strict bool) (Action, bool, error) {
+	mode := strings.ToLower(strings.TrimSpace(item.Attrs["for"]))
+	if mode == "" {
+		mode = "all"
+	}
+	if mode != "all" && mode != "any" && mode != "self" {
+		return unsupported(item.Name), true, nil
+	}
+	for _, child := range item.Children {
+		switch child.Name {
+		case "send-request", "cache-lookup-value", "choose":
+		default:
+			return unsupported(item.Name + "/" + child.Name), true, nil
+		}
+	}
+	children, err := compileNodes(item.Children, strict)
+	if err != nil {
+		return Action{}, false, err
+	}
+	return Action{Kind: ActionWait, Action: mode, Children: children}, true, nil
 }
 
 func compileValidateJWT(item node) (Action, bool, error) {
@@ -1537,21 +1630,10 @@ func Execute(actions []Action, state *State) error {
 				}
 			}
 		case ActionRateLimit:
-			if state.RateLimit == nil {
-				return fmt.Errorf("rate-limit requires a configured limiter")
-			}
-			key, err := evalValue(action.Value, state)
-			if err != nil {
+			if err := executeLimit(action, state); err != nil {
 				return err
 			}
-			if key == "" && state.Request != nil {
-				key = state.Request.RemoteAddr
-			}
-			if state.RateLimit(key, action.LimitCalls, action.LimitPeriod) {
-				state.Returned, state.StatusCode = true, action.StatusCode
-				if action.Body != "" {
-					state.Headers.Set(action.Body, "true")
-				}
+			if state.Returned {
 				return nil
 			}
 		case ActionLimitConcurrency:
@@ -1571,6 +1653,12 @@ func Execute(actions []Action, state *State) error {
 				return nil
 			}
 			state.ConcurrencyReleases = append(state.ConcurrencyReleases, release)
+			if err := Execute(action.Children, state); err != nil {
+				return err
+			}
+			if state.Returned {
+				return nil
+			}
 		case ActionCacheLookup:
 			if state.CacheGet == nil {
 				return fmt.Errorf("cache-lookup requires a configured cache")
@@ -2038,11 +2126,106 @@ func Execute(actions []Action, state *State) error {
 			if err := Execute(action.Children, state); err != nil {
 				return err
 			}
+		case ActionWait:
+			if err := executeWait(action, state); err != nil {
+				return err
+			}
 		case ActionUnsupported:
 			return fmt.Errorf("%w: <%s>", ErrUnsupported, action.Source)
 		}
 	}
 	return nil
+}
+
+func executeLimit(action Action, state *State) error {
+	key, err := evalValue(action.Value, state)
+	if err != nil {
+		return err
+	}
+	if key == "" && state.Request != nil {
+		key = state.Request.RemoteAddr
+	}
+	if action.LimitCalls > 0 {
+		if state.RateLimit == nil {
+			return fmt.Errorf("rate-limit requires a configured limiter")
+		}
+		if state.RateLimit(key, action.LimitCalls, action.LimitPeriod) {
+			return limitExceeded(action, state)
+		}
+	}
+	if action.LimitBandwidth > 0 {
+		if state.BandwidthLimit == nil {
+			return fmt.Errorf("quota bandwidth requires a configured limiter")
+		}
+		if state.BandwidthLimit(key, requestSize(state), action.LimitBandwidth, action.LimitPeriod) {
+			return limitExceeded(action, state)
+		}
+	}
+	if err := Execute(action.Children, state); err != nil {
+		return err
+	}
+	return nil
+}
+
+func limitExceeded(action Action, state *State) error {
+	state.Returned, state.StatusCode = true, action.StatusCode
+	if action.Body != "" {
+		state.Headers.Set(action.Body, "true")
+	}
+	return nil
+}
+
+func requestSize(state *State) int64 {
+	if state.Request == nil {
+		return 0
+	}
+	if state.Request.ContentLength > 0 {
+		return state.Request.ContentLength
+	}
+	if state.Request.Body == nil && state.Request.GetBody == nil {
+		return 0
+	}
+	var body io.ReadCloser
+	var err error
+	if state.Request.GetBody != nil {
+		body, err = state.Request.GetBody()
+		if err != nil {
+			return 0
+		}
+	} else {
+		body = state.Request.Body
+	}
+	value, err := io.ReadAll(body)
+	_ = body.Close()
+	if err != nil {
+		return 0
+	}
+	if state.Request.GetBody == nil {
+		state.Request.Body = io.NopCloser(strings.NewReader(string(value)))
+		state.Request.GetBody = func() (io.ReadCloser, error) {
+			return io.NopCloser(strings.NewReader(string(value))), nil
+		}
+		state.Request.ContentLength = int64(len(value))
+	}
+	return int64(len(value))
+}
+
+func executeWait(action Action, state *State) error {
+	if action.Action != "any" {
+		return Execute(action.Children, state)
+	}
+	if len(action.Children) == 0 {
+		return nil
+	}
+	var last error
+	for _, child := range action.Children {
+		if err := Execute([]Action{child}, state); err != nil {
+			last = err
+			continue
+		}
+		return nil
+	}
+	return last
 }
 
 func stateEnv(state *State) *expr.Env {

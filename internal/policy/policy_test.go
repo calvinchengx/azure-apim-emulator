@@ -43,7 +43,7 @@ func TestLimitConcurrency(t *testing.T) {
 	for _, source := range []string{
 		`<policies><inbound><limit-concurrency max-count="0"/></inbound></policies>`,
 		`<policies><inbound><limit-concurrency max-count="bad"/></inbound></policies>`,
-		`<policies><inbound><limit-concurrency max-count="1" key="tenant"><wait/></limit-concurrency></inbound></policies>`,
+		`<policies><inbound><limit-concurrency max-count="1" key="tenant"><unknown/></limit-concurrency></inbound></policies>`,
 	} {
 		invalid, invalidErr := Compile(source, false)
 		if invalidErr != nil || len(invalid.Inbound) != 1 || invalid.Inbound[0].Kind != ActionUnsupported {
@@ -93,6 +93,14 @@ func TestLimitConcurrency(t *testing.T) {
 	}}); err != nil || exprKey != "10.0.0.8" {
 		t.Fatalf("limit-concurrency expression key = %q, %v", exprKey, err)
 	}
+	waitPlan, err := Compile(`<policies><inbound><limit-concurrency key="tenant" max-count="1"><wait for="all"><choose><when condition="@(true)"><set-variable name="ran"><value>yes</value></set-variable></when></choose></wait></limit-concurrency></inbound></policies>`, true)
+	if err != nil || waitPlan.Inbound[0].Kind != ActionLimitConcurrency || len(waitPlan.Inbound[0].Children) != 1 || waitPlan.Inbound[0].Children[0].Kind != ActionWait {
+		t.Fatalf("limit-concurrency wait plan = %+v, %v", waitPlan, err)
+	}
+	waitState := &State{AcquireConcurrency: func(string, int) func() { return func() {} }}
+	if err := Execute(waitPlan.Inbound, waitState); err != nil || waitState.Variables["ran"] != "yes" {
+		t.Fatalf("limit-concurrency wait execute = %+v, %v", waitState, err)
+	}
 }
 
 func TestRetryPolicyCompilationAndExecution(t *testing.T) {
@@ -123,15 +131,23 @@ func TestRetryPolicyCompilationAndExecution(t *testing.T) {
 			}
 		})
 	}
-	if _, err := Compile(`<policies><backend><retry><wait/></retry></backend></policies>`, true); err == nil {
+	if _, err := Compile(`<policies><backend><retry><unknown/></retry></backend></policies>`, true); err == nil {
 		t.Fatal("strict mode should reject unsupported retry child")
 	}
-	nonstrict, err := Compile(`<policies><backend><retry><wait/></retry></backend></policies>`, false)
+	nonstrict, err := Compile(`<policies><backend><retry><unknown/></retry></backend></policies>`, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := Execute(nonstrict.Backend, state); err == nil {
 		t.Fatal("unsupported retry child should fail during execution")
+	}
+	waitRetry, err := Compile(`<policies><backend><retry count="0" interval="0"><wait for="all"><choose><when condition="@(true)"><set-backend-service base-url="https://wait.example"/></when></choose></wait></retry></backend></policies>`, true)
+	if err != nil || waitRetry.Backend[0].Children[0].Kind != ActionWait {
+		t.Fatalf("retry wait plan = %+v, %v", waitRetry, err)
+	}
+	waitState := &State{Request: httptest.NewRequest(http.MethodGet, "/", nil)}
+	if err := Execute(waitRetry.Backend, waitState); err != nil || waitState.BackendURL != "https://wait.example" {
+		t.Fatalf("retry wait execute = %+v, %v", waitState, err)
 	}
 }
 
@@ -606,6 +622,7 @@ func TestSharedLimitAndResponsePolicies(t *testing.T) {
 		`<policies><inbound><rate-limit calls="bad" renewal-period="1"/></inbound></policies>`,
 		`<policies><inbound><rate-limit calls="1" renewal-period="301"/></inbound></policies>`,
 		`<policies><inbound><quota calls="1" renewal-period="bad"/></inbound></policies>`,
+		`<policies><inbound><quota bandwidth="bad" renewal-period="1"/></inbound></policies>`,
 		`<policies><inbound><set-status code="99" reason="bad"/></inbound></policies>`,
 		`<policies><inbound><set-status reason="missing"/></inbound></policies>`,
 		`<policies><inbound><mock-response status-code="bad"/></inbound></policies>`,
@@ -615,11 +632,190 @@ func TestSharedLimitAndResponsePolicies(t *testing.T) {
 			t.Fatalf("invalid policy accepted: %s", value)
 		}
 	}
+	nested, err := Compile(`<policies><inbound><rate-limit calls="10" renewal-period="60"><api name="demo" calls="1"><operation name="get" calls="1"/></api></rate-limit></inbound></policies>`, true)
+	if err != nil || nested.Inbound[0].Kind != ActionRateLimit || len(nested.Inbound[0].Children) != 1 || nested.Inbound[0].Children[0].Value != "rate-limit/api/demo" || nested.Inbound[0].Children[0].Children[0].Value != "rate-limit/api/operation/get" {
+		t.Fatalf("nested rate-limit = %+v, %v", nested, err)
+	}
+	nestedHits := map[string]int{}
+	nestedState := &State{RateLimit: func(key string, _ int, _ time.Duration) bool {
+		nestedHits[key]++
+		return false
+	}}
+	if err := Execute(nested.Inbound, nestedState); err != nil || nestedHits["rate-limit"] != 1 || nestedHits["rate-limit/api/demo"] != 1 || nestedHits["rate-limit/api/operation/get"] != 1 {
+		t.Fatalf("nested rate-limit execute = %v %v", nestedHits, err)
+	}
+	bandwidth, err := Compile(`<policies><inbound><quota bandwidth="4" renewal-period="60"/></inbound></policies>`, true)
+	if err != nil || bandwidth.Inbound[0].LimitBandwidth != 4 || bandwidth.Inbound[0].LimitCalls != 0 {
+		t.Fatalf("quota bandwidth plan = %+v, %v", bandwidth, err)
+	}
+	if err := Execute(bandwidth.Inbound, &State{}); err == nil {
+		t.Fatal("quota bandwidth without limiter accepted")
+	}
+	used := int64(0)
+	bwState := &State{Request: httptest.NewRequest(http.MethodPost, "/", strings.NewReader("abcd")), BandwidthLimit: func(key string, add, budget int64, _ time.Duration) bool {
+		used += add
+		return used > budget
+	}}
+	if err := Execute(bandwidth.Inbound, bwState); err != nil || bwState.Returned {
+		t.Fatalf("first bandwidth = %+v, %v", bwState, err)
+	}
+	bwState.Returned = false
+	if err := Execute(bandwidth.Inbound, bwState); err != nil || !bwState.Returned || bwState.StatusCode != http.StatusForbidden {
+		t.Fatalf("limited bandwidth = %+v, %v", bwState, err)
+	}
+	quotaNested, err := Compile(`<policies><inbound><quota calls="2" renewal-period="60"><api name="demo" calls="1"/></quota></inbound></policies>`, true)
+	if err != nil || quotaNested.Inbound[0].Children[0].StatusCode != http.StatusForbidden {
+		t.Fatalf("nested quota = %+v, %v", quotaNested, err)
+	}
+	waitAll, err := Compile(`<policies><inbound><wait for="all"><choose><when condition="@(true)"><set-variable name="a"><value>1</value></set-variable></when></choose><choose><when condition="@(true)"><set-variable name="b"><value>2</value></set-variable></when></choose></wait></inbound></policies>`, true)
+	if err != nil || waitAll.Inbound[0].Kind != ActionWait || waitAll.Inbound[0].Action != "all" {
+		t.Fatalf("wait all plan = %+v, %v", waitAll, err)
+	}
+	waitState := &State{}
+	if err := Execute(waitAll.Inbound, waitState); err != nil || waitState.Variables["a"] != "1" || waitState.Variables["b"] != "2" {
+		t.Fatalf("wait all execute = %+v, %v", waitState, err)
+	}
+	waitAny, err := Compile(`<policies><inbound><wait for="any"><choose><when condition="@(true)"><set-variable name="picked"><value>first</value></set-variable></when></choose><choose><when condition="@(true)"><set-variable name="picked"><value>second</value></set-variable></when></choose></wait></inbound></policies>`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	anyState := &State{}
+	if err := Execute(waitAny.Inbound, anyState); err != nil || anyState.Variables["picked"] != "first" {
+		t.Fatalf("wait any execute = %+v, %v", anyState, err)
+	}
+	emptyWait, err := Compile(`<policies><inbound><wait for="any"/></inbound></policies>`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := Execute(emptyWait.Inbound, &State{}); err != nil {
+		t.Fatalf("empty wait any = %v", err)
+	}
+	anyFail, err := Compile(`<policies><inbound><wait for="any"><choose><when condition="@(1 / 0)"/></choose><choose><when condition="@(true)"><set-variable name="picked"><value>ok</value></set-variable></when></choose></wait></inbound></policies>`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	failState := &State{}
+	if err := Execute(anyFail.Inbound, failState); err != nil || failState.Variables["picked"] != "ok" {
+		t.Fatalf("wait any fallback = %+v, %v", failState, err)
+	}
+	anyLost, err := Compile(`<policies><inbound><wait for="any"><choose><when condition="@(1 / 0)"/></choose></wait></inbound></policies>`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := Execute(anyLost.Inbound, &State{}); err == nil {
+		t.Fatal("wait any lost last error")
+	}
+	sizeState := &State{Request: httptest.NewRequest(http.MethodPost, "/", strings.NewReader("xyz")), BandwidthLimit: func(_ string, add, _ int64, _ time.Duration) bool {
+		return add != 3
+	}}
+	if err := Execute(bandwidth.Inbound, sizeState); err != nil || sizeState.Returned {
+		t.Fatalf("content-length bandwidth = %+v, %v", sizeState, err)
+	}
+	replay := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("abcd"))
+	replay.ContentLength = -1
+	replay.GetBody = nil
+	if requestSize(&State{Request: replay}) != 4 || replay.GetBody == nil {
+		t.Fatal("requestSize did not restore GetBody")
+	}
+	restored, err := replay.GetBody()
+	if err != nil {
+		t.Fatal(err)
+	}
+	restoredBody, _ := io.ReadAll(restored)
+	if string(restoredBody) != "abcd" {
+		t.Fatalf("restored body = %q", restoredBody)
+	}
+	if requestSize(&State{}) != 0 {
+		t.Fatal("nil request size")
+	}
+	if requestSize(&State{Request: &http.Request{}}) != 0 {
+		t.Fatal("empty request size")
+	}
+	getBody := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("abcd"))
+	getBody.ContentLength = 0
+	if requestSize(&State{Request: getBody}) != 4 {
+		t.Fatal("GetBody request size")
+	}
+	failBody := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("abcd"))
+	failBody.ContentLength = 0
+	failBody.GetBody = func() (io.ReadCloser, error) { return nil, errors.New("get-body") }
+	if requestSize(&State{Request: failBody}) != 0 {
+		t.Fatal("GetBody error size")
+	}
+	readFail := &http.Request{Body: errorBody{}}
+	if requestSize(&State{Request: readFail}) != 0 {
+		t.Fatal("read error size")
+	}
+	selfWait, err := Compile(`<policies><inbound><wait for="self"/></inbound></policies>`, true)
+	if err != nil || selfWait.Inbound[0].Action != "self" {
+		t.Fatalf("wait self = %+v, %v", selfWait, err)
+	}
+	if err := Execute(selfWait.Inbound, &State{}); err != nil {
+		t.Fatalf("wait self execute = %v", err)
+	}
+	waitAllowed, err := Compile(`<policies><inbound><wait><send-request mode="new"><set-url>https://hooks.example</set-url></send-request><cache-lookup-value key="k" variable-name="v"/></wait></inbound></policies>`, true)
+	if err != nil || waitAllowed.Inbound[0].Kind != ActionWait || len(waitAllowed.Inbound[0].Children) != 2 {
+		t.Fatalf("wait allowed children = %+v, %v", waitAllowed, err)
+	}
+	if _, err := Compile(`<policies><inbound><wait><choose><when/></choose></wait></inbound></policies>`, true); err == nil {
+		t.Fatal("wait compile child accepted")
+	}
+	if _, err := Compile(`<policies><inbound><limit-concurrency key="k" max-count="1"><wait><choose><when/></choose></wait></limit-concurrency></inbound></policies>`, true); err == nil {
+		t.Fatal("limit-concurrency wait compile child accepted")
+	}
+	if _, err := Compile(`<policies><inbound><rate-limit calls="1" renewal-period="1"><api name="demo" calls="bad"/></rate-limit></inbound></policies>`, true); err == nil {
+		t.Fatal("nested invalid calls accepted")
+	}
+	if _, err := Compile(`<policies><inbound><rate-limit calls="1" renewal-period="1"><api name="demo" calls="1"><operation name="get" calls="bad"/></api></rate-limit></inbound></policies>`, true); err == nil {
+		t.Fatal("nested operation invalid calls accepted")
+	}
+	childErr, err := Compile(`<policies><inbound><quota bandwidth="10" renewal-period="60"><api name="demo" calls="1"/></quota></inbound></policies>`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := Execute(childErr.Inbound, &State{BandwidthLimit: func(string, int64, int64, time.Duration) bool { return false }}); err == nil {
+		t.Fatal("nested calls without rate limiter accepted")
+	}
+	limitState := &State{Request: httptest.NewRequest(http.MethodGet, "/", nil)}
+	limitState.Request.RemoteAddr = "10.0.0.8"
+	if err := Execute([]Action{{Kind: ActionRateLimit, LimitCalls: 1, LimitPeriod: time.Second, StatusCode: http.StatusTooManyRequests, Body: "Retry-After"}}, &State{Request: limitState.Request, RateLimit: func(key string, _ int, _ time.Duration) bool {
+		return key != "10.0.0.8"
+	}}); err != nil {
+		t.Fatalf("empty key remote addr = %v", err)
+	}
+	exceeded := &State{RateLimit: func(string, int, time.Duration) bool { return true }}
+	if err := Execute([]Action{{Kind: ActionRateLimit, Value: "k", LimitCalls: 1, LimitPeriod: time.Second, StatusCode: http.StatusTooManyRequests, Body: "Retry-After"}}, exceeded); err != nil || exceeded.Headers.Get("Retry-After") != "true" {
+		t.Fatalf("limitExceeded headers = %+v, %v", exceeded, err)
+	}
+	busy, err := Compile(`<policies><inbound><limit-concurrency key="k" max-count="1"><wait><choose><when condition="@(1 / 0)"/></choose></wait></limit-concurrency></inbound></policies>`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := Execute(busy.Inbound, &State{AcquireConcurrency: func(string, int) func() { return func() {} }}); err == nil {
+		t.Fatal("limit-concurrency wait error lost")
+	}
+	stopped, err := Compile(`<policies><inbound><limit-concurrency key="k" max-count="1"><wait><choose><when condition="@(true)"><return-response><set-status code="204"/></return-response></when></choose></wait></limit-concurrency></inbound></policies>`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stopState := &State{AcquireConcurrency: func(string, int) func() { return func() {} }}
+	if err := Execute(stopped.Inbound, stopState); err != nil || !stopState.Returned || stopState.StatusCode != http.StatusNoContent {
+		t.Fatalf("limit-concurrency returned = %+v, %v", stopState, err)
+	}
+
 	for _, value := range []string{
 		`<policies><inbound><rate-limit/></inbound></policies>`,
-		`<policies><inbound><rate-limit calls="1" renewal-period="1"><api name="demo" calls="1" renewal-period="1"/></rate-limit></inbound></policies>`,
-		`<policies><inbound><quota bandwidth="10" renewal-period="1"/></inbound></policies>`,
-		`<policies><inbound><quota calls="1" renewal-period="1"><api name="demo" calls="1"/></quota></inbound></policies>`,
+		`<policies><inbound><rate-limit calls="1" renewal-period="1"><unknown/></rate-limit></inbound></policies>`,
+		`<policies><inbound><rate-limit calls="1" renewal-period="1"><api calls="1"/></rate-limit></inbound></policies>`,
+		`<policies><inbound><rate-limit calls="1" renewal-period="1"><api name="demo" calls="1"><unknown/></api></rate-limit></inbound></policies>`,
+		`<policies><inbound><rate-limit calls="1" renewal-period="1"><api name="demo" calls="1"><operation calls="1"/></api></rate-limit></inbound></policies>`,
+		`<policies><inbound><rate-limit calls="1" renewal-period="1"><api name="demo" calls="1"><operation name="get" calls="1"><unknown/></operation></api></rate-limit></inbound></policies>`,
+		`<policies><inbound><wait for="maybe"/></inbound></policies>`,
+		`<policies><inbound><wait><set-header name="X"><value>1</value></set-header></wait></inbound></policies>`,
+		`<policies><inbound><limit-concurrency key="k" max-count="1"><set-header name="X"><value>1</value></set-header></limit-concurrency></inbound></policies>`,
+		`<policies><inbound><rate-limit calls="1" renewal-period="1"><api name="demo"/></rate-limit></inbound></policies>`,
+		`<policies><inbound><set-method/></inbound></policies>`,
+		`<policies><inbound><rewrite-uri/></inbound></policies>`,
 		`<policies><inbound><set-status code="401" reason="Unauthorized"><unknown/></set-status></inbound></policies>`,
 		`<policies><inbound><mock-response><unknown/></mock-response></inbound></policies>`,
 	} {
@@ -2293,6 +2489,14 @@ func TestIntegrationPolicies(t *testing.T) {
 	body, _ := io.ReadAll(inbound.Request.Body)
 	if string(body) != `{"url":"https://backend.example/items"}` {
 		t.Fatalf("inbound rewrite = %s", body)
+	}
+	replayed, err := inbound.Request.GetBody()
+	if err != nil {
+		t.Fatal(err)
+	}
+	replayedBody, _ := io.ReadAll(replayed)
+	if string(replayedBody) != `{"url":"https://backend.example/items"}` {
+		t.Fatalf("inbound rewrite GetBody = %s", replayedBody)
 	}
 	outboundReq := httptest.NewRequest(http.MethodGet, "https://gateway.example/api", nil)
 	outbound := &State{Request: outboundReq, BackendURL: "https://backend.example", Response: &http.Response{Body: io.NopCloser(strings.NewReader(`{"url":"https://backend.example/items"}`))}}

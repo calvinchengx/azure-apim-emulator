@@ -540,6 +540,16 @@ func TestGatewayFaultControls(t *testing.T) {
 	if runtime.rateLimit("other", 1, time.Minute) {
 		t.Fatal("separate rate key was limited")
 	}
+	if runtime.bandwidthLimit("bw", -1, 4, time.Minute) || runtime.bandwidthLimit("bw", 3, 4, time.Minute) || !runtime.bandwidthLimit("bw", 2, 4, time.Minute) {
+		t.Fatal("bandwidth limiter did not enforce budget")
+	}
+	if runtime.bandwidthLimit("other-bw", 1, 4, time.Minute) {
+		t.Fatal("separate bandwidth key was limited")
+	}
+	runtime.bandwidthWindows["expired-bw"] = []bandwidthStamp{{at: time.Now().Add(-time.Hour), bytes: 8}}
+	if runtime.bandwidthLimit("expired-bw", 1, 4, time.Second) {
+		t.Fatal("expired bandwidth window was limited")
+	}
 	runtime.cacheSet("cache", http.StatusOK, http.Header{"X-Test": {"yes"}}, "body", time.Minute)
 	status, headers, body, ok := runtime.cacheGet("cache")
 	if !ok || status != http.StatusOK || headers.Get("X-Test") != "yes" || body != "body" {

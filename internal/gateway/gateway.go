@@ -91,11 +91,17 @@ type Runtime struct {
 	faults               map[string]Fault
 	rateMu               sync.Mutex
 	rateWindows          map[string][]time.Time
+	bandwidthWindows     map[string][]bandwidthStamp
 	cacheMu              sync.Mutex
 	cache                map[string]cacheEntry
 	valueCache           map[string]valueCacheEntry
 	concurrencyMu        sync.Mutex
 	concurrency          map[string]chan struct{}
+}
+
+type bandwidthStamp struct {
+	at    time.Time
+	bytes int64
 }
 
 type cacheEntry struct {
@@ -154,7 +160,7 @@ func New(defaultService string, client *http.Client) *Runtime {
 	if client == nil {
 		client = http.DefaultClient
 	}
-	r := &Runtime{defaultService: defaultService, client: client, policySendRequest: client.Do, traces: map[string]Trace{}, breakers: map[string]circuitState{}, faults: map[string]Fault{}, rateWindows: map[string][]time.Time{}, cache: map[string]cacheEntry{}, valueCache: map[string]valueCacheEntry{}, concurrency: map[string]chan struct{}{}}
+	r := &Runtime{defaultService: defaultService, client: client, policySendRequest: client.Do, traces: map[string]Trace{}, breakers: map[string]circuitState{}, faults: map[string]Fault{}, rateWindows: map[string][]time.Time{}, bandwidthWindows: map[string][]bandwidthStamp{}, cache: map[string]cacheEntry{}, valueCache: map[string]valueCacheEntry{}, concurrency: map[string]chan struct{}{}}
 	r.current.Store(&Snapshot{Services: map[string]*Service{}})
 	return r
 }
@@ -181,6 +187,31 @@ func (r *Runtime) rateLimit(key string, calls int, period time.Duration) bool {
 		return true
 	}
 	r.rateWindows[key] = append(kept, now)
+	return false
+}
+
+func (r *Runtime) bandwidthLimit(key string, add, budget int64, period time.Duration) bool {
+	if add < 0 {
+		add = 0
+	}
+	now := time.Now()
+	r.rateMu.Lock()
+	defer r.rateMu.Unlock()
+	window := r.bandwidthWindows[key]
+	cutoff := now.Add(-period)
+	kept := window[:0]
+	var total int64
+	for _, stamp := range window {
+		if stamp.at.After(cutoff) {
+			kept = append(kept, stamp)
+			total += stamp.bytes
+		}
+	}
+	if total+add > budget {
+		r.bandwidthWindows[key] = kept
+		return true
+	}
+	r.bandwidthWindows[key] = append(kept, bandwidthStamp{at: now, bytes: add})
 	return false
 }
 
@@ -697,7 +728,7 @@ func (r *Runtime) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 	cacheKey := service.Name + ":" + route.API.ID() + ":" + req.Method + ":" + req.URL.RequestURI()
 	apiCtx, operationCtx, productCtx, subscriptionCtx, userCtx, deploymentCtx := bindRequestContext(service, route, operation, req)
-	state := &policy.State{Request: req, BackendURL: route.API.ServiceURL, Path: relative, Headers: make(http.Header), ValidateToken: r.policyTokenValidator, SendRequest: r.policySendRequest, Trace: func(phase, detail string) { traceEvent(trace, phase, detail) }, RateLimit: r.rateLimit, AcquireConcurrency: r.acquireConcurrency, CacheGet: r.cacheGet, CacheSet: r.cacheSet, ValueCacheGet: r.valueCacheGet, ValueCacheSet: r.valueCacheSet, ValueCacheRemove: r.valueCacheRemove, CacheKey: cacheKey, Api: apiCtx, Operation: operationCtx, Product: productCtx, Subscription: subscriptionCtx, User: userCtx, Deployment: deploymentCtx}
+	state := &policy.State{Request: req, BackendURL: route.API.ServiceURL, Path: relative, Headers: make(http.Header), ValidateToken: r.policyTokenValidator, SendRequest: r.policySendRequest, Trace: func(phase, detail string) { traceEvent(trace, phase, detail) }, RateLimit: r.rateLimit, BandwidthLimit: r.bandwidthLimit, AcquireConcurrency: r.acquireConcurrency, CacheGet: r.cacheGet, CacheSet: r.cacheSet, ValueCacheGet: r.valueCacheGet, ValueCacheSet: r.valueCacheSet, ValueCacheRemove: r.valueCacheRemove, CacheKey: cacheKey, Api: apiCtx, Operation: operationCtx, Product: productCtx, Subscription: subscriptionCtx, User: userCtx, Deployment: deploymentCtx}
 	defer func() {
 		for index := len(state.ConcurrencyReleases) - 1; index >= 0; index-- {
 			state.ConcurrencyReleases[index]()
