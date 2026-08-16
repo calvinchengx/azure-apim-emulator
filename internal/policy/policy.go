@@ -1060,16 +1060,23 @@ func compileValidateAzureADToken(item node) (Action, bool, error) {
 
 func compileSendRequest(item node) (Action, bool, error) {
 	kind := ActionSendRequest
+	mode, timeout := "", ""
 	if item.Name == "send-one-way-request" {
 		kind = ActionSendOneWay
-		if expression(item.Attrs["mode"]) || expression(item.Attrs["timeout"]) {
-			return unsupported(item.Name), true, nil
+		var err error
+		mode, err = compileValue(item.Attrs["mode"])
+		if err != nil {
+			return Action{}, false, err
 		}
-		if mode := item.Attrs["mode"]; mode != "" && !strings.EqualFold(mode, "new") {
+		timeout, err = compileValue(item.Attrs["timeout"])
+		if err != nil {
+			return Action{}, false, err
+		}
+		if mode != "" && !expression(mode) && !strings.EqualFold(mode, "new") {
 			return unsupported(item.Name), true, nil
 		}
 	}
-	action := Action{Kind: kind, SendMethod: http.MethodGet, ResponseVar: item.Attrs["response-variable-name"]}
+	action := Action{Kind: kind, Name: mode, MaxAge: timeout, SendMethod: http.MethodGet, ResponseVar: item.Attrs["response-variable-name"]}
 	if kind == ActionSendOneWay {
 		action.ResponseVar = ""
 	}
@@ -1465,6 +1472,18 @@ func Execute(actions []Action, state *State) error {
 					return fmt.Errorf("send-one-way-request requires a configured transport")
 				}
 				return fmt.Errorf("send-request requires a configured transport")
+			}
+			if action.Kind == ActionSendOneWay {
+				mode, err := evalValue(action.Name, state)
+				if err != nil {
+					return err
+				}
+				if mode != "" && !strings.EqualFold(mode, "new") {
+					return fmt.Errorf("%w: <send-one-way-request>", ErrUnsupported)
+				}
+				if _, err := evalValue(action.MaxAge, state); err != nil {
+					return err
+				}
 			}
 			sendURL, err := evalValue(action.SendURL, state)
 			if err != nil {

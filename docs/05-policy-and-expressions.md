@@ -92,7 +92,7 @@ variables, member access, indexing, and calls (`ToString`, `Length`,
 `GetValueOrDefault`, `ContainsKey`). Single-`return` statement blocks and
 runtime evaluation of `set-header`, `set-query-parameter`, `set-variable`,
 `set-body`, `set-method`, `return-response` children, `send-request` /
-`send-one-way-request` url/method/header/body, `set-backend-service`,
+`send-one-way-request` url/method/header/body/mode/timeout, `set-backend-service`,
 `rewrite-uri`, `find-and-replace` from/to, value-cache key/value fields,
 `cache-lookup-value` variable-name, CORS allowed-origins/allowed-methods/
 allowed-headers/expose-headers/max-age,
