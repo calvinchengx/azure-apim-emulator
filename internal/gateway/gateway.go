@@ -22,6 +22,7 @@ import (
 
 	certutil "github.com/calvinchengx/azure-apim-emulator/internal/certificate"
 	"github.com/calvinchengx/azure-apim-emulator/internal/expression"
+	"github.com/calvinchengx/azure-apim-emulator/internal/graphql"
 	"github.com/calvinchengx/azure-apim-emulator/internal/model"
 	"github.com/calvinchengx/azure-apim-emulator/internal/policy"
 	"github.com/calvinchengx/azure-apim-emulator/internal/store"
@@ -72,6 +73,11 @@ type Route struct {
 	SubscriptionPlans map[string]policy.Plan
 	AcceptedKeys      map[string]bool
 	Diagnostics       []model.Diagnostic
+	// GraphQL is the compiled schema of a GraphQL API, nil for every other API
+	// type. Its presence is what puts a request on the GraphQL path, so an API
+	// whose schema failed to compile stays a plain HTTP proxy rather than
+	// half-serving GraphQL.
+	GraphQL *graphql.Schema
 }
 
 // Runtime atomically publishes snapshots and serves gateway traffic.
@@ -495,7 +501,19 @@ func (r *Runtime) Activate(st *store.Store, strict bool) error {
 				subscriptionPlans[strings.ToLower(subscription.SecondaryKey)] = productPlan
 			}
 		}
-		service.Routes = append(service.Routes, &Route{API: api, VersionSet: versionSet, Operations: operationList, OperationPlans: operationPlans, SubscriptionPlans: subscriptionPlans, Plan: plan, AcceptedKeys: keysByAPI[strings.ToLower(api.ID())], Diagnostics: diagnostics[strings.ToLower(api.ID())]})
+		schema, err := graphQLSchemaFor(st, api)
+		if err != nil {
+			// strict is the management-plane path, where a caller is waiting on
+			// the result of its own import and must be told it was rejected.
+			// Non-strict is startup replay of already-accepted state, where
+			// failing the whole activation over one bad API would take every
+			// other API down with it.
+			if strict {
+				return err
+			}
+			schema = nil
+		}
+		service.Routes = append(service.Routes, &Route{API: api, VersionSet: versionSet, Operations: operationList, OperationPlans: operationPlans, SubscriptionPlans: subscriptionPlans, Plan: plan, AcceptedKeys: keysByAPI[strings.ToLower(api.ID())], Diagnostics: diagnostics[strings.ToLower(api.ID())], GraphQL: schema})
 	}
 	for _, service := range snapshot.Services {
 		sort.SliceStable(service.Routes, func(i, j int) bool { return len(service.Routes[i].API.Path) > len(service.Routes[j].API.Path) })
@@ -702,8 +720,14 @@ func (r *Runtime) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	traceEvent(trace, "route", route.API.Path)
 	operation, matched := matchOperationValue(route.Operations, req.Method, relative)
 	if !matched {
-		gatewayError(w, http.StatusNotFound, "OperationNotFound", "Unable to match incoming request to an operation.")
-		return
+		// A GraphQL API is one endpoint, not a set of REST operations, so there
+		// is nothing for the matcher to match. The schema decides what is valid
+		// here, and it does so per GraphQL field rather than per URL.
+		if route.GraphQL == nil {
+			gatewayError(w, http.StatusNotFound, "OperationNotFound", "Unable to match incoming request to an operation.")
+			return
+		}
+		operation = model.Operation{APIID: route.API.ID(), Name: graphQLAPIType, DisplayName: "GraphQL", Method: req.Method, URLTemplate: relative}
 	}
 	activePlan := route.Plan
 	operationID := operation.APIID + "/operations/" + operation.Name
@@ -749,6 +773,10 @@ func (r *Runtime) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 	if isWebSocketRequest(req) {
 		r.serveWebSocket(w, req, state.BackendURL, state.Path)
+		return
+	}
+	if route.GraphQL != nil {
+		r.serveGraphQL(w, req, service, route, state, activePlan)
 		return
 	}
 	client, err := backendHTTPClient(r.client, service, state.BackendID)

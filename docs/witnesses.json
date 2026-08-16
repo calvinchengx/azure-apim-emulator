@@ -12,7 +12,7 @@
     "  ci:job-id    a CI job name in .github/workflows; asserted to still exist",
     "",
     "'partial' and 'planned' rows are deliberately NOT required to carry a witness",
-    "— they claim nothing yet. The checker only holds the green rows to account.",
+    "\u2014 they claim nothing yet. The checker only holds the green rows to account.",
     "",
     "Azure differential evidence is a THIRD tier this family has nowhere else: it",
     "is prepared (e2e/differential) but pending an authorized live run, so no row",
@@ -20,36 +20,167 @@
     "per row; this manifest deliberately cites only what runs today."
   ],
   "claims": {
-    "process/config/TLS/store/clock": ["go:TestConfigValidation", "go:TestClockModes", "go:TestClosedStoreErrors"],
-    "ARM conditional requests": ["go:TestConditionalRequests", "go:TestConditionalEntityTagParsing", "sdk:TestGoManagementSDKConfiguresProtectedGateway/named-value"],
-    "ARM collection queries": ["go:TestCollectionPagingAndFiltering", "go:TestFilterGrammar", "go:TestCollectionFilterContracts", "sdk:TestGoManagementSDKConfiguresProtectedGateway/tag"],
-    "ARM error envelope": ["go:TestValidationErrorDetails", "go:TestTopLevelRoutingErrors", "sdk:TestGoManagementSDKConfiguresProtectedGateway/named-value"],
-    "official management SDKs": ["go:TestOfficialManagementSDKs", "ci:sdk-witnesses"],
-    "HTTP gateway and routing": ["go:TestManagementToGatewayVerticalSlice", "go:TestGatewayOperationAndSubscriptionRejections", "go:TestBackendCircuitBreaker", "sdk:TestGoManagementSDKConfiguresProtectedGateway/gateway"],
-    "canonical API ARM documents": ["go:TestAPIAndOperationLifecycle", "go:TestAPIDocumentHelpersAndLegacyPatch", "sdk:TestGoManagementSDKConfiguresProtectedGateway/api", "sdk:TestGoManagementSDKConfiguresProtectedGateway/openapi-import-and-export"],
-    "canonical operation ARM documents": ["go:TestAPIAndOperationLifecycle", "go:TestOperationDocumentFallbacks", "sdk:TestGoManagementSDKConfiguresProtectedGateway/operation"],
-    "canonical API-schema ARM documents": ["go:TestAPISchemaLifecycle", "go:TestAPISchemaDocumentFallback", "sdk:TestGoManagementSDKConfiguresProtectedGateway/api-schema"],
-    "canonical product ARM documents": ["go:TestProductAndSubscriptionBranches", "go:TestProductDocumentFallbacks", "sdk:TestGoManagementSDKConfiguresProtectedGateway/product"],
-    "canonical group ARM documents": ["go:TestGroupAndProductAssociations", "go:TestGroupDocumentFallbacks", "sdk:TestGoManagementSDKConfiguresProtectedGateway/group", "sdk:TestGoManagementSDKConfiguresProtectedGateway/product-group", "sdk:TestGoManagementSDKConfiguresProtectedGateway/group-user"],
-    "canonical API version-set ARM documents": ["go:TestAPIVersionSetLifecycle", "go:TestAPIVersionSetDocumentFallbacks", "sdk:TestGoManagementSDKConfiguresProtectedGateway/api-version-set"],
-    "canonical tag ARM documents": ["go:TestTagDocumentFallbacks", "sdk:TestGoManagementSDKConfiguresProtectedGateway/tag"],
-    "canonical policy-fragment ARM documents": ["go:TestCompileWithPolicyFragments", "go:TestPolicyFragmentDocumentFallback", "ci:sdk-witnesses"],
-    "canonical API-release ARM documents": ["go:TestAPIReleaseTransactions", "go:TestAPIReleaseDocumentFallbacks", "sdk:TestGoManagementSDKConfiguresProtectedGateway/api-release", "sdk:TestGoManagementSDKConfiguresProtectedGateway/api-release-update"],
-    "canonical user ARM documents": ["go:TestUserDocumentFallbacks", "sdk:TestGoManagementSDKConfiguresProtectedGateway/user"],
-    "canonical subscription ARM documents": ["go:TestSubscriptionDocumentFallbacks", "go:TestActivateFailuresAndSubscriptionStates", "sdk:TestGoManagementSDKConfiguresProtectedGateway/subscription"],
-    "canonical named-value ARM documents": ["go:TestNamedValueLifecycle", "go:TestNamedValueDocumentFallbacks", "go:TestKeyVaultRetrieval", "sdk:TestGoManagementSDKConfiguresProtectedGateway/named-value"],
-    "canonical backend ARM documents": ["go:TestBackendLifecycle", "go:TestBackendDocumentFallbacks", "sdk:TestGoManagementSDKConfiguresProtectedGateway/backend"],
-    "canonical cache ARM documents": ["go:TestCacheLifecycle", "go:TestCacheBranches", "sdk:TestGoManagementSDKConfiguresProtectedGateway/cache"],
-    "canonical identity-provider ARM documents": ["go:TestIdentityProviderLifecycle", "go:TestIdentityProviderBranches", "sdk:TestGoManagementSDKConfiguresProtectedGateway/identity-provider"],
-    "canonical OpenID Connect provider ARM documents": ["go:TestOpenIDConnectProviderLifecycle", "go:TestOpenIDConnectProviderBranches", "sdk:TestGoManagementSDKConfiguresProtectedGateway/openid-connect-provider"],
-    "canonical authorization-server ARM documents": ["go:TestAuthorizationServerLifecycle", "go:TestAuthorizationServerBranches", "sdk:TestGoManagementSDKConfiguresProtectedGateway/authorization-server"],
-    "canonical documentation ARM documents": ["go:TestDocumentationLifecycle", "go:TestDocumentationBranches"],
-    "canonical certificate ARM documents": ["go:TestCertificateLifecycle", "go:TestCertificateDocumentFallback", "go:TestKeyVaultRetrieval", "sdk:TestGoManagementSDKConfiguresProtectedGateway/certificate"],
-    "Key Vault secret retrieval": ["go:TestKeyVaultRetrieval", "go:TestHTTPGetSecret"],
-    "canonical logger ARM documents": ["go:TestLoggerDiagnosticAndEventLifecycle", "go:TestLoggerAndDiagnosticBranches", "sdk:TestGoManagementSDKConfiguresProtectedGateway/logger", "sdk:TestGoManagementSDKConfiguresProtectedGateway/logger-reference-protection"],
-    "canonical diagnostic ARM documents": ["go:TestDiagnosticEmissionAndSampling", "go:TestDiagnosticWriterCapabilities", "sdk:TestGoManagementSDKConfiguresProtectedGateway/diagnostic", "sdk:TestGoManagementSDKConfiguresProtectedGateway/api-diagnostic"],
-    "operator portal": ["go:TestControlAndDispatchEndpoints"],
-    "WebSocket/SSE": ["go:TestWebSocketGatewayTunnel", "go:TestWebSocketRequestDetection", "go:TestWriteGatewayBodyFlushesSSE"],
-    "Entra ARM authentication": ["sdk:TestGoManagementSDKAuthenticatesThroughEntraEmulator", "go:TestJWKSFailuresAndTLSClient"]
+    "process/config/TLS/store/clock": [
+      "go:TestConfigValidation",
+      "go:TestClockModes",
+      "go:TestClosedStoreErrors"
+    ],
+    "ARM conditional requests": [
+      "go:TestConditionalRequests",
+      "go:TestConditionalEntityTagParsing",
+      "sdk:TestGoManagementSDKConfiguresProtectedGateway/named-value"
+    ],
+    "ARM collection queries": [
+      "go:TestCollectionPagingAndFiltering",
+      "go:TestFilterGrammar",
+      "go:TestCollectionFilterContracts",
+      "sdk:TestGoManagementSDKConfiguresProtectedGateway/tag"
+    ],
+    "ARM error envelope": [
+      "go:TestValidationErrorDetails",
+      "go:TestTopLevelRoutingErrors",
+      "sdk:TestGoManagementSDKConfiguresProtectedGateway/named-value"
+    ],
+    "official management SDKs": [
+      "go:TestOfficialManagementSDKs",
+      "ci:sdk-witnesses"
+    ],
+    "HTTP gateway and routing": [
+      "go:TestManagementToGatewayVerticalSlice",
+      "go:TestGatewayOperationAndSubscriptionRejections",
+      "go:TestBackendCircuitBreaker",
+      "sdk:TestGoManagementSDKConfiguresProtectedGateway/gateway"
+    ],
+    "canonical API ARM documents": [
+      "go:TestAPIAndOperationLifecycle",
+      "go:TestAPIDocumentHelpersAndLegacyPatch",
+      "sdk:TestGoManagementSDKConfiguresProtectedGateway/api",
+      "sdk:TestGoManagementSDKConfiguresProtectedGateway/openapi-import-and-export"
+    ],
+    "canonical operation ARM documents": [
+      "go:TestAPIAndOperationLifecycle",
+      "go:TestOperationDocumentFallbacks",
+      "sdk:TestGoManagementSDKConfiguresProtectedGateway/operation"
+    ],
+    "canonical API-schema ARM documents": [
+      "go:TestAPISchemaLifecycle",
+      "go:TestAPISchemaDocumentFallback",
+      "sdk:TestGoManagementSDKConfiguresProtectedGateway/api-schema"
+    ],
+    "canonical product ARM documents": [
+      "go:TestProductAndSubscriptionBranches",
+      "go:TestProductDocumentFallbacks",
+      "sdk:TestGoManagementSDKConfiguresProtectedGateway/product"
+    ],
+    "canonical group ARM documents": [
+      "go:TestGroupAndProductAssociations",
+      "go:TestGroupDocumentFallbacks",
+      "sdk:TestGoManagementSDKConfiguresProtectedGateway/group",
+      "sdk:TestGoManagementSDKConfiguresProtectedGateway/product-group",
+      "sdk:TestGoManagementSDKConfiguresProtectedGateway/group-user"
+    ],
+    "canonical API version-set ARM documents": [
+      "go:TestAPIVersionSetLifecycle",
+      "go:TestAPIVersionSetDocumentFallbacks",
+      "sdk:TestGoManagementSDKConfiguresProtectedGateway/api-version-set"
+    ],
+    "canonical tag ARM documents": [
+      "go:TestTagDocumentFallbacks",
+      "sdk:TestGoManagementSDKConfiguresProtectedGateway/tag"
+    ],
+    "canonical policy-fragment ARM documents": [
+      "go:TestCompileWithPolicyFragments",
+      "go:TestPolicyFragmentDocumentFallback",
+      "ci:sdk-witnesses"
+    ],
+    "canonical API-release ARM documents": [
+      "go:TestAPIReleaseTransactions",
+      "go:TestAPIReleaseDocumentFallbacks",
+      "sdk:TestGoManagementSDKConfiguresProtectedGateway/api-release",
+      "sdk:TestGoManagementSDKConfiguresProtectedGateway/api-release-update"
+    ],
+    "canonical user ARM documents": [
+      "go:TestUserDocumentFallbacks",
+      "sdk:TestGoManagementSDKConfiguresProtectedGateway/user"
+    ],
+    "canonical subscription ARM documents": [
+      "go:TestSubscriptionDocumentFallbacks",
+      "go:TestActivateFailuresAndSubscriptionStates",
+      "sdk:TestGoManagementSDKConfiguresProtectedGateway/subscription"
+    ],
+    "canonical named-value ARM documents": [
+      "go:TestNamedValueLifecycle",
+      "go:TestNamedValueDocumentFallbacks",
+      "go:TestKeyVaultRetrieval",
+      "sdk:TestGoManagementSDKConfiguresProtectedGateway/named-value"
+    ],
+    "canonical backend ARM documents": [
+      "go:TestBackendLifecycle",
+      "go:TestBackendDocumentFallbacks",
+      "sdk:TestGoManagementSDKConfiguresProtectedGateway/backend"
+    ],
+    "canonical cache ARM documents": [
+      "go:TestCacheLifecycle",
+      "go:TestCacheBranches",
+      "sdk:TestGoManagementSDKConfiguresProtectedGateway/cache"
+    ],
+    "canonical identity-provider ARM documents": [
+      "go:TestIdentityProviderLifecycle",
+      "go:TestIdentityProviderBranches",
+      "sdk:TestGoManagementSDKConfiguresProtectedGateway/identity-provider"
+    ],
+    "canonical OpenID Connect provider ARM documents": [
+      "go:TestOpenIDConnectProviderLifecycle",
+      "go:TestOpenIDConnectProviderBranches",
+      "sdk:TestGoManagementSDKConfiguresProtectedGateway/openid-connect-provider"
+    ],
+    "canonical authorization-server ARM documents": [
+      "go:TestAuthorizationServerLifecycle",
+      "go:TestAuthorizationServerBranches",
+      "sdk:TestGoManagementSDKConfiguresProtectedGateway/authorization-server"
+    ],
+    "canonical documentation ARM documents": [
+      "go:TestDocumentationLifecycle",
+      "go:TestDocumentationBranches"
+    ],
+    "canonical certificate ARM documents": [
+      "go:TestCertificateLifecycle",
+      "go:TestCertificateDocumentFallback",
+      "go:TestKeyVaultRetrieval",
+      "sdk:TestGoManagementSDKConfiguresProtectedGateway/certificate"
+    ],
+    "Key Vault secret retrieval": [
+      "go:TestKeyVaultRetrieval",
+      "go:TestHTTPGetSecret"
+    ],
+    "canonical logger ARM documents": [
+      "go:TestLoggerDiagnosticAndEventLifecycle",
+      "go:TestLoggerAndDiagnosticBranches",
+      "sdk:TestGoManagementSDKConfiguresProtectedGateway/logger",
+      "sdk:TestGoManagementSDKConfiguresProtectedGateway/logger-reference-protection"
+    ],
+    "canonical diagnostic ARM documents": [
+      "go:TestDiagnosticEmissionAndSampling",
+      "go:TestDiagnosticWriterCapabilities",
+      "sdk:TestGoManagementSDKConfiguresProtectedGateway/diagnostic",
+      "sdk:TestGoManagementSDKConfiguresProtectedGateway/api-diagnostic"
+    ],
+    "operator portal": [
+      "go:TestControlAndDispatchEndpoints"
+    ],
+    "WebSocket/SSE": [
+      "go:TestWebSocketGatewayTunnel",
+      "go:TestWebSocketRequestDetection",
+      "go:TestWriteGatewayBodyFlushesSSE"
+    ],
+    "Entra ARM authentication": [
+      "sdk:TestGoManagementSDKAuthenticatesThroughEntraEmulator",
+      "go:TestJWKSFailuresAndTLSClient"
+    ],
+    "GraphQL": [
+      "ci:graphql-witness",
+      "go:TestGraphQLIntrospectionIsAnsweredWithoutTheBackend",
+      "go:TestIntrospectionAdvertisesOnlyDirectivesWeHonour"
+    ]
   }
 }

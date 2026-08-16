@@ -79,6 +79,42 @@ Support pass-through and synthetic GraphQL APIs, schema validation, operation
 limits, field resolver policy scopes, resolver backends, variables, fragments,
 introspection behavior, and GraphQL-specific errors.
 
+**Implemented: pass-through.** An API is GraphQL when `properties.apiType` is
+`graphql` *and* it carries a schema resource with content type
+`application/vnd.ms-azure-apim.graphql.schema`. Both signals are required: an
+apiType with no schema describes nothing servable, and a schema on a REST API is
+a document the gateway must not act on. A GraphQL API with no schema **yet** is
+not an error, because ARM creates the API and its schema as separate resources,
+so every import passes through that state.
+
+Requests arrive as a JSON POST, an `application/graphql` POST, or a GET with
+`?query=`. A GET is re-encoded as a JSON POST when forwarded, since GraphQL
+backends accept POST; a POST body is replayed byte for byte, so members the
+gateway has no business editing (`extensions`, where Apollo puts persisted-query
+hashes) survive the hop.
+
+Operations are validated against the schema **at the gateway**, so the backend
+never sees a request it would have to reject and the caller gets the same error
+whichever backend is behind it. A request error is a 4xx carrying
+`{"errors":[...]}`, which is the GraphQL-over-HTTP pairing for "execution never
+began"; the 200-with-errors shape means execution ran and some fields failed,
+and returning it for a malformed request would tell a client its query was
+accepted.
+
+Introspection is answered from the stored schema and never forwarded, so an API
+stays discoverable through the gateway even when its backend has introspection
+disabled. Two details a client depends on: the response is projected to exactly
+the fields selected, and types are listed in schema-declaration order, because
+every tool that prints a schema back from introspection reproduces that order.
+The gateway advertises only directives it honours, so the parser's own
+`@defer` is filtered out rather than promising incremental delivery.
+
+**Not implemented: synthetic GraphQL.** APIM resolvers reach their arguments
+through `context.GraphQL.*` policy expressions, so resolvers depend on the C#
+expression member inventory (P2) and are sequenced behind it. A resolver taking
+any other syntax would be a shape no Azure user could copy. Depth and size
+limits and `validate-graphql-request` land with that work.
+
 ### WebSocket and SSE
 
 Support upgrade routing, long-lived connections, handshake policies, connection

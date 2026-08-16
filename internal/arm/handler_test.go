@@ -2857,7 +2857,18 @@ func TestAPISchemaLifecycle(t *testing.T) {
 	}
 	assertStatus(t, handler, http.MethodGet, basePath+"/apis/a/schemas/payload/extra"+apiQuery, "", http.StatusNotFound)
 	assertStatus(t, handler, http.MethodPost, path, "", http.StatusMethodNotAllowed)
-	assertStatus(t, handler, http.MethodDelete, path, "", http.StatusNoContent)
+
+	// A schema is runtime state: a GraphQL schema decides what the gateway will
+	// accept, so importing or removing one republishes the snapshot. When that
+	// republish fails the caller must be told, rather than getting a 200 for a
+	// schema the gateway is not serving.
+	handler.Activate = func() error { return errors.New("activation") }
+	assertStatus(t, handler, http.MethodPut, path, `{"properties":{"contentType":"application/json","document":{"value":"{}"}}}`, http.StatusBadRequest)
+	// DELETE removes the row before republishing, so a failure there is a
+	// server-side configuration fault, not a rejected request. The schema is
+	// gone either way, which is why the next DELETE is a 412 and not a 204.
+	assertStatus(t, handler, http.MethodDelete, path, "", http.StatusInternalServerError)
+	handler.Activate = nil
 	assertStatus(t, handler, http.MethodDelete, path, "", http.StatusPreconditionFailed)
 }
 

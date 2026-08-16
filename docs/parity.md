@@ -61,7 +61,7 @@ was renamed away is a claim the reader cannot audit. Rows graded *partial* or
 | workspaces | planned | P4 | SDK/RBAC/isolation scenarios |
 | self-hosted/workspace gateways | planned | P4 | multi-process disconnect/config tests |
 | SOAP | planned | P5 | WSDL clients and Azure differential |
-| GraphQL | planned | P5 | real GraphQL clients and resolver fixtures |
+| GraphQL | partial | P5 | pass-through GraphQL APIs: schema import as the `application/vnd.ms-azure-apim.graphql.schema` resource, request grammar over JSON POST, `application/graphql` POST and GET, schema validation refusing invalid operations at the gateway, and introspection answered from the stored schema. Witnessed by the reference `graphql` implementation on both ends: it serves as the backend, and `buildClientSchema` plus `printSchema` rebuild the emulator's introspection and compare it to the imported SDL. **Synthetic GraphQL is NOT implemented** — APIM resolvers reach their arguments through `context.GraphQL.*` policy expressions, so resolvers wait on the expression member inventory; resolver policies, depth and size limits, and `validate-graphql-request` pending |
 | WebSocket/SSE | implemented | P1/P5 | SSE event-stream flushing, text/binary WebSocket upgrade tunneling, backend proxying, and cancellation-compatible pass-through |
 | gRPC | planned | P5 | generated clients and trailer/stream fixtures |
 | networking/private/custom domains | partial | P1/P6 | persisted custom-hostname routing with exact host precedence, backend TLS chain-validation/client-certificate behavior, retry execution, and local gateway reachability; private networking, custom-domain certificate/TLS state, and Azure differential fixtures pending |

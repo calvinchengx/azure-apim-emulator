@@ -54,6 +54,26 @@ jobs:
       - run: make setup-sdks
       - run: make test-sdks
 
+  graphql-witness:
+    name: GraphQL witness (reference graphql implementation, both ends)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: 1.25.11
+          cache: true
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: make setup-graphql
+      - run: make test-graphql
+
   distribution:
     runs-on: ubuntu-latest
     timeout-minutes: 25
