@@ -94,6 +94,10 @@ func (r *Runtime) serveGraphQL(w http.ResponseWriter, req *http.Request, service
 		writeGraphQLResponse(w, http.StatusOK, route.GraphQL.Introspect(operation))
 		return
 	}
+	if len(route.Resolvers) > 0 {
+		r.serveSyntheticGraphQL(w, req, service, route, state, operation)
+		return
+	}
 	r.forwardGraphQL(w, req, service, state, plan, body, request)
 }
 

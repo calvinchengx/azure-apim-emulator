@@ -822,3 +822,35 @@ func fatalResponse(t *testing.T, response *http.Response) {
 	body, _ := io.ReadAll(response.Body)
 	t.Fatalf("status %d: %s", response.StatusCode, body)
 }
+
+// The server is what decides a resolver policy is validated as an
+// <http-data-source> rather than as a <policies> document. Asserted here
+// because that wiring lives in New, and a handler test with a hand-set
+// validator would be asserting the test's own wiring instead of the server's.
+func TestServerValidatesResolverPoliciesAsDataSources(t *testing.T) {
+	srv := newTestServer(t, false, nil)
+	front := httptest.NewServer(srv.Handler())
+	defer front.Close()
+
+	base := "/subscriptions/" + testSubscription + "/resourceGroups/test-rg/providers/Microsoft.ApiManagement/service/emulator"
+	service := management(t, front.Client(), http.MethodPut, front.URL+base+"?api-version=2024-05-01",
+		`{"location":"local","sku":{"name":"Developer","capacity":1},"properties":{"publisherName":"Local","publisherEmail":"local@example.test"}}`)
+	service.Body.Close()
+	putOK(t, front, base+"/apis/shop", `{"properties":{"displayName":"Shop","path":"shop","apiType":"graphql"}}`)
+	putOK(t, front, base+"/apis/shop/resolvers/orders", `{"properties":{"displayName":"Orders","path":"Query/orders"}}`)
+
+	policyPath := base + "/apis/shop/resolvers/orders/policies/policy"
+	rejected := management(t, front.Client(), http.MethodPut, front.URL+policyPath+"?api-version=2024-05-01",
+		`{"properties":{"value":"<policies><inbound/></policies>"}}`)
+	defer rejected.Body.Close()
+	if rejected.StatusCode != http.StatusBadRequest {
+		t.Fatalf("a <policies> document at a resolver scope returned %d, want 400", rejected.StatusCode)
+	}
+
+	accepted := management(t, front.Client(), http.MethodPut, front.URL+policyPath+"?api-version=2024-05-01",
+		`{"properties":{"value":"<http-data-source><http-request><set-method>GET</set-method><set-url>https://rest.test/orders</set-url></http-request></http-data-source>","format":"xml"}}`)
+	defer accepted.Body.Close()
+	if accepted.StatusCode >= 400 {
+		t.Fatalf("a valid <http-data-source> returned %d", accepted.StatusCode)
+	}
+}

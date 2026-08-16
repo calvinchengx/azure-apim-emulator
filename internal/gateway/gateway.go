@@ -78,6 +78,11 @@ type Route struct {
 	// whose schema failed to compile stays a plain HTTP proxy rather than
 	// half-serving GraphQL.
 	GraphQL *graphql.Schema
+	// Resolvers make the API SYNTHETIC: present means fields are produced by
+	// resolvers and no GraphQL backend is contacted. Empty means pass-through.
+	// The two are mutually exclusive by construction rather than by a flag,
+	// because an API cannot be half of each.
+	Resolvers map[string]compiledResolver
 }
 
 // Runtime atomically publishes snapshots and serves gateway traffic.
@@ -402,6 +407,13 @@ func (r *Runtime) Activate(st *store.Store, strict bool) error {
 	}
 	policyByScope := map[string]policy.Plan{}
 	for _, item := range policies {
+		// A resolver's policy is an <http-data-source>, not a <policies>
+		// document, and it is compiled per resolver in graphQLResolversFor.
+		// Feeding it to the plan compiler would fail every activation for a
+		// service that has any synthetic GraphQL API.
+		if isResolverScope(item.ScopeID) {
+			continue
+		}
 		resolved, err := resolveNamedValues(item.Value, namedValues[strings.ToLower(serviceIDFromScope(item.ScopeID))])
 		if err != nil {
 			return fmt.Errorf("compile policy %s: %w", item.ScopeID, err)
@@ -513,7 +525,14 @@ func (r *Runtime) Activate(st *store.Store, strict bool) error {
 			}
 			schema = nil
 		}
-		service.Routes = append(service.Routes, &Route{API: api, VersionSet: versionSet, Operations: operationList, OperationPlans: operationPlans, SubscriptionPlans: subscriptionPlans, Plan: plan, AcceptedKeys: keysByAPI[strings.ToLower(api.ID())], Diagnostics: diagnostics[strings.ToLower(api.ID())], GraphQL: schema})
+		resolvers, err := graphQLResolversFor(st, api, schema)
+		if err != nil {
+			if strict {
+				return err
+			}
+			resolvers = nil
+		}
+		service.Routes = append(service.Routes, &Route{API: api, VersionSet: versionSet, Operations: operationList, OperationPlans: operationPlans, SubscriptionPlans: subscriptionPlans, Plan: plan, AcceptedKeys: keysByAPI[strings.ToLower(api.ID())], Diagnostics: diagnostics[strings.ToLower(api.ID())], GraphQL: schema, Resolvers: resolvers})
 	}
 	for _, service := range snapshot.Services {
 		sort.SliceStable(service.Routes, func(i, j int) bool { return len(service.Routes[i].API.Path) > len(service.Routes[j].API.Path) })
@@ -1722,4 +1741,9 @@ func gatewayError(w http.ResponseWriter, status int, code, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(map[string]any{"statusCode": status, "error": map[string]string{"code": code, "message": message}})
+}
+
+// isResolverScope reports whether a policy scope addresses a GraphQL resolver.
+func isResolverScope(scopeID string) bool {
+	return strings.Contains(strings.ToLower(scopeID), "/resolvers/")
 }

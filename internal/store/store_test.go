@@ -424,25 +424,29 @@ func TestClosedStoreErrors(t *testing.T) {
 			_, err := st.ListNamedValues("service")
 			return err
 		},
-		"delete named value": func() error { return st.DeleteNamedValue("named") },
-		"upsert backend":     func() error { _, err := st.UpsertBackend(model.Backend{}); return err },
-		"get backend":        func() error { _, err := st.GetBackend("backend"); return err },
-		"list backends":      func() error { _, err := st.ListBackends("service"); return err },
-		"delete backend":     func() error { return st.DeleteBackend("backend") },
-		"upsert certificate": func() error { _, err := st.UpsertCertificate(model.Certificate{}); return err },
-		"get certificate":    func() error { _, err := st.GetCertificate("certificate"); return err },
-		"list certificates":  func() error { _, err := st.ListCertificates("service"); return err },
-		"delete certificate": func() error { return st.DeleteCertificate("certificate") },
-		"upsert API schema":  func() error { _, err := st.UpsertAPISchema(model.APISchema{}); return err },
-		"get API schema":     func() error { _, err := st.GetAPISchema("schema"); return err },
-		"list API schemas":   func() error { _, err := st.ListAPISchemas("api"); return err },
-		"delete API schema":  func() error { return st.DeleteAPISchema("schema") },
-		"upsert tag":         func() error { _, err := st.UpsertTag(model.Tag{}); return err },
-		"get tag":            func() error { _, err := st.GetTag("tag"); return err },
-		"list tags":          func() error { _, err := st.ListTags("service"); return err },
-		"delete tag":         func() error { return st.DeleteTag("tag") },
-		"assign tag":         func() error { return st.AssignTag("resource", "tag") },
-		"detach tag":         func() error { return st.DetachTag("resource", "tag") },
+		"delete named value":  func() error { return st.DeleteNamedValue("named") },
+		"upsert backend":      func() error { _, err := st.UpsertBackend(model.Backend{}); return err },
+		"get backend":         func() error { _, err := st.GetBackend("backend"); return err },
+		"list backends":       func() error { _, err := st.ListBackends("service"); return err },
+		"delete backend":      func() error { return st.DeleteBackend("backend") },
+		"upsert certificate":  func() error { _, err := st.UpsertCertificate(model.Certificate{}); return err },
+		"get certificate":     func() error { _, err := st.GetCertificate("certificate"); return err },
+		"list certificates":   func() error { _, err := st.ListCertificates("service"); return err },
+		"delete certificate":  func() error { return st.DeleteCertificate("certificate") },
+		"upsert API schema":   func() error { _, err := st.UpsertAPISchema(model.APISchema{}); return err },
+		"get API schema":      func() error { _, err := st.GetAPISchema("schema"); return err },
+		"list API schemas":    func() error { _, err := st.ListAPISchemas("api"); return err },
+		"delete API schema":   func() error { return st.DeleteAPISchema("schema") },
+		"upsert API resolver": func() error { _, err := st.UpsertAPIResolver(model.APIResolver{}); return err },
+		"get API resolver":    func() error { _, err := st.GetAPIResolver("resolver"); return err },
+		"list API resolvers":  func() error { _, err := st.ListAPIResolvers("api"); return err },
+		"delete API resolver": func() error { return st.DeleteAPIResolver("resolver") },
+		"upsert tag":          func() error { _, err := st.UpsertTag(model.Tag{}); return err },
+		"get tag":             func() error { _, err := st.GetTag("tag"); return err },
+		"list tags":           func() error { _, err := st.ListTags("service"); return err },
+		"delete tag":          func() error { return st.DeleteTag("tag") },
+		"assign tag":          func() error { return st.AssignTag("resource", "tag") },
+		"detach tag":          func() error { return st.DetachTag("resource", "tag") },
 		"get resource tag": func() error {
 			_, err := st.GetResourceTag("resource", "tag")
 			return err
@@ -629,6 +633,12 @@ func TestScanFunctionsRejectMalformedRows(t *testing.T) {
 			 CREATE TABLE api_schema_documents (schema_id, document_json)`,
 			`INSERT INTO api_schemas VALUES ('id', 'api', NULL, '', '{}', '')`,
 			func(db *sql.DB) error { _, err := (&Store{db: db}).ListAPISchemas("api"); return err },
+		},
+		{
+			"API resolvers",
+			`CREATE TABLE api_resolvers (id, api_id, name, display_name, description, type, field, document_json, etag)`,
+			`INSERT INTO api_resolvers VALUES ('id', 'api', NULL, '', '', '', '', '{}', '')`,
+			func(db *sql.DB) error { _, err := (&Store{db: db}).ListAPIResolvers("api"); return err },
 		},
 		{
 			"tags",
@@ -2696,5 +2706,21 @@ func TestScanFunctionsQueryErrors(t *testing.T) {
 		if err := scan(db); err == nil {
 			t.Errorf("scan %d succeeded: %s", index, fmt.Sprint(err))
 		}
+	}
+}
+
+// A resolver document that cannot be encoded is reported rather than stored as
+// something else. Unreachable from ARM, which only stores decoded JSON.
+func TestUpsertAPIResolverRejectsUnencodableDocuments(t *testing.T) {
+	st, err := Open("", clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if _, err := st.UpsertAPIResolver(model.APIResolver{
+		APIID: "/apis/a", Name: "r", Type: "Query", Field: "f",
+		Document: map[string]any{"bad": make(chan int)},
+	}); err == nil {
+		t.Fatal("an unencodable document must be reported")
 	}
 }

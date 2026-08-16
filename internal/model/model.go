@@ -244,6 +244,24 @@ type APISchema struct {
 // ID returns the API schema ARM resource ID.
 func (v APISchema) ID() string { return v.APIID + "/schemas/" + v.Name }
 
+// APIResolver binds one GraphQL schema field to a data source. Azure addresses
+// it by Type and Field (the portal calls the pair a "path", e.g. Query/items),
+// and the resolver's own policy at .../resolvers/{name}/policies/policy holds
+// the <http-data-source> that produces the value.
+type APIResolver struct {
+	APIID       string
+	Name        string
+	DisplayName string
+	Description string
+	Type        string
+	Field       string
+	Document    map[string]any
+	ETag        string
+}
+
+// ID returns the API resolver ARM resource ID.
+func (v APIResolver) ID() string { return v.APIID + "/resolvers/" + v.Name }
+
 // Tag is reusable metadata associated with APIs, operations, and products.
 type Tag struct {
 	ServiceID   string

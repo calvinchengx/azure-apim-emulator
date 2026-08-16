@@ -220,6 +220,7 @@ type State struct {
 	Subscription            *expr.NamedContext
 	User                    *expr.NamedContext
 	Deployment              *expr.DeploymentContext
+	GraphQL                 *expr.GraphQLContext
 }
 
 type node struct {
@@ -2463,6 +2464,7 @@ func stateEnv(state *State) *expr.Env {
 		Subscription: state.Subscription,
 		User:         state.User,
 		Deployment:   state.Deployment,
+		GraphQL:      state.GraphQL,
 	})
 }
 

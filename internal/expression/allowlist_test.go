@@ -73,6 +73,10 @@ func TestAllowlistBoundMembersEvaluate(t *testing.T) {
 		Subscription: &NamedContext{Id: "dev", Name: "Dev"},
 		User:         &NamedContext{Id: "ada", Name: "Ada"},
 		Deployment:   &DeploymentContext{ServiceName: "emulator", Region: "local"},
+		GraphQL: &GraphQLContext{
+			Arguments: map[string]any{"id": "42", "first": float64(10)},
+			Parent:    map[string]any{"id": "parent"},
+		},
 	})
 	cases := map[string]string{
 		"context.Request":           "@(context.Request != null)",
@@ -85,6 +89,11 @@ func TestAllowlistBoundMembersEvaluate(t *testing.T) {
 		"context.Subscription":      "@(context.Subscription != null)",
 		"context.User":              "@(context.User != null)",
 		"context.Deployment":        "@(context.Deployment != null)",
+		"context.GraphQL":           "@(context.GraphQL != null)",
+		"GraphQL.Arguments":         `@(context.GraphQL.Arguments["id"])`,
+		"GraphQL.Parent":            `@(context.GraphQL.Parent["id"])`,
+		"Arguments.ContainsKey":     "@(context.GraphQL.Arguments.ContainsKey('id'))",
+		"Arguments.Count":           "@(context.GraphQL.Arguments.Count)",
 		"Request.Method":            "@(context.Request.Method)",
 		"Request.Url":               "@(context.Request.Url != null)",
 		"Request.URL":               "@(context.Request.URL != null)",
@@ -193,13 +202,14 @@ func binderCases(t *testing.T) map[string]map[string]bool {
 		"operationHost":  {"Operation"},
 		"namedHost":      {"Product", "Subscription", "User"},
 		"deploymentHost": {"Deployment"},
+		"graphQLHost":    {"GraphQL"},
+		"jsonMapHost":    {"Arguments"},
 	}
-	file, err := goparser.ParseFile(token.NewFileSet(), "context.go", nil, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
+	// Both files, because a host that binds members is a host wherever it
+	// lives. Parsing only context.go would let a new file expose members the
+	// allowlist never sees, which is the exact drift this test exists to catch.
 	found := map[string]map[string]bool{}
-	ast.Inspect(file, func(node ast.Node) bool {
+	inspect := func(node ast.Node) bool {
 		fn, ok := node.(*ast.FuncDecl)
 		if !ok || fn.Name.Name != "member" || fn.Recv == nil || len(fn.Recv.List) == 0 {
 			return true
@@ -235,7 +245,14 @@ func binderCases(t *testing.T) map[string]map[string]bool {
 			}
 		}
 		return true
-	})
+	}
+	for _, name := range []string{"context.go", "graphql.go"} {
+		file, err := goparser.ParseFile(token.NewFileSet(), name, nil, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ast.Inspect(file, inspect)
+	}
 	if len(found) == 0 {
 		t.Fatal("no binder member cases found")
 	}

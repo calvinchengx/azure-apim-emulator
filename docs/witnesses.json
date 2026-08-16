@@ -179,7 +179,9 @@
     ],
     "GraphQL": [
       "ci:graphql-witness",
-      "go:TestGraphQLIntrospectionIsAnsweredWithoutTheBackend",
+      "go:TestSyntheticGraphQLResolvesFromRESTBackends",
+      "go:TestSyntheticGraphQLPassesArgumentsAndParent",
+      "go:TestEachResolverCallSeesOnlyItsOwnArguments",
       "go:TestIntrospectionAdvertisesOnlyDirectivesWeHonour"
     ]
   }

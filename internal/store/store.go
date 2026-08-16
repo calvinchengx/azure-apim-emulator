@@ -157,6 +157,11 @@ CREATE TABLE IF NOT EXISTS api_schema_documents (
   schema_id TEXT PRIMARY KEY REFERENCES api_schemas(id) ON DELETE CASCADE,
   document_json TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS api_resolvers (
+  id TEXT PRIMARY KEY, api_id TEXT NOT NULL REFERENCES apis(id) ON DELETE CASCADE,
+  name TEXT NOT NULL, display_name TEXT NOT NULL, description TEXT NOT NULL,
+  type TEXT NOT NULL, field TEXT NOT NULL, document_json TEXT NOT NULL, etag TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS tags (
   id TEXT PRIMARY KEY, service_id TEXT NOT NULL REFERENCES services(id) ON DELETE CASCADE,
   name TEXT NOT NULL, display_name TEXT NOT NULL, etag TEXT NOT NULL
@@ -2841,4 +2846,61 @@ func splitRevision(name string) (string, string) {
 		return name, "1"
 	}
 	return name[:index], name[index+5:]
+}
+
+// UpsertAPIResolver creates or replaces a GraphQL resolver.
+func (s *Store) UpsertAPIResolver(v model.APIResolver) (model.APIResolver, error) {
+	document, err := json.Marshal(v.Document)
+	if err != nil {
+		return v, err
+	}
+	v.ETag = newETag()
+	_, err = s.db.Exec(`INSERT INTO api_resolvers (id, api_id, name, display_name, description, type, field, document_json, etag)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET display_name=excluded.display_name,
+          description=excluded.description, type=excluded.type, field=excluded.field,
+          document_json=excluded.document_json, etag=excluded.etag`,
+		v.ID(), v.APIID, v.Name, v.DisplayName, v.Description, v.Type, v.Field, string(document), v.ETag)
+	return v, err
+}
+
+// GetAPIResolver finds one GraphQL resolver.
+func (s *Store) GetAPIResolver(id string) (model.APIResolver, error) {
+	var v model.APIResolver
+	var document string
+	err := s.db.QueryRow(`SELECT api_id, name, display_name, description, type, field, document_json, etag
+	        FROM api_resolvers WHERE lower(id)=lower(?)`, id).
+		Scan(&v.APIID, &v.Name, &v.DisplayName, &v.Description, &v.Type, &v.Field, &document, &v.ETag)
+	if errors.Is(err, sql.ErrNoRows) {
+		return model.APIResolver{}, ErrNotFound
+	}
+	if err == nil {
+		_ = json.Unmarshal([]byte(document), &v.Document)
+	}
+	return v, err
+}
+
+// ListAPIResolvers returns an API's resolvers in stable ID order.
+func (s *Store) ListAPIResolvers(apiID string) ([]model.APIResolver, error) {
+	rows, err := s.db.Query(`SELECT api_id, name, display_name, description, type, field, document_json, etag
+        FROM api_resolvers WHERE lower(api_id)=lower(?) ORDER BY id`, apiID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	values := make([]model.APIResolver, 0)
+	for rows.Next() {
+		var v model.APIResolver
+		var document string
+		if err := rows.Scan(&v.APIID, &v.Name, &v.DisplayName, &v.Description, &v.Type, &v.Field, &document, &v.ETag); err != nil {
+			return nil, err
+		}
+		_ = json.Unmarshal([]byte(document), &v.Document)
+		values = append(values, v)
+	}
+	return values, rows.Err()
+}
+
+// DeleteAPIResolver removes a GraphQL resolver.
+func (s *Store) DeleteAPIResolver(id string) error {
+	return deleteScopedResource(s.db, "api_resolvers", id)
 }
