@@ -100,8 +100,8 @@ binds last-error. `context.Api` (`Id`/`Name`/`Path`), `Operation`
 (`Id`/`Name`), and `Deployment` (`ServiceName`/`Region`) are bound from the
 activated snapshot; missing scopes are null. Other identity members,
 `AsJObject`/`AsJson` remain unknown. Statement blocks may declare
-expression-scoped `var` locals and must `return`; `if`/`new`/loops stay
-rejected. Single-`return` and `var`+`return` blocks and
+expression-scoped `var` locals, `if`/`else` with a `return` on every path,
+and must `return`; `new`/loops stay rejected. Statement blocks and
 runtime evaluation of `set-header`, `set-query-parameter`, `set-variable`,
 `set-body`, `set-method`, `return-response` children, `send-request` /
 `send-one-way-request` url/method/header/body/mode/timeout, `set-backend-service`,

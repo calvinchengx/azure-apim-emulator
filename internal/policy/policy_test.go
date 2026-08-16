@@ -173,7 +173,15 @@ func TestQueryParameterAndVariablePolicies(t *testing.T) {
 		t.Fatalf("var statement = %+v, %v", state.Variables, err)
 	}
 	if _, err := Compile(`<policies><inbound><set-variable name="x"><value>@{ if (true) { return 1; } }</value></set-variable></inbound></policies>`, true); err == nil {
-		t.Fatal("if statement accepted")
+		t.Fatal("if without else accepted")
+	}
+	ifPlan, err := Compile(`<policies><inbound><set-variable name="x"><value>@{ if (true) { return 1; } else { return 2; } }</value></set-variable></inbound></policies>`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state = &State{Request: httptest.NewRequest(http.MethodGet, "http://example/", nil)}
+	if err := Execute(ifPlan.Inbound, state); err != nil || state.Variables["x"] != "1" {
+		t.Fatalf("if/else statement = %+v, %v", state.Variables, err)
 	}
 }
 
