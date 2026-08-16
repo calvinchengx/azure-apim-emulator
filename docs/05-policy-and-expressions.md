@@ -92,9 +92,10 @@ phase-1 operator set. The evaluator runs context-free expressions and binds
 `context` for `choose`, mutation policies, and retry conditions: request
 method/URL/headers/IP, response status/headers, last-error message, policy
 variables, member access, indexing, and calls (`ToString`, `Length`,
-`GetValueOrDefault`, `Get`, `ContainsKey`). `Url.Port` and `LastError.Message`
-are bound for `choose`/on-error through `stateEnv` the same way retry already
-binds last-error. Single-`return` statement blocks and
+`GetValueOrDefault`, `Get`, `ContainsKey`). `Url.Port`, `LastError.Message`,
+and request/response `Body.AsString()` (with body capture/replay) are bound
+for `choose`/on-error through `stateEnv` the same way retry already
+binds last-error. `AsJObject`/`AsJson` remain unknown. Single-`return` statement blocks and
 runtime evaluation of `set-header`, `set-query-parameter`, `set-variable`,
 `set-body`, `set-method`, `return-response` children, `send-request` /
 `send-one-way-request` url/method/header/body/mode/timeout, `set-backend-service`,
