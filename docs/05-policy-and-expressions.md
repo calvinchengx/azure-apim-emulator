@@ -20,7 +20,10 @@ encoding, linked documents, and management validation are compatibility tests.
 ## Scope and inheritance
 
 Policies may apply at global/service, workspace governance, product, API,
-operation, and resolver scopes. Compilation must reproduce:
+operation, and resolver scopes. ARM GET/PUT now persist service, API,
+operation, and product policy documents; product subscription composition
+uses the matching operation plan rather than the first map entry.
+Compilation must reproduce:
 
 - `<base />` insertion at its exact location
 - section-specific parent selection

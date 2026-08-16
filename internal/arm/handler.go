@@ -128,6 +128,17 @@ func (h *Handler) dispatch(w http.ResponseWriter, r *http.Request, parsed route)
 		h.product(w, r, parsed)
 	case "subscriptions":
 		h.subscription(w, r, parsed)
+	case "policies":
+		service := model.Service{SubscriptionID: parsed.SubscriptionID, ResourceGroup: parsed.ResourceGroup, Name: parsed.ServiceName}
+		if len(parsed.Tail) == 2 && equal(parsed.Tail[1], "policy") {
+			if _, err := h.Store.GetService(service.ID()); err != nil {
+				h.storeError(w, err, service.ID())
+				return
+			}
+			h.policyResource(w, r, service.ID(), "Microsoft.ApiManagement/service/policies")
+			return
+		}
+		writeError(w, http.StatusNotFound, "ResourceNotFound", "The requested APIM resource is not implemented in the P0 surface.", r.URL.Path)
 	default:
 		writeError(w, http.StatusNotFound, "ResourceNotFound", "The requested APIM resource is not implemented in the P0 surface.", r.URL.Path)
 	}
@@ -443,42 +454,17 @@ func (h *Handler) api(w http.ResponseWriter, r *http.Request, rt route) {
 		h.apiReleaseResource(w, r, model.APIRelease{APIID: api.ID(), Name: rt.Tail[3]})
 		return
 	}
-	if len(rt.Tail) == 4 && equal(rt.Tail[2], "policies") && equal(rt.Tail[3], "policy") && r.Method == http.MethodGet {
-		value, err := h.Store.GetPolicy(api.ID())
-		if err != nil {
-			h.storeError(w, err, api.ID())
-			return
-		}
-		writeResource(w, http.StatusOK, policyWire(api.ID(), value), value.ETag)
+	if len(rt.Tail) == 4 && equal(rt.Tail[2], "policies") && equal(rt.Tail[3], "policy") {
+		h.policyResource(w, r, api.ID(), "Microsoft.ApiManagement/service/apis/policies")
 		return
 	}
-	if len(rt.Tail) == 4 && equal(rt.Tail[2], "policies") && equal(rt.Tail[3], "policy") && r.Method == http.MethodPut {
-		var body struct {
-			Properties struct {
-				Format string `json:"format"`
-				Value  string `json:"value"`
-			} `json:"properties"`
-		}
-		if err := decode(r, &body); err != nil {
-			writeError(w, http.StatusBadRequest, "InvalidRequestContent", err.Error(), "")
+	if len(rt.Tail) == 6 && equal(rt.Tail[2], "operations") && equal(rt.Tail[4], "policies") && equal(rt.Tail[5], "policy") {
+		operationID := api.ID() + "/operations/" + rt.Tail[3]
+		if _, err := h.Store.GetOperation(operationID); err != nil {
+			h.storeError(w, err, operationID)
 			return
 		}
-		if h.ValidatePolicy != nil {
-			if err := h.ValidatePolicy(body.Properties.Value); err != nil {
-				writeError(w, http.StatusBadRequest, "ValidationError", err.Error(), "properties.value")
-				return
-			}
-		}
-		value, err := h.Store.UpsertPolicy(model.Policy{ScopeID: api.ID(), Format: body.Properties.Format, Value: body.Properties.Value})
-		if err != nil {
-			h.storeError(w, err, api.ID())
-			return
-		}
-		if err := h.activate(); err != nil {
-			writeError(w, http.StatusBadRequest, "ConfigurationInvalid", err.Error(), api.ID())
-			return
-		}
-		writeResource(w, http.StatusCreated, policyWire(api.ID(), value), value.ETag)
+		h.policyResource(w, r, operationID, "Microsoft.ApiManagement/service/apis/operations/policies")
 		return
 	}
 	writeError(w, http.StatusNotFound, "ResourceNotFound", "The requested API resource was not found.", r.URL.Path)
@@ -4052,6 +4038,14 @@ func (h *Handler) product(w http.ResponseWriter, r *http.Request, rt route) {
 		}
 		return
 	}
+	if len(rt.Tail) == 4 && equal(rt.Tail[2], "policies") && equal(rt.Tail[3], "policy") {
+		if _, err := h.Store.GetProduct(product.ID()); err != nil {
+			h.storeError(w, err, product.ID())
+			return
+		}
+		h.policyResource(w, r, product.ID(), "Microsoft.ApiManagement/service/products/policies")
+		return
+	}
 	writeError(w, http.StatusNotFound, "ResourceNotFound", "The requested product resource was not found.", r.URL.Path)
 }
 
@@ -4848,8 +4842,49 @@ func subscriptionWire(v model.Subscription, secrets bool) map[string]any {
 func subscriptionSecretsWire(v model.Subscription) map[string]any {
 	return map[string]any{"primaryKey": v.PrimaryKey, "secondaryKey": v.SecondaryKey}
 }
-func policyWire(scopeID string, value model.Policy) map[string]any {
-	return map[string]any{"id": scopeID + "/policies/policy", "name": "policy", "type": "Microsoft.ApiManagement/service/apis/policies", "properties": map[string]any{"format": value.Format, "value": value.Value}}
+func (h *Handler) policyResource(w http.ResponseWriter, r *http.Request, scopeID, armType string) {
+	switch r.Method {
+	case http.MethodGet:
+		value, err := h.Store.GetPolicy(scopeID)
+		if err != nil {
+			h.storeError(w, err, scopeID)
+			return
+		}
+		writeResource(w, http.StatusOK, policyWire(scopeID, armType, value), value.ETag)
+	case http.MethodPut:
+		var body struct {
+			Properties struct {
+				Format string `json:"format"`
+				Value  string `json:"value"`
+			} `json:"properties"`
+		}
+		if err := decode(r, &body); err != nil {
+			writeError(w, http.StatusBadRequest, "InvalidRequestContent", err.Error(), "")
+			return
+		}
+		if h.ValidatePolicy != nil {
+			if err := h.ValidatePolicy(body.Properties.Value); err != nil {
+				writeError(w, http.StatusBadRequest, "ValidationError", err.Error(), "properties.value")
+				return
+			}
+		}
+		value, err := h.Store.UpsertPolicy(model.Policy{ScopeID: scopeID, Format: body.Properties.Format, Value: body.Properties.Value})
+		if err != nil {
+			h.storeError(w, err, scopeID)
+			return
+		}
+		if err := h.activate(); err != nil {
+			writeError(w, http.StatusBadRequest, "ConfigurationInvalid", err.Error(), scopeID)
+			return
+		}
+		writeResource(w, http.StatusCreated, policyWire(scopeID, armType, value), value.ETag)
+	default:
+		methodNotAllowed(w)
+	}
+}
+
+func policyWire(scopeID, armType string, value model.Policy) map[string]any {
+	return map[string]any{"id": scopeID + "/policies/policy", "name": "policy", "type": armType, "properties": map[string]any{"format": value.Format, "value": value.Value}}
 }
 
 func decode(r *http.Request, value any) error {

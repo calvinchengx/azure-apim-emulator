@@ -885,6 +885,44 @@ func TestActivateInheritsServicePolicyWhenAPIHasNone(t *testing.T) {
 	productRequest := httptest.NewRequest(http.MethodGet, "/inherited", nil)
 	productRequest.Header.Set("Ocp-Apim-Subscription-Key", "product-key")
 	assertGatewayStatus(t, runtime, productRequest, http.StatusNoContent)
+	post, err := st.UpsertOperation(model.Operation{APIID: api.ID(), Name: "post", Method: http.MethodPost, URLTemplate: "/"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.UpsertPolicy(model.Policy{ScopeID: post.APIID + "/operations/" + post.Name, Value: `<policies><inbound><base/><set-header name="X-Post-Policy" exists-action="override"><value>post</value></set-header></inbound></policies>`}); err != nil {
+		t.Fatal(err)
+	}
+	sawGet, sawPost := false, false
+	runtime = New("emulator", &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		if request.Header.Get("X-Product-Policy") != "product" {
+			t.Errorf("product header = %q", request.Header.Get("X-Product-Policy"))
+		}
+		switch request.Method {
+		case http.MethodGet:
+			sawGet = true
+			if request.Header.Get("X-Operation-Policy") != "operation" || request.Header.Get("X-Post-Policy") != "" {
+				t.Errorf("get operation headers = %q %q", request.Header.Get("X-Operation-Policy"), request.Header.Get("X-Post-Policy"))
+			}
+		case http.MethodPost:
+			sawPost = true
+			if request.Header.Get("X-Post-Policy") != "post" || request.Header.Get("X-Operation-Policy") != "" {
+				t.Errorf("post operation headers = %q %q", request.Header.Get("X-Post-Policy"), request.Header.Get("X-Operation-Policy"))
+			}
+		}
+		return &http.Response{StatusCode: http.StatusNoContent, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(""))}, nil
+	})})
+	if err := runtime.Activate(st, false); err != nil {
+		t.Fatal(err)
+	}
+	getReq := httptest.NewRequest(http.MethodGet, "/inherited", nil)
+	getReq.Header.Set("Ocp-Apim-Subscription-Key", "product-key")
+	assertGatewayStatus(t, runtime, getReq, http.StatusNoContent)
+	postReq := httptest.NewRequest(http.MethodPost, "/inherited", nil)
+	postReq.Header.Set("Ocp-Apim-Subscription-Key", "product-key")
+	assertGatewayStatus(t, runtime, postReq, http.StatusNoContent)
+	if !sawGet || !sawPost {
+		t.Fatalf("matching operation compose get=%v post=%v", sawGet, sawPost)
+	}
 }
 
 func TestActivateExpandsPolicyFragments(t *testing.T) {
