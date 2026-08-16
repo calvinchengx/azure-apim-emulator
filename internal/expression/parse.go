@@ -51,9 +51,9 @@ type ternaryExpr struct {
 	cond, then, els Expr
 }
 
-// Parse lexes and compiles an APIM expression. Blocks may contain a single
-// `return <expr>;`. Other statements stay unimplemented so they cannot be
-// silently skipped.
+// Parse lexes and compiles an APIM expression. Blocks may declare expression-
+// scoped `var` locals and must end with a single `return <expr>;`. Other
+// statements stay unimplemented so they cannot be silently skipped.
 func Parse(source string) (Expr, Form, error) {
 	tokens, form, err := Lex(source)
 	if err != nil {
@@ -109,7 +109,42 @@ func (p *parser) take() Token {
 	return token
 }
 
+type varDecl struct {
+	name string
+	expr Expr
+}
+
+type blockExpr struct {
+	vars   []varDecl
+	result Expr
+}
+
+func (e blockExpr) eval(env *Env) (Value, error) {
+	child := &Env{Bindings: map[string]Value{}}
+	if env != nil {
+		for name, value := range env.Bindings {
+			child.Bindings[name] = value
+		}
+	}
+	for _, decl := range e.vars {
+		value, err := decl.expr.eval(child)
+		if err != nil {
+			return Null(), err
+		}
+		child.Bindings[decl.name] = value
+	}
+	return e.result.eval(child)
+}
+
 func (p *parser) block() (Expr, error) {
+	var vars []varDecl
+	for p.peek().Kind == TokenVar {
+		decl, err := p.varDecl()
+		if err != nil {
+			return nil, err
+		}
+		vars = append(vars, decl)
+	}
 	if p.peek().Kind != TokenReturn {
 		if p.peek().Kind == TokenEOF {
 			return nil, fmt.Errorf("statement block must return a value")
@@ -128,7 +163,31 @@ func (p *parser) block() (Expr, error) {
 		return nil, fmt.Errorf("expected ';'")
 	}
 	p.take()
-	return expr, nil
+	if len(vars) == 0 {
+		return expr, nil
+	}
+	return blockExpr{vars: vars, result: expr}, nil
+}
+
+func (p *parser) varDecl() (varDecl, error) {
+	p.take()
+	if p.peek().Kind != TokenIdent {
+		return varDecl{}, fmt.Errorf("var requires a name")
+	}
+	name := p.take().Lexeme
+	if p.peek().Kind != TokenAssign {
+		return varDecl{}, fmt.Errorf("var requires '='")
+	}
+	p.take()
+	expr, err := p.ternary()
+	if err != nil {
+		return varDecl{}, err
+	}
+	if p.peek().Kind != TokenSemicolon {
+		return varDecl{}, fmt.Errorf("expected ';'")
+	}
+	p.take()
+	return varDecl{name: name, expr: expr}, nil
 }
 
 func (p *parser) ternary() (Expr, error) {
