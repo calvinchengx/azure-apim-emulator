@@ -12,7 +12,7 @@
 #   APIM_DISABLE_AUTH=true go run ./cmd/azure-apim-emulator --disable-tls
 services:
   entra-emulator:
-    image: ghcr.io/calvinchengx/entra-emulator:${ENTRA_EMULATOR_VERSION:-0.4.1}
+    image: ghcr.io/calvinchengx/entra-emulator:${ENTRA_EMULATOR_VERSION:-0.8.1}
     environment:
       ORIGIN_MODE: compat
       PUBLIC_ORIGIN: "https://entra-emulator:8443"
