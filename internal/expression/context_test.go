@@ -240,9 +240,14 @@ func TestRequestAndResponseBodyAsString(t *testing.T) {
 
 	emptyReq := httptest.NewRequest(http.MethodGet, "/", nil)
 	emptyReq.Body = nil
+	emptyReq.GetBody = nil
 	empty, err := EvalEnv("@(context.Request.Body.AsString())", RequestEnv(emptyReq, nil))
 	if err != nil || empty.String() != "" {
 		t.Fatalf("empty request body = %q %v", empty, err)
+	}
+	nilBody, err := EvalEnv("@(context.Request.Body.AsString())", RequestEnv(&http.Request{Method: http.MethodGet}, nil))
+	if err != nil || nilBody.String() != "" {
+		t.Fatalf("nil request body = %q %v", nilBody, err)
 	}
 	if _, err := EvalEnv("@(context.Request.Missing)", RequestEnv(emptyReq, nil)); err == nil {
 		t.Fatal("unknown request member accepted")
