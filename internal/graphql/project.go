@@ -16,6 +16,17 @@ import (
 // Values are decoded JSON: map[string]any for objects, []any for lists, and
 // scalars otherwise. A selection against a scalar returns the scalar, which is
 // how a resolver returning a plain value still satisfies a leaf field.
+// fieldKey is the name a field's value appears under: its alias when the query
+// gave one, its name otherwise. The parser fills Alias in even when there is no
+// alias, so the fallback only matters for a hand-built AST, which is exactly
+// how a caller inside this package can construct one.
+func fieldKey(field *ast.Field) string {
+	if field.Alias != "" {
+		return field.Alias
+	}
+	return field.Name
+}
+
 func project(document *ast.QueryDocument, set ast.SelectionSet, value any) any {
 	if value == nil {
 		return nil
@@ -35,10 +46,7 @@ func project(document *ast.QueryDocument, set ast.SelectionSet, value any) any {
 	case map[string]any:
 		result := map[string]any{}
 		for _, field := range collectFields(document, set) {
-			key := field.Alias
-			if key == "" {
-				key = field.Name
-			}
+			key := fieldKey(field)
 			if field.Name == "__typename" {
 				// __typename is answered from the value's own marker, not from
 				// the schema, because a union member's concrete type is only

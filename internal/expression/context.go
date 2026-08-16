@@ -48,6 +48,11 @@ type Context struct {
 	Subscription *NamedContext
 	User         *NamedContext
 	Deployment   *DeploymentContext
+	// GraphQL is bound only while a GraphQL resolver's policy is running. It
+	// is null everywhere else, so `context.GraphQL` in an inbound policy
+	// evaluates to null rather than to an empty argument set that would read
+	// as "the caller passed nothing".
+	GraphQL *GraphQLContext
 }
 
 // Bind builds the identifier environment for an APIM context. Missing request,
@@ -109,6 +114,11 @@ func (c *contextHost) member(name string) (Value, error) {
 			return Null(), nil
 		}
 		return Object(&deploymentHost{serviceName: c.ctx.Deployment.ServiceName, region: c.ctx.Deployment.Region}), nil
+	case "GraphQL":
+		if c.ctx.GraphQL == nil {
+			return Null(), nil
+		}
+		return Object(&graphQLHost{ctx: c.ctx.GraphQL}), nil
 	default:
 		return Null(), fmt.Errorf("unknown member %s", name)
 	}

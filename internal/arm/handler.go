@@ -40,11 +40,13 @@ type Handler struct {
 	Auth           auth.RequestValidator
 	Activate       func() error
 	ValidatePolicy func(string) error
-	ImportClient   *http.Client
-	ExportKey      []byte
-	Secrets        keyvault.Retriever
-	AcquireToken   func(context.Context, string, string) (string, error)
-	mutationMu     sync.Mutex
+	// ValidateResolverPolicy validates a GraphQL resolver's <http-data-source>.
+	ValidateResolverPolicy func(string) error
+	ImportClient           *http.Client
+	ExportKey              []byte
+	Secrets                keyvault.Retriever
+	AcquireToken           func(context.Context, string, string) (string, error)
+	mutationMu             sync.Mutex
 }
 
 // ServeHTTP routes APIM provider requests.
@@ -367,6 +369,10 @@ func (h *Handler) api(w http.ResponseWriter, r *http.Request, rt route) {
 		h.apiSchemaCollection(w, r, api)
 		return
 	}
+	if len(rt.Tail) == 3 && equal(rt.Tail[2], "resolvers") {
+		h.apiResolverCollection(w, r, api)
+		return
+	}
 	if len(rt.Tail) >= 3 && equal(rt.Tail[2], "diagnostics") {
 		if _, err := h.Store.GetAPI(api.ID()); err != nil {
 			h.storeError(w, err, api.ID())
@@ -425,6 +431,10 @@ func (h *Handler) api(w http.ResponseWriter, r *http.Request, rt route) {
 		h.apiSchemaResource(w, r, model.APISchema{APIID: api.ID(), Name: rt.Tail[3]})
 		return
 	}
+	if len(rt.Tail) == 4 && equal(rt.Tail[2], "resolvers") {
+		h.apiResolverResource(w, r, model.APIResolver{APIID: api.ID(), Name: rt.Tail[3]})
+		return
+	}
 	if len(rt.Tail) == 4 && equal(rt.Tail[2], "tags") {
 		if _, err := h.Store.GetAPI(api.ID()); err != nil {
 			h.storeError(w, err, api.ID())
@@ -457,6 +467,15 @@ func (h *Handler) api(w http.ResponseWriter, r *http.Request, rt route) {
 	}
 	if len(rt.Tail) == 4 && equal(rt.Tail[2], "policies") && equal(rt.Tail[3], "policy") {
 		h.policyResource(w, r, api.ID(), "Microsoft.ApiManagement/service/apis/policies")
+		return
+	}
+	if len(rt.Tail) == 6 && equal(rt.Tail[2], "resolvers") && equal(rt.Tail[4], "policies") && equal(rt.Tail[5], "policy") {
+		resolverID := api.ID() + "/resolvers/" + rt.Tail[3]
+		if _, err := h.Store.GetAPIResolver(resolverID); err != nil {
+			h.storeError(w, err, resolverID)
+			return
+		}
+		h.policyResource(w, r, resolverID, "Microsoft.ApiManagement/service/apis/resolvers/policies")
 		return
 	}
 	if len(rt.Tail) == 6 && equal(rt.Tail[2], "operations") && equal(rt.Tail[4], "policies") && equal(rt.Tail[5], "policy") {
@@ -1388,7 +1407,12 @@ func (h *Handler) apiResource(w http.ResponseWriter, r *http.Request, api model.
 				schema     *model.APISchema
 			}{model.APIDefinition{Format: *body.Properties.Format, Value: source, SourceURL: sourceURL}, parsed.Operations, schema}
 		}
-		if api.DisplayName == "" || api.ServiceURL == "" {
+		// A SYNTHETIC GraphQL API has no backend by definition: its fields come
+		// from resolvers, and requiring a serviceUrl would make the shape
+		// impossible to create. Pass-through GraphQL still needs one, but that
+		// is not knowable here, and the gateway reports a missing backend at
+		// request time rather than guessing at import time.
+		if api.DisplayName == "" || (api.ServiceURL == "" && !isGraphQLAPIDocument(document)) {
 			writeError(w, http.StatusBadRequest, "ValidationError", "displayName and serviceUrl are required.", "properties")
 			return
 		}
@@ -4878,8 +4902,15 @@ func (h *Handler) policyResource(w http.ResponseWriter, r *http.Request, scopeID
 			writeError(w, http.StatusBadRequest, "InvalidRequestContent", err.Error(), "")
 			return
 		}
-		if h.ValidatePolicy != nil {
-			if err := h.ValidatePolicy(body.Properties.Value); err != nil {
+		// A resolver's policy is a different document: its root is
+		// <http-data-source>, not <policies>. Validating it as a policy would
+		// reject every resolver Azure's own portal produces.
+		validate := h.ValidatePolicy
+		if strings.HasSuffix(armType, "/resolvers/policies") {
+			validate = h.ValidateResolverPolicy
+		}
+		if validate != nil {
+			if err := validate(body.Properties.Value); err != nil {
 				writeError(w, http.StatusBadRequest, "ValidationError", err.Error(), "properties.value")
 				return
 			}
@@ -4992,4 +5023,11 @@ func splitAPIRevision(name string) (string, string) {
 		return name, "1"
 	}
 	return name[:index], name[index+5:]
+}
+
+// isGraphQLAPIDocument reports whether an API payload declares apiType graphql.
+func isGraphQLAPIDocument(document map[string]any) bool {
+	properties, _ := document["properties"].(map[string]any)
+	apiType, _ := properties["apiType"].(string)
+	return strings.EqualFold(apiType, "graphql")
 }

@@ -188,5 +188,133 @@ const accepted = await gql("{ legacy }");
 assert.equal(accepted.status, 200, "a valid query must pass the gateway");
 assert.equal(accepted.body.data.legacy, "legacy");
 
+// ---------------------------------------------------------------------------
+// 5. SYNTHETIC GraphQL: no GraphQL backend at all.
+//
+// The whole point of the synthetic mode is that the backend speaks REST and the
+// gateway presents it as GraphQL. So this backend deliberately serves plain
+// JSON over REST routes, and the reference implementation is used only as the
+// client, validating the schema and the responses. If the emulator were quietly
+// proxying GraphQL, this section could not pass.
+const rest = createServer((request, response) => {
+  const url = new URL(request.url, "http://rest.invalid");
+  response.setHeader("content-type", "application/json");
+  if (url.pathname === "/orders" ) {
+    response.end(JSON.stringify([
+      { ref: "A-1", total: 25, customerId: "c1" },
+      { ref: "A-2", total: 40, customerId: "c2" },
+    ]));
+    return;
+  }
+  const order = url.pathname.match(/^\/orders\/(.+)$/);
+  if (order) {
+    response.end(JSON.stringify({ ref: order[1], total: 99, customerId: "c9" }));
+    return;
+  }
+  const customer = url.pathname.match(/^\/customers\/(.+)$/);
+  if (customer) {
+    response.end(JSON.stringify({ id: customer[1], name: `Customer ${customer[1]}` }));
+    return;
+  }
+  response.statusCode = 404;
+  response.end(JSON.stringify({ error: "not found" }));
+});
+await new Promise((resolve) => rest.listen(0, "127.0.0.1", resolve));
+const restUrl = `http://127.0.0.1:${rest.address().port}`;
+
+const SYNTHETIC_SDL = `
+type Query { orders: [Order!]! order(ref: ID!): Order }
+type Order { ref: ID! total: Int customerId: String customer: Customer }
+type Customer { id: ID! name: String! }
+`;
+
+await arm(`${base}/apis/shop`, "PUT", {
+  properties: {
+    displayName: "Shop", path: "shop", protocols: ["https"],
+    apiType: "graphql", subscriptionRequired: false,
+  },
+});
+await arm(`${base}/apis/shop/schemas/graphql`, "PUT", {
+  properties: {
+    contentType: "application/vnd.ms-azure-apim.graphql.schema",
+    document: { value: SYNTHETIC_SDL },
+  },
+});
+
+async function resolver(name, path, policy) {
+  await arm(`${base}/apis/shop/resolvers/${name}`, "PUT", {
+    properties: { displayName: name, path },
+  });
+  await arm(`${base}/apis/shop/resolvers/${name}/policies/policy`, "PUT", {
+    properties: { value: policy, format: "xml" },
+  });
+}
+
+await resolver("orders", "Query/orders",
+  `<http-data-source><http-request><set-method>GET</set-method><set-url>${restUrl}/orders</set-url></http-request></http-data-source>`);
+// Reading the argument is the load-bearing part: context.GraphQL.Arguments is
+// the documented Azure member, so this policy is copy-pasteable into a real
+// service. Concatenation rather than $"..." interpolation, because the
+// expression lexer does not yet accept C# interpolated strings; that gap is
+// pre-existing and applies to every policy, not just resolvers.
+await resolver("order", "Query/order",
+  `<http-data-source><http-request><set-method>GET</set-method><set-url>@("${restUrl}/orders/" + context.GraphQL.Arguments["ref"])</set-url></http-request></http-data-source>`);
+// A NESTED resolver, reading its parent object rather than an argument.
+await resolver("customer", "Order/customer",
+  `<http-data-source><http-request><set-method>GET</set-method><set-url>@("${restUrl}/customers/" + context.GraphQL.Parent["customerId"])</set-url></http-request></http-data-source>`);
+
+async function shop(query, variables) {
+  const response = await fetch(`${gateway}/shop`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ query, variables }),
+  });
+  return { status: response.status, body: await response.json() };
+}
+
+// The synthetic schema must introspect identically to the SDL, same as pass-through.
+const syntheticIntrospection = await shop(getIntrospectionQuery());
+assert.equal(
+  printSchema(buildClientSchema(syntheticIntrospection.body.data)),
+  printSchema(buildSchema(SYNTHETIC_SDL)),
+  "the synthetic API's introspection must rebuild its imported SDL",
+);
+
+// A list resolver, with the selection projected: `total` was not selected and
+// must not appear, even though the REST backend returned it.
+const list = await shop("{ orders { ref } }");
+assert.equal(list.status, 200, `orders returned ${list.status}: ${JSON.stringify(list.body)}`);
+assert.ok(!list.body.errors, `orders reported errors: ${JSON.stringify(list.body.errors)}`);
+assert.deepEqual(list.body.data.orders, [{ ref: "A-1" }, { ref: "A-2" }],
+  "unselected fields must not be returned; the REST payload had total and customerId too");
+
+// An argument reaching the resolver through context.GraphQL.Arguments.
+const one = await shop(`{ order(ref: "Z-9") { ref total } }`);
+assert.deepEqual(one.body.data.order, { ref: "Z-9", total: 99 },
+  "the argument must reach the resolver's URL through context.GraphQL.Arguments");
+
+// A variable, substituted before the resolver sees it.
+const byVariable = await shop("query Get($r: ID!) { order(ref: $r) { ref } }", { r: "V-1" });
+assert.equal(byVariable.body.data.order.ref, "V-1", "variables must be substituted into arguments");
+
+// A nested resolver reading context.GraphQL.Parent, and one REST call per level.
+const nested = await shop("{ orders { ref customer { id name } } }");
+assert.ok(!nested.body.errors, `nested resolver reported errors: ${JSON.stringify(nested.body.errors)}`);
+assert.deepEqual(nested.body.data.orders, [
+  { ref: "A-1", customer: { id: "c1", name: "Customer c1" } },
+  { ref: "A-2", customer: { id: "c2", name: "Customer c2" } },
+], "a nested resolver must read its parent object through context.GraphQL.Parent");
+
+// GraphQL's partial-failure contract: one failing field nulls that field and
+// reports a path, while its siblings still resolve. A 5xx for the whole request
+// would be easier and would break every client that relies on partial data.
+const partial = await shop(`{ ok: order(ref: "A-1") { ref } bad: order(ref: "../nope/x") { ref } }`);
+assert.equal(partial.status, 200, "a field-level failure is still a 200; execution ran");
+assert.equal(partial.body.data.ok.ref, "A-1", "the healthy field must still resolve");
+assert.equal(partial.body.data.bad, null, "the failing field must be null");
+assert.ok(partial.body.errors?.length > 0, "the failure must be reported in errors");
+assert.deepEqual(partial.body.errors[0].path, ["bad"], "the error must carry the path to the failing field");
+
+rest.close();
 backend.close();
-console.log("graphql witness: introspection round-trip, pass-through, and validation all agree with the reference implementation");
+console.log("graphql witness: pass-through, synthetic resolvers, arguments, parent, and partial failure all agree with the reference implementation");
