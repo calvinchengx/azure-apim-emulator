@@ -51,12 +51,15 @@ func (r *Runtime) SnapshotSummary() map[string]any {
 // Service is compiled runtime state for one APIM service.
 type Service struct {
 	Name                  string
+	Location              string
 	Hostnames             map[string]bool
 	PublicNetworkDisabled bool
 	Routes                []*Route
 	Backends              map[string]model.Backend
 	Certificates          map[string]model.Certificate
 	Diagnostics           []model.Diagnostic
+	Products              map[string]model.Product
+	Subscriptions         map[string]model.Subscription
 }
 
 // Route is a compiled API route.
@@ -297,7 +300,7 @@ func (r *Runtime) takeFault(service, backend string) (Fault, bool) {
 
 // Activate compiles all stored resources and atomically publishes them.
 func (r *Runtime) Activate(st *store.Store, strict bool) error {
-	services, apis, operations, _, links, subscriptions, policies, err := st.RuntimeData()
+	services, apis, operations, products, links, subscriptions, policies, err := st.RuntimeData()
 	if err != nil {
 		return err
 	}
@@ -405,8 +408,9 @@ func (r *Runtime) Activate(st *store.Store, strict bool) error {
 	}
 	snapshot := &Snapshot{Services: map[string]*Service{}}
 	for _, item := range services {
-		snapshot.Services[strings.ToLower(item.Name)] = &Service{Name: item.Name, Hostnames: customHostnames(item.Document), PublicNetworkDisabled: !publicNetworkAccess(item.Document), Backends: backends[strings.ToLower(item.ID())], Certificates: certificates[strings.ToLower(item.ID())], Diagnostics: diagnostics[strings.ToLower(item.ID())]}
+		snapshot.Services[strings.ToLower(item.Name)] = &Service{Name: item.Name, Location: item.Location, Hostnames: customHostnames(item.Document), PublicNetworkDisabled: !publicNetworkAccess(item.Document), Backends: backends[strings.ToLower(item.ID())], Certificates: certificates[strings.ToLower(item.ID())], Diagnostics: diagnostics[strings.ToLower(item.ID())], Products: map[string]model.Product{}, Subscriptions: map[string]model.Subscription{}}
 	}
+	indexServiceIdentities(snapshot.Services, products, subscriptions)
 	for _, api := range apis {
 		if !api.IsCurrent {
 			continue
@@ -577,6 +581,59 @@ func serviceNameFromID(id string) string {
 	return ""
 }
 
+func indexServiceIdentities(services map[string]*Service, products []model.Product, subscriptions []model.Subscription) {
+	for _, product := range products {
+		service := services[strings.ToLower(serviceNameFromID(product.ServiceID))]
+		if service == nil || service.Products == nil {
+			continue
+		}
+		service.Products[strings.ToLower(product.ID())] = product
+	}
+	for _, subscription := range subscriptions {
+		service := services[strings.ToLower(serviceNameFromID(subscription.ServiceID))]
+		if service == nil || service.Subscriptions == nil {
+			continue
+		}
+		if subscription.PrimaryKey != "" {
+			service.Subscriptions[strings.ToLower(subscription.PrimaryKey)] = subscription
+		}
+		if subscription.SecondaryKey != "" {
+			service.Subscriptions[strings.ToLower(subscription.SecondaryKey)] = subscription
+		}
+	}
+}
+
+func displayName(display, name string) string {
+	if display != "" {
+		return display
+	}
+	return name
+}
+
+func bindRequestContext(service *Service, route *Route, operation model.Operation, req *http.Request) (*expression.ApiContext, *expression.OperationContext, *expression.NamedContext, *expression.NamedContext, *expression.NamedContext, *expression.DeploymentContext) {
+	var api *expression.ApiContext
+	if route != nil {
+		api = &expression.ApiContext{Id: route.API.Name, Name: displayName(route.API.DisplayName, route.API.Name), Path: strings.Trim(route.API.Path, "/")}
+	}
+	operationCtx := &expression.OperationContext{Id: operation.Name, Name: displayName(operation.DisplayName, operation.Name), Method: operation.Method, UrlTemplate: operation.URLTemplate}
+	var product, subscription, user *expression.NamedContext
+	var deployment *expression.DeploymentContext
+	if service != nil {
+		deployment = &expression.DeploymentContext{ServiceName: service.Name, Region: service.Location}
+		if req != nil && service.Subscriptions != nil {
+			if matched, ok := service.Subscriptions[strings.ToLower(subscriptionKey(req))]; ok {
+				subscription = &expression.NamedContext{Id: matched.Name, Name: displayName(matched.DisplayName, matched.Name)}
+				if service.Products != nil {
+					if linked, ok := service.Products[strings.ToLower(matched.Scope)]; ok {
+						product = &expression.NamedContext{Id: linked.Name, Name: displayName(linked.DisplayName, linked.Name)}
+					}
+				}
+			}
+		}
+	}
+	return api, operationCtx, product, subscription, user, deployment
+}
+
 func logicalAPIID(id string) string {
 	index := strings.LastIndex(strings.ToLower(id), ";rev=")
 	if index < 0 {
@@ -639,7 +696,8 @@ func (r *Runtime) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		activePlan = subscriptionPlan
 	}
 	cacheKey := service.Name + ":" + route.API.ID() + ":" + req.Method + ":" + req.URL.RequestURI()
-	state := &policy.State{Request: req, BackendURL: route.API.ServiceURL, Path: relative, Headers: make(http.Header), ValidateToken: r.policyTokenValidator, SendRequest: r.policySendRequest, Trace: func(phase, detail string) { traceEvent(trace, phase, detail) }, RateLimit: r.rateLimit, AcquireConcurrency: r.acquireConcurrency, CacheGet: r.cacheGet, CacheSet: r.cacheSet, ValueCacheGet: r.valueCacheGet, ValueCacheSet: r.valueCacheSet, ValueCacheRemove: r.valueCacheRemove, CacheKey: cacheKey}
+	apiCtx, operationCtx, productCtx, subscriptionCtx, userCtx, deploymentCtx := bindRequestContext(service, route, operation, req)
+	state := &policy.State{Request: req, BackendURL: route.API.ServiceURL, Path: relative, Headers: make(http.Header), ValidateToken: r.policyTokenValidator, SendRequest: r.policySendRequest, Trace: func(phase, detail string) { traceEvent(trace, phase, detail) }, RateLimit: r.rateLimit, AcquireConcurrency: r.acquireConcurrency, CacheGet: r.cacheGet, CacheSet: r.cacheSet, ValueCacheGet: r.valueCacheGet, ValueCacheSet: r.valueCacheSet, ValueCacheRemove: r.valueCacheRemove, CacheKey: cacheKey, Api: apiCtx, Operation: operationCtx, Product: productCtx, Subscription: subscriptionCtx, User: userCtx, Deployment: deploymentCtx}
 	defer func() {
 		for index := len(state.ConcurrencyReleases) - 1; index >= 0; index-- {
 			state.ConcurrencyReleases[index]()

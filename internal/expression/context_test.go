@@ -125,7 +125,7 @@ func TestRequestEnvFallbacksAndErrors(t *testing.T) {
 	}
 
 	for _, source := range []string{
-		"@(context.Api)",
+		"@(context.Api.Revision)",
 		"@(context.Request.Missing)",
 		"@(context.Request.Body.AsJObject())",
 		"@(context.Response.Body.AsJObject())",
@@ -211,6 +211,80 @@ func TestResponseAndLastErrorBindings(t *testing.T) {
 	}
 	if _, err := EvalEnv("@(context.Response.Body.AsJObject())", env); err == nil {
 		t.Fatal("unknown response body member accepted")
+	}
+}
+
+func TestDeploymentContextBindings(t *testing.T) {
+	env := Bind(Context{
+		Api:          &ApiContext{Id: "pets", Name: "Pets API", Path: "pets"},
+		Operation:    &OperationContext{Id: "get-pet", Name: "Get pet", Method: http.MethodGet, UrlTemplate: "/{id}"},
+		Product:      &NamedContext{Id: "starter", Name: "Starter"},
+		Subscription: &NamedContext{Id: "sub-1", Name: "Dev"},
+		User:         &NamedContext{Id: "ada", Name: "Ada"},
+		Deployment:   &DeploymentContext{ServiceName: "emulator", Region: "local"},
+	})
+	cases := []struct {
+		source string
+		want   any
+	}{
+		{"@(context.Api.Id)", "pets"},
+		{"@(context.Api.Name)", "Pets API"},
+		{"@(context.Api.Path)", "pets"},
+		{"@(context.Operation.Id)", "get-pet"},
+		{"@(context.Operation.Name)", "Get pet"},
+		{"@(context.Operation.Method)", "GET"},
+		{"@(context.Operation.UrlTemplate)", "/{id}"},
+		{"@(context.Product.Id)", "starter"},
+		{"@(context.Product.Name)", "Starter"},
+		{"@(context.Subscription.Id)", "sub-1"},
+		{"@(context.Subscription.Name)", "Dev"},
+		{"@(context.User.Id)", "ada"},
+		{"@(context.User.Name)", "Ada"},
+		{"@(context.Deployment.ServiceName)", "emulator"},
+		{"@(context.Deployment.Region)", "local"},
+		{"@(context.Product != null)", true},
+	}
+	for _, test := range cases {
+		got, err := EvalEnv(test.source, env)
+		if err != nil {
+			t.Fatalf("%s: %v", test.source, err)
+		}
+		if got.Interface() != test.want {
+			t.Fatalf("%s = %#v, want %#v", test.source, got.Interface(), test.want)
+		}
+	}
+
+	missing, err := EvalEnv("@(context.Api == null && context.Operation == null && context.Product == null && context.Subscription == null && context.User == null && context.Deployment == null)", Bind(Context{}))
+	if err != nil || !missing.Truthy() {
+		t.Fatalf("missing identities = %+v %v", missing, err)
+	}
+	for _, source := range []string{
+		"@(context.Api.Revision)",
+		"@(context.Operation.Url)",
+		"@(context.Product.Apis)",
+		"@(context.Subscription.Key)",
+		"@(context.User.Email)",
+		"@(context.Deployment.Gateway)",
+		"@(context.Api.Id)",
+		"@(context.Operation.Name)",
+		"@(context.Product.Name)",
+		"@(context.Deployment.Region)",
+	} {
+		if _, err := EvalEnv(source, Bind(Context{})); err == nil {
+			t.Fatalf("accepted %s on missing identity", source)
+		}
+	}
+	for _, source := range []string{
+		"@(context.Api.Revision)",
+		"@(context.Operation.Url)",
+		"@(context.Product.Apis)",
+		"@(context.Subscription.Key)",
+		"@(context.User.Email)",
+		"@(context.Deployment.Gateway)",
+	} {
+		if _, err := EvalEnv(source, env); err == nil {
+			t.Fatalf("accepted %s", source)
+		}
 	}
 }
 

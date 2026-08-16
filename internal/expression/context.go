@@ -9,12 +9,45 @@ import (
 	"strings"
 )
 
+// NamedContext is Id/Name for Product, Subscription, and User.
+type NamedContext struct {
+	Id   string
+	Name string
+}
+
+// ApiContext is the documented scalar API identity.
+type ApiContext struct {
+	Id   string
+	Name string
+	Path string
+}
+
+// OperationContext is the documented scalar operation identity.
+type OperationContext struct {
+	Id          string
+	Name        string
+	Method      string
+	UrlTemplate string
+}
+
+// DeploymentContext is the documented scalar deployment identity.
+type DeploymentContext struct {
+	ServiceName string
+	Region      string
+}
+
 // Context is the APIM `context` binding for one evaluation.
 type Context struct {
-	Request   *http.Request
-	Response  *http.Response
-	Variables map[string]string
-	LastError error
+	Request      *http.Request
+	Response     *http.Response
+	Variables    map[string]string
+	LastError    error
+	Api          *ApiContext
+	Operation    *OperationContext
+	Product      *NamedContext
+	Subscription *NamedContext
+	User         *NamedContext
+	Deployment   *DeploymentContext
 }
 
 // Bind builds the identifier environment for an APIM context. Missing request,
@@ -55,6 +88,107 @@ func (c *contextHost) member(name string) (Value, error) {
 			return Null(), nil
 		}
 		return Object(&lastErrorHost{err: c.ctx.LastError}), nil
+	case "Api":
+		if c.ctx.Api == nil {
+			return Null(), nil
+		}
+		return Object(&apiHost{id: c.ctx.Api.Id, name: c.ctx.Api.Name, path: c.ctx.Api.Path}), nil
+	case "Operation":
+		if c.ctx.Operation == nil {
+			return Null(), nil
+		}
+		return Object(&operationHost{id: c.ctx.Operation.Id, name: c.ctx.Operation.Name, method: c.ctx.Operation.Method, urlTemplate: c.ctx.Operation.UrlTemplate}), nil
+	case "Product":
+		return namedObject(c.ctx.Product), nil
+	case "Subscription":
+		return namedObject(c.ctx.Subscription), nil
+	case "User":
+		return namedObject(c.ctx.User), nil
+	case "Deployment":
+		if c.ctx.Deployment == nil {
+			return Null(), nil
+		}
+		return Object(&deploymentHost{serviceName: c.ctx.Deployment.ServiceName, region: c.ctx.Deployment.Region}), nil
+	default:
+		return Null(), fmt.Errorf("unknown member %s", name)
+	}
+}
+
+func namedObject(value *NamedContext) Value {
+	if value == nil {
+		return Null()
+	}
+	return Object(&namedHost{id: value.Id, name: value.Name})
+}
+
+type namedHost struct {
+	id   string
+	name string
+}
+
+func (h *namedHost) member(name string) (Value, error) {
+	switch name {
+	case "Id":
+		return String(h.id), nil
+	case "Name":
+		return String(h.name), nil
+	default:
+		return Null(), fmt.Errorf("unknown member %s", name)
+	}
+}
+
+type apiHost struct {
+	id   string
+	name string
+	path string
+}
+
+func (h *apiHost) member(name string) (Value, error) {
+	switch name {
+	case "Id":
+		return String(h.id), nil
+	case "Name":
+		return String(h.name), nil
+	case "Path":
+		return String(h.path), nil
+	default:
+		return Null(), fmt.Errorf("unknown member %s", name)
+	}
+}
+
+type operationHost struct {
+	id          string
+	name        string
+	method      string
+	urlTemplate string
+}
+
+func (h *operationHost) member(name string) (Value, error) {
+	switch name {
+	case "Id":
+		return String(h.id), nil
+	case "Name":
+		return String(h.name), nil
+	case "Method":
+		return String(h.method), nil
+	case "UrlTemplate":
+		return String(h.urlTemplate), nil
+	default:
+		return Null(), fmt.Errorf("unknown member %s", name)
+	}
+}
+
+type deploymentHost struct {
+	serviceName string
+	region      string
+}
+
+func (h *deploymentHost) member(name string) (Value, error) {
+	switch name {
+	case "ServiceName":
+		return String(h.serviceName), nil
+	case "Region":
+		return String(h.region), nil
 	default:
 		return Null(), fmt.Errorf("unknown member %s", name)
 	}

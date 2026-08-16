@@ -13,6 +13,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	expr "github.com/calvinchengx/azure-apim-emulator/internal/expression"
 )
 
 func TestCompileAndExecute(t *testing.T) {
@@ -1011,6 +1013,25 @@ func TestChoosePolicy(t *testing.T) {
 	}
 	if err := Execute([]Action{{Kind: ActionChoose, Branches: []ChooseBranch{{Condition: "@(context.LastError.Reason == 'boom')"}}}}, &State{LastError: errors.New("boom")}); err == nil {
 		t.Fatal("unknown last-error member accepted")
+	}
+	apiPlan, err := Compile(`<policies><inbound><choose><when condition="@(context.Api.Id == 'pets' &amp;&amp; context.Operation.Method == 'GET' &amp;&amp; context.Product == null)"><set-variable name="picked"><value>api</value></set-variable></when></choose></inbound></policies>`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state = &State{Api: &expr.ApiContext{Id: "pets", Name: "Pets", Path: "pets"}, Operation: &expr.OperationContext{Id: "get", Name: "Get", Method: http.MethodGet, UrlTemplate: "/"}}
+	if err := Execute(apiPlan.Inbound, state); err != nil || state.Variables["picked"] != "api" {
+		t.Fatalf("deployment context choose = %+v, %v", state, err)
+	}
+	if err := Execute([]Action{{Kind: ActionChoose, Branches: []ChooseBranch{{Condition: "@(context.Api.Revision == '1')"}}}}, state); err == nil {
+		t.Fatal("unknown API member accepted")
+	}
+	identPlan, err := Compile(`<policies><inbound><set-variable name="who"><value>@(context.User.Name + context.Subscription.Name + context.Deployment.Region)</value></set-variable></inbound></policies>`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state = &State{User: &expr.NamedContext{Name: "Ada"}, Subscription: &expr.NamedContext{Name: "Dev"}, Deployment: &expr.DeploymentContext{Region: "local"}}
+	if err := Execute(identPlan.Inbound, state); err != nil || state.Variables["who"] != "AdaDevlocal" {
+		t.Fatalf("identity variables = %+v %v", state, err)
 	}
 	unsupportedPlan, err := Compile(`<policies><inbound><choose><when condition="@(context.Request.Body.AsJObject() != null)"/></choose></inbound></policies>`, true)
 	if err != nil {

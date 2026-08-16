@@ -199,6 +199,12 @@ type State struct {
 	CacheSet                func(string, int, http.Header, string, time.Duration)
 	CacheKey                string
 	LastError               error
+	Api                     *expr.ApiContext
+	Operation               *expr.OperationContext
+	Product                 *expr.NamedContext
+	Subscription            *expr.NamedContext
+	User                    *expr.NamedContext
+	Deployment              *expr.DeploymentContext
 }
 
 type node struct {
@@ -2040,7 +2046,18 @@ func Execute(actions []Action, state *State) error {
 }
 
 func stateEnv(state *State) *expr.Env {
-	return expr.Bind(expr.Context{Request: state.Request, Response: state.Response, Variables: state.Variables, LastError: state.LastError})
+	return expr.Bind(expr.Context{
+		Request:      state.Request,
+		Response:     state.Response,
+		Variables:    state.Variables,
+		LastError:    state.LastError,
+		Api:          state.Api,
+		Operation:    state.Operation,
+		Product:      state.Product,
+		Subscription: state.Subscription,
+		User:         state.User,
+		Deployment:   state.Deployment,
+	})
 }
 
 func evaluateCondition(condition string, state *State) (bool, error) {
