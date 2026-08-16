@@ -1,0 +1,12 @@
+{
+  "name": "azure-apim-emulator-graphql-witness",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "preinstall": "npx only-allow pnpm",
+    "test": "node witness.js"
+  },
+  "dependencies": {
+    "graphql": "16.11.0"
+  }
+}

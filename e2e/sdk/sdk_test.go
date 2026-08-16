@@ -32,6 +32,7 @@ func TestOfficialManagementSDKs(t *testing.T) {
 	}
 	environment := append(os.Environ(),
 		"APIM_ENDPOINT="+emu.ManagementEndpoint,
+		"APIM_GATEWAY_ENDPOINT="+emu.GatewayEndpoint,
 		"APIM_SUBSCRIPTION_ID="+emu.SubscriptionID,
 		"APIM_RESOURCE_GROUP="+emu.ResourceGroup,
 		"APIM_SERVICE_NAME="+emu.ServiceName,
@@ -47,6 +48,7 @@ func TestOfficialManagementSDKs(t *testing.T) {
 		dir     string
 	}{
 		{"javascript", "pnpm", []string{"test"}, filepath.Join(root, "e2e", "javascript")},
+		{"graphql", "pnpm", []string{"test"}, filepath.Join(root, "e2e", "graphql")},
 		{"python", venvPython(root), []string{"witness.py"}, filepath.Join(root, "e2e", "python")},
 		{"dotnet", "dotnet", []string{"run", "--project", "Witness.csproj"}, filepath.Join(root, "e2e", "dotnet")},
 	}

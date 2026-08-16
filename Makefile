@@ -11,7 +11,8 @@ endif
 
 COMPOSE = docker compose -f compose.yaml
 
-.PHONY: build docs test test-coverage test-differential test-sdks setup-sdks verify \
+.PHONY: build docs test test-coverage test-differential test-sdks setup-sdks \
+        setup-graphql test-graphql verify \
         check-inventory up down clean status doctor ps logs
 
 build:
@@ -38,6 +39,15 @@ setup-sdks:
 
 test-sdks:
 	APIM_RUN_EXTERNAL_SDK_TESTS=1 go test -count=1 -v ./e2e/sdk
+
+# The GraphQL witness needs only Go and pnpm, so it runs as its own job rather
+# than behind setup-sdks' dotnet and python installs. Keeping it separate also
+# means a break in one of those suites cannot hide a GraphQL regression.
+setup-graphql:
+	pnpm install --frozen-lockfile
+
+test-graphql:
+	APIM_RUN_EXTERNAL_SDK_TESTS=1 go test -count=1 -v -run 'TestOfficialManagementSDKs/graphql' ./e2e/sdk
 
 docs:
 	pnpm --filter azure-apim-emulator-docs build

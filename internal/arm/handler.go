@@ -1237,10 +1237,25 @@ func (h *Handler) apiSchemaResource(w http.ResponseWriter, r *http.Request, valu
 		if errors.Is(existingErr, store.ErrNotFound) {
 			status = http.StatusCreated
 		}
+		// A schema is runtime state, not just metadata: a GraphQL schema decides
+		// what the gateway will accept. Without republishing here, an imported
+		// schema would sit in the store while the gateway kept serving the API
+		// as if it had none.
+		if err := h.activate(); err != nil {
+			writeError(w, http.StatusBadRequest, "ValidationError", err.Error(), value.ID())
+			return
+		}
 		writeResource(w, status, apiSchemaWire(got), got.ETag)
 	case http.MethodDelete:
 		if err := h.Store.DeleteAPISchema(value.ID()); err != nil && !errors.Is(err, store.ErrNotFound) {
 			h.storeError(w, err, value.ID())
+			return
+		}
+		// The row is already gone, so this reports a republish failure rather
+		// than a rejected request: 500 ConfigurationInvalid, matching every
+		// other delete-then-activate path here.
+		if err := h.activate(); err != nil {
+			writeError(w, http.StatusInternalServerError, "ConfigurationInvalid", err.Error(), value.ID())
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
