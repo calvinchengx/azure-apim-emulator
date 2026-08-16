@@ -35,9 +35,10 @@ the same managed-identity and HTTPS flow used by Azure:
 - identity selection and permission failures
 - certificate rotation and hostname/backend TLS activation
 
-Live retrieval of the secret payload is implemented. Challenge-based
-managed-identity token acquisition against `entra-emulator` remains assigned
-to the companion-auth slice.
+Live retrieval of the secret payload is implemented. A 401 Bearer challenge
+from `azure-keyvault-emulator` acquires a managed-identity token from the
+advertised authority (or an injected token func) and retries once; refresh
+failures keep last-known-good named-value and certificate material.
 
 Static local named values remain available without a companion emulator.
 
