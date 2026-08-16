@@ -123,6 +123,104 @@ func TestRoutingHelpers(t *testing.T) {
 	}
 }
 
+func TestIndexServiceIdentitiesAndBindRequestContext(t *testing.T) {
+	if displayName("Shown", "raw") != "Shown" || displayName("", "raw") != "raw" {
+		t.Fatal("displayName mismatch")
+	}
+	services := map[string]*Service{
+		"emulator": {Name: "emulator", Location: "local", Products: map[string]model.Product{}, Subscriptions: map[string]model.Subscription{}},
+		"empty":    {Name: "empty"},
+	}
+	product := model.Product{ServiceID: "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.ApiManagement/service/emulator", Name: "starter", DisplayName: "Starter"}
+	subscription := model.Subscription{ServiceID: product.ServiceID, Name: "dev", DisplayName: "Dev", Scope: product.ID(), PrimaryKey: "primary", SecondaryKey: "secondary"}
+	indexServiceIdentities(services, []model.Product{product, {ServiceID: "/missing", Name: "orphan"}}, []model.Subscription{subscription, {ServiceID: "/missing", Name: "lost", PrimaryKey: "lost"}, {ServiceID: product.ServiceID, Name: "blank"}, {ServiceID: "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.ApiManagement/service/empty", Name: "skip", PrimaryKey: "skip"}})
+	if _, ok := services["emulator"].Products[strings.ToLower(product.ID())]; !ok {
+		t.Fatal("product not indexed")
+	}
+	if _, ok := services["emulator"].Subscriptions["primary"]; !ok || services["empty"].Products != nil {
+		t.Fatalf("subscription index = %#v empty=%#v", services["emulator"].Subscriptions, services["empty"])
+	}
+
+	route := &Route{API: model.API{Name: "pets", DisplayName: "Pets API", Path: "/pets/"}}
+	operation := model.Operation{Name: "get-pet", DisplayName: "Get pet", Method: http.MethodGet, URLTemplate: "/{id}"}
+	request := httptest.NewRequest(http.MethodGet, "/pets/1", nil)
+	request.Header.Set("Ocp-Apim-Subscription-Key", "PRIMARY")
+	api, op, productCtx, subscriptionCtx, user, deployment := bindRequestContext(services["emulator"], route, operation, request)
+	if api.Id != "pets" || api.Name != "Pets API" || api.Path != "pets" || op.UrlTemplate != "/{id}" || productCtx.Name != "Starter" || subscriptionCtx.Id != "dev" || user != nil || deployment.Region != "local" {
+		t.Fatalf("bound context = api=%+v op=%+v product=%+v sub=%+v user=%v deploy=%+v", api, op, productCtx, subscriptionCtx, user, deployment)
+	}
+	api, _, productCtx, subscriptionCtx, _, deployment = bindRequestContext(nil, nil, model.Operation{Name: "anon"}, nil)
+	if api != nil || productCtx != nil || subscriptionCtx != nil || deployment != nil {
+		t.Fatalf("nil service/route = api=%v product=%v sub=%v deploy=%v", api, productCtx, subscriptionCtx, deployment)
+	}
+	bare := &Service{Name: "bare", Location: "east"}
+	_, _, productCtx, subscriptionCtx, _, deployment = bindRequestContext(bare, route, operation, request)
+	if productCtx != nil || subscriptionCtx != nil || deployment.ServiceName != "bare" {
+		t.Fatalf("nil maps = product=%v sub=%v deploy=%+v", productCtx, subscriptionCtx, deployment)
+	}
+	noProduct := &Service{Name: "np", Subscriptions: map[string]model.Subscription{"primary": {Name: "only"}}}
+	_, _, productCtx, subscriptionCtx, _, _ = bindRequestContext(noProduct, route, operation, request)
+	if productCtx != nil || subscriptionCtx.Id != "only" {
+		t.Fatalf("subscription without product = %+v %+v", productCtx, subscriptionCtx)
+	}
+	unknown := httptest.NewRequest(http.MethodGet, "/", nil)
+	unknown.Header.Set("Ocp-Apim-Subscription-Key", "nope")
+	_, _, productCtx, subscriptionCtx, _, _ = bindRequestContext(services["emulator"], route, operation, unknown)
+	if productCtx != nil || subscriptionCtx != nil {
+		t.Fatal("unknown key bound identity")
+	}
+}
+
+func TestGatewayBindsDeploymentContext(t *testing.T) {
+	st, err := store.Open("", clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	service, err := st.UpsertService(model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "emulator", Location: "local"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	api, err := st.UpsertAPI(model.API{ServiceID: service.ID(), Name: "pets", DisplayName: "Pets API", Path: "pets", ServiceURL: "https://backend.test", IsCurrent: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.UpsertOperation(model.Operation{APIID: api.ID(), Name: "list", DisplayName: "List pets", Method: http.MethodGet, URLTemplate: "/"}); err != nil {
+		t.Fatal(err)
+	}
+	product, err := st.UpsertProduct(model.Product{ServiceID: service.ID(), Name: "starter", DisplayName: "Starter"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.LinkProductAPI(product.ID(), api.ID()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.UpsertSubscription(model.Subscription{ServiceID: service.ID(), Name: "dev", DisplayName: "Dev", Scope: product.ID(), State: "active", PrimaryKey: "product-key"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.UpsertPolicy(model.Policy{ScopeID: api.ID(), Value: `<policies><inbound><set-header name="X-Api" exists-action="override"><value>@(context.Api.Id)</value></set-header><set-header name="X-Op" exists-action="override"><value>@(context.Operation.Name)</value></set-header><set-header name="X-Deploy" exists-action="override"><value>@(context.Deployment.ServiceName + ':' + context.Deployment.Region)</value></set-header><set-header name="X-Product" exists-action="override"><value>@(context.Product != null ? context.Product.Name : '')</value></set-header><set-header name="X-Sub" exists-action="override"><value>@(context.Subscription != null ? context.Subscription.Id : '')</value></set-header></inbound></policies>`}); err != nil {
+		t.Fatal(err)
+	}
+	var seen http.Header
+	runtime := New("emulator", &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		seen = request.Header.Clone()
+		return &http.Response{StatusCode: http.StatusNoContent, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(""))}, nil
+	})})
+	if err := runtime.Activate(st, false); err != nil {
+		t.Fatal(err)
+	}
+	assertGatewayStatus(t, runtime, httptest.NewRequest(http.MethodGet, "/pets", nil), http.StatusNoContent)
+	if seen.Get("X-Api") != "pets" || seen.Get("X-Op") != "List pets" || seen.Get("X-Deploy") != "emulator:local" || seen.Get("X-Product") != "" || seen.Get("X-Sub") != "" {
+		t.Fatalf("unscoped headers = %v", seen)
+	}
+	productRequest := httptest.NewRequest(http.MethodGet, "/pets", nil)
+	productRequest.Header.Set("Ocp-Apim-Subscription-Key", "product-key")
+	assertGatewayStatus(t, runtime, productRequest, http.StatusNoContent)
+	if seen.Get("X-Product") != "Starter" || seen.Get("X-Sub") != "dev" {
+		t.Fatalf("product headers = %v", seen)
+	}
+}
+
 func TestRetryConditionMatches(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, "/", nil)
 	response := &http.Response{StatusCode: http.StatusServiceUnavailable}
