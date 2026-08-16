@@ -491,14 +491,8 @@ func (r *Runtime) Activate(st *store.Store, strict bool) error {
 				continue
 			}
 			if productPlan, defined := policyByScope[strings.ToLower(subscription.Scope)]; defined {
-				apiPlan := plan
-				for _, operationPlan := range operationPlans {
-					apiPlan = operationPlan
-					break
-				}
-				composed := mergeProductPlan(productPlan, apiPlan)
-				subscriptionPlans[strings.ToLower(subscription.PrimaryKey)] = composed
-				subscriptionPlans[strings.ToLower(subscription.SecondaryKey)] = composed
+				subscriptionPlans[strings.ToLower(subscription.PrimaryKey)] = productPlan
+				subscriptionPlans[strings.ToLower(subscription.SecondaryKey)] = productPlan
 			}
 		}
 		service.Routes = append(service.Routes, &Route{API: api, VersionSet: versionSet, Operations: operationList, OperationPlans: operationPlans, SubscriptionPlans: subscriptionPlans, Plan: plan, AcceptedKeys: keysByAPI[strings.ToLower(api.ID())], Diagnostics: diagnostics[strings.ToLower(api.ID())]})
@@ -723,8 +717,8 @@ func (r *Runtime) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		gatewayError(w, http.StatusUnauthorized, "SubscriptionKeyInvalid", message)
 		return
 	}
-	if subscriptionPlan, ok := route.SubscriptionPlans[strings.ToLower(subscriptionKey(req))]; ok {
-		activePlan = subscriptionPlan
+	if productPlan, ok := route.SubscriptionPlans[strings.ToLower(subscriptionKey(req))]; ok {
+		activePlan = mergeProductPlan(productPlan, activePlan)
 	}
 	cacheKey := service.Name + ":" + route.API.ID() + ":" + req.Method + ":" + req.URL.RequestURI()
 	apiCtx, operationCtx, productCtx, subscriptionCtx, userCtx, deploymentCtx := bindRequestContext(service, route, operation, req)

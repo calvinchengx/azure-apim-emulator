@@ -1506,6 +1506,21 @@ func TestAPIBranches(t *testing.T) {
 	assertStatus(t, handler, http.MethodPut, basePath+"/apis/a/policies/policy"+apiQuery, `{"properties":{"format":"rawxml","value":"x"}}`, http.StatusBadRequest)
 	handler.ValidatePolicy = nil
 	assertStatus(t, handler, http.MethodPut, basePath+"/apis/a/policies/policy"+apiQuery, `{"properties":{"format":"rawxml","value":"<policies/>"}}`, http.StatusCreated)
+	assertStatus(t, handler, http.MethodGet, basePath+"/policies/policy"+apiQuery, "", http.StatusNotFound)
+	assertStatus(t, handler, http.MethodPut, basePath+"/policies/policy"+apiQuery, `{"properties":{"format":"rawxml","value":"<policies><inbound/></policies>"}}`, http.StatusCreated)
+	servicePolicy := request(t, handler, http.MethodGet, basePath+"/policies/policy"+apiQuery, "")
+	if servicePolicy.Code != http.StatusOK || !strings.Contains(servicePolicy.Body.String(), `"Microsoft.ApiManagement/service/policies"`) {
+		t.Fatalf("service policy GET = %d %s", servicePolicy.Code, servicePolicy.Body.String())
+	}
+	assertStatus(t, handler, http.MethodPost, basePath+"/policies/policy"+apiQuery, `{}`, http.StatusMethodNotAllowed)
+	assertStatus(t, handler, http.MethodGet, basePath+"/policies/other"+apiQuery, "", http.StatusNotFound)
+	assertStatus(t, handler, http.MethodGet, basePath+"/apis/a/operations/get/policies/policy"+apiQuery, "", http.StatusNotFound)
+	assertStatus(t, handler, http.MethodPut, basePath+"/apis/a/operations/missing/policies/policy"+apiQuery, `{"properties":{"value":"<policies/>"}}`, http.StatusNotFound)
+	assertStatus(t, handler, http.MethodPut, basePath+"/apis/a/operations/get/policies/policy"+apiQuery, `{"properties":{"format":"rawxml","value":"<policies><inbound/></policies>"}}`, http.StatusCreated)
+	operationPolicy := request(t, handler, http.MethodGet, basePath+"/apis/a/operations/get/policies/policy"+apiQuery, "")
+	if operationPolicy.Code != http.StatusOK || !strings.Contains(operationPolicy.Body.String(), `"Microsoft.ApiManagement/service/apis/operations/policies"`) {
+		t.Fatalf("operation policy GET = %d %s", operationPolicy.Code, operationPolicy.Body.String())
+	}
 	recorder := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, basePath+"/apis/a/policies/policy"+apiQuery, nil)
 	req.Header.Set("Authorization", "Bearer token")
@@ -1999,6 +2014,12 @@ func TestProductAndSubscriptionBranches(t *testing.T) {
 	}
 	assertStatus(t, handler, http.MethodPost, basePath+"/products/p/apis/a"+apiQuery, `{}`, http.StatusMethodNotAllowed)
 	assertStatus(t, handler, http.MethodGet, basePath+"/products/p/unknown"+apiQuery, "", http.StatusNotFound)
+	assertStatus(t, handler, http.MethodGet, basePath+"/products/missing/policies/policy"+apiQuery, "", http.StatusNotFound)
+	assertStatus(t, handler, http.MethodPut, basePath+"/products/p/policies/policy"+apiQuery, `{"properties":{"format":"rawxml","value":"<policies><inbound/></policies>"}}`, http.StatusCreated)
+	productPolicy := request(t, handler, http.MethodGet, basePath+"/products/p/policies/policy"+apiQuery, "")
+	if productPolicy.Code != http.StatusOK || !strings.Contains(productPolicy.Body.String(), `"Microsoft.ApiManagement/service/products/policies"`) {
+		t.Fatalf("product policy GET = %d %s", productPolicy.Code, productPolicy.Body.String())
+	}
 
 	assertStatus(t, handler, http.MethodGet, basePath+"/subscriptions"+apiQuery, "", http.StatusOK)
 	assertStatus(t, handler, http.MethodPost, basePath+"/subscriptions"+apiQuery, "", http.StatusMethodNotAllowed)
