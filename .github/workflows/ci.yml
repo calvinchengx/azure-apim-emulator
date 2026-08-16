@@ -28,6 +28,7 @@ jobs:
         with:
           python-version: "3.12"
       - run: ./scripts/check_witnesses.py --strict
+      - run: ./scripts/check_policy_inventory.py --strict
 
   sdk-witnesses:
     runs-on: ubuntu-latest

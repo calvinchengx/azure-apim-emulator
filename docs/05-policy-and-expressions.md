@@ -52,9 +52,12 @@ mutability and lifetime. Policies never receive the storage layer directly.
 
 ## Policy inventory
 
-All policies in Microsoft's live policy reference are imported into a generated
-inventory containing XML schema, section/scope applicability, gateway support,
-expression-bearing fields, dependencies, roadmap owner, and parity state.
+All policies in Microsoft's live policy reference are classified in the checked-in
+inventory (`docs/generated/policy-inventory.json`) with status, section hints,
+gateway support, and known expression-bearing fields. `scripts/check_policy_inventory.py
+--strict` fails CI when any stable name is `unclassified` or when compiler
+recognition drifts from `implemented`/`partial`. XML schema, remaining
+expression-bearing fields, dependencies, and roadmap owner columns remain open.
 
 Implementation tracks include:
 

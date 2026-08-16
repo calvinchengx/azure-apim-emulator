@@ -12,7 +12,7 @@ endif
 COMPOSE = docker compose -f compose.yaml
 
 .PHONY: build docs test test-coverage test-differential test-sdks setup-sdks verify \
-        up down clean status doctor ps logs
+        check-inventory up down clean status doctor ps logs
 
 build:
 	go build ./...
@@ -41,6 +41,9 @@ test-sdks:
 
 docs:
 	pnpm --filter azure-apim-emulator-docs build
+
+check-inventory:
+	python3 scripts/check_policy_inventory.py --strict
 
 verify: build test test-coverage
 	go vet ./...
