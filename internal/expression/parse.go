@@ -52,8 +52,8 @@ type ternaryExpr struct {
 }
 
 // Parse lexes and compiles an APIM expression. Blocks may declare expression-
-// scoped `var` locals and must end with a single `return <expr>;`. Other
-// statements stay unimplemented so they cannot be silently skipped.
+// scoped `var` locals, branch with `if`/`else`, and must `return` on every
+// path. Other statements stay unimplemented so they cannot be silently skipped.
 func Parse(source string) (Expr, Form, error) {
 	tokens, form, err := Lex(source)
 	if err != nil {
@@ -136,7 +136,18 @@ func (e blockExpr) eval(env *Env) (Value, error) {
 	return e.result.eval(child)
 }
 
+func wrapVars(vars []varDecl, expr Expr) Expr {
+	if len(vars) == 0 {
+		return expr
+	}
+	return blockExpr{vars: vars, result: expr}
+}
+
 func (p *parser) block() (Expr, error) {
+	return p.blockBody()
+}
+
+func (p *parser) blockBody() (Expr, error) {
 	var vars []varDecl
 	for p.peek().Kind == TokenVar {
 		decl, err := p.varDecl()
@@ -145,14 +156,29 @@ func (p *parser) block() (Expr, error) {
 		}
 		vars = append(vars, decl)
 	}
-	if p.peek().Kind != TokenReturn {
-		if p.peek().Kind == TokenEOF {
-			return nil, fmt.Errorf("statement block must return a value")
+	switch p.peek().Kind {
+	case TokenIf:
+		expr, err := p.ifStmt()
+		if err != nil {
+			return nil, err
 		}
+		return wrapVars(vars, expr), nil
+	case TokenReturn:
+		expr, err := p.returnStmt()
+		if err != nil {
+			return nil, err
+		}
+		return wrapVars(vars, expr), nil
+	case TokenEOF, TokenRBrace:
+		return nil, fmt.Errorf("statement block must return a value")
+	default:
 		return nil, fmt.Errorf("statement %q is not implemented", p.peek().Lexeme)
 	}
+}
+
+func (p *parser) returnStmt() (Expr, error) {
 	p.take()
-	if p.peek().Kind == TokenSemicolon || p.peek().Kind == TokenEOF {
+	if p.peek().Kind == TokenSemicolon || p.peek().Kind == TokenEOF || p.peek().Kind == TokenRBrace {
 		return nil, fmt.Errorf("return requires a value")
 	}
 	expr, err := p.ternary()
@@ -163,10 +189,52 @@ func (p *parser) block() (Expr, error) {
 		return nil, fmt.Errorf("expected ';'")
 	}
 	p.take()
-	if len(vars) == 0 {
-		return expr, nil
+	return expr, nil
+}
+
+func (p *parser) ifStmt() (Expr, error) {
+	p.take()
+	if p.peek().Kind != TokenLParen {
+		return nil, fmt.Errorf("expected '('")
 	}
-	return blockExpr{vars: vars, result: expr}, nil
+	p.take()
+	cond, err := p.ternary()
+	if err != nil {
+		return nil, err
+	}
+	if p.peek().Kind != TokenRParen {
+		return nil, fmt.Errorf("expected ')'")
+	}
+	p.take()
+	then, err := p.bracedBlock()
+	if err != nil {
+		return nil, err
+	}
+	if p.peek().Kind != TokenElse {
+		return nil, fmt.Errorf("if requires else")
+	}
+	p.take()
+	els, err := p.bracedBlock()
+	if err != nil {
+		return nil, err
+	}
+	return ternaryExpr{cond: cond, then: then, els: els}, nil
+}
+
+func (p *parser) bracedBlock() (Expr, error) {
+	if p.peek().Kind != TokenLBrace {
+		return nil, fmt.Errorf("expected '{'")
+	}
+	p.take()
+	expr, err := p.blockBody()
+	if err != nil {
+		return nil, err
+	}
+	if p.peek().Kind != TokenRBrace {
+		return nil, fmt.Errorf("expected '}'")
+	}
+	p.take()
+	return expr, nil
 }
 
 func (p *parser) varDecl() (varDecl, error) {
