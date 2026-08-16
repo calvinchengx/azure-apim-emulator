@@ -43,6 +43,7 @@ type Handler struct {
 	ImportClient   *http.Client
 	ExportKey      []byte
 	Secrets        keyvault.Retriever
+	AcquireToken   func(context.Context, string, string) (string, error)
 	mutationMu     sync.Mutex
 }
 
@@ -4403,7 +4404,7 @@ func (h *Handler) secretRetriever() keyvault.Retriever {
 	if h.Secrets != nil {
 		return h.Secrets
 	}
-	return keyvault.HTTP{Client: h.ImportClient}
+	return keyvault.HTTP{Client: h.ImportClient, AcquireToken: h.AcquireToken}
 }
 
 func (h *Handler) keyVaultNow() time.Time {

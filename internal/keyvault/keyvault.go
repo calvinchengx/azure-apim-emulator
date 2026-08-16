@@ -56,7 +56,8 @@ func Classify(err error) (code, message string) {
 
 // HTTP retrieves secrets over the Key Vault REST API.
 type HTTP struct {
-	Client *http.Client
+	Client       *http.Client
+	AcquireToken func(context.Context, string, string) (string, error)
 }
 
 // GetSecret GETs a versioned or versionless secret identifier.
@@ -65,25 +66,48 @@ func (h HTTP) GetSecret(ctx context.Context, secretIdentifier string) (Secret, e
 	if err != nil {
 		return Secret{}, err
 	}
+	secret, challenge, err := h.get(ctx, endpoint, "")
+	if err == nil {
+		return secret, nil
+	}
+	if challenge.authorization == "" && challenge.resource == "" {
+		return Secret{}, err
+	}
+	token, tokenErr := h.acquire(ctx, challenge.resource, challenge.authorization)
+	if tokenErr != nil {
+		return Secret{}, tokenErr
+	}
+	secret, _, err = h.get(ctx, endpoint, token)
+	return secret, err
+}
+
+func (h HTTP) get(ctx context.Context, endpoint, token string) (Secret, bearerChallenge, error) {
 	client := h.Client
 	if client == nil {
 		client = http.DefaultClient
 	}
 	request, err := newHTTPRequest(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
-		return Secret{}, err
+		return Secret{}, bearerChallenge{}, err
+	}
+	if token != "" {
+		request.Header.Set("Authorization", "Bearer "+token)
 	}
 	response, err := client.Do(request)
 	if err != nil {
-		return Secret{}, err
+		return Secret{}, bearerChallenge{}, err
 	}
 	defer response.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
 	if err != nil {
-		return Secret{}, err
+		return Secret{}, bearerChallenge{}, err
 	}
 	if response.StatusCode != http.StatusOK {
-		return Secret{}, &StatusError{Code: statusCode(response.StatusCode), Message: errorMessage(response.StatusCode, body), Status: response.StatusCode}
+		challenge := bearerChallenge{}
+		if response.StatusCode == http.StatusUnauthorized && token == "" {
+			challenge = parseBearerChallenge(response.Header.Get("WWW-Authenticate"))
+		}
+		return Secret{}, challenge, &StatusError{Code: statusCode(response.StatusCode), Message: errorMessage(response.StatusCode, body), Status: response.StatusCode}
 	}
 	var document struct {
 		Value       string `json:"value"`
@@ -91,12 +115,135 @@ func (h HTTP) GetSecret(ctx context.Context, secretIdentifier string) (Secret, e
 		ID          string `json:"id"`
 	}
 	if err := json.Unmarshal(body, &document); err != nil {
-		return Secret{}, err
+		return Secret{}, bearerChallenge{}, err
 	}
 	if document.Value == "" {
-		return Secret{}, &StatusError{Code: "Error", Message: "Key Vault secret value is missing.", Status: http.StatusOK}
+		return Secret{}, bearerChallenge{}, &StatusError{Code: "Error", Message: "Key Vault secret value is missing.", Status: http.StatusOK}
 	}
-	return Secret{Value: document.Value, ContentType: document.ContentType, ID: document.ID}, nil
+	return Secret{Value: document.Value, ContentType: document.ContentType, ID: document.ID}, bearerChallenge{}, nil
+}
+
+type bearerChallenge struct {
+	authorization string
+	resource      string
+}
+
+func (h HTTP) acquire(ctx context.Context, resource, authorization string) (string, error) {
+	if h.AcquireToken != nil {
+		token, err := h.AcquireToken(ctx, resource, authorization)
+		if err != nil {
+			return "", &StatusError{Code: "Unauthorized", Message: err.Error(), Status: http.StatusUnauthorized}
+		}
+		if strings.TrimSpace(token) == "" {
+			return "", &StatusError{Code: "Unauthorized", Message: "managed identity token is missing.", Status: http.StatusUnauthorized}
+		}
+		return token, nil
+	}
+	return acquireManagedIdentityToken(ctx, h.Client, resource, authorization)
+}
+
+func acquireManagedIdentityToken(ctx context.Context, client *http.Client, resource, authorization string) (string, error) {
+	if client == nil {
+		client = http.DefaultClient
+	}
+	endpoint, err := managedIdentityTokenURL(authorization, resource)
+	if err != nil {
+		return "", err
+	}
+	request, err := newHTTPRequest(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return "", err
+	}
+	request.Header.Set("Metadata", "true")
+	response, err := client.Do(request)
+	if err != nil {
+		return "", err
+	}
+	defer response.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+	if err != nil {
+		return "", err
+	}
+	if response.StatusCode != http.StatusOK {
+		return "", &StatusError{Code: statusCode(response.StatusCode), Message: errorMessage(response.StatusCode, body), Status: response.StatusCode}
+	}
+	var document struct {
+		AccessToken string `json:"access_token"`
+	}
+	if err := json.Unmarshal(body, &document); err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(document.AccessToken) == "" {
+		return "", &StatusError{Code: "Unauthorized", Message: "managed identity token is missing.", Status: http.StatusUnauthorized}
+	}
+	return document.AccessToken, nil
+}
+
+func managedIdentityTokenURL(authorization, resource string) (string, error) {
+	parsed, err := url.Parse(strings.TrimSpace(authorization))
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return "", &StatusError{Code: "Unauthorized", Message: "Key Vault challenge authorization must be an absolute URL.", Status: http.StatusUnauthorized}
+	}
+	if !strings.Contains(strings.ToLower(parsed.Path), "oauth2/token") {
+		parsed.Path = "/metadata/identity/oauth2/token"
+	}
+	query := parsed.Query()
+	if query.Get("api-version") == "" {
+		query.Set("api-version", "2018-02-01")
+	}
+	if resource != "" && query.Get("resource") == "" {
+		query.Set("resource", resource)
+	}
+	parsed.RawQuery = query.Encode()
+	return parsed.String(), nil
+}
+
+func parseBearerChallenge(header string) bearerChallenge {
+	trimmed := strings.TrimSpace(header)
+	if trimmed == "" || !strings.HasPrefix(strings.ToLower(trimmed), "bearer") {
+		return bearerChallenge{}
+	}
+	rest := strings.TrimSpace(trimmed[len("bearer"):])
+	result := bearerChallenge{}
+	for _, part := range splitChallenge(rest) {
+		key, value, ok := strings.Cut(part, "=")
+		if !ok {
+			continue
+		}
+		key = strings.ToLower(strings.TrimSpace(key))
+		value = strings.Trim(strings.TrimSpace(value), `"`)
+		switch key {
+		case "authorization", "authorization_uri":
+			result.authorization = value
+		case "resource", "resource_id":
+			result.resource = value
+		}
+	}
+	return result
+}
+
+func splitChallenge(header string) []string {
+	var parts []string
+	var current strings.Builder
+	quoted := false
+	for _, r := range header {
+		switch {
+		case r == '"':
+			quoted = !quoted
+			current.WriteRune(r)
+		case r == ',' && !quoted:
+			if part := strings.TrimSpace(current.String()); part != "" {
+				parts = append(parts, part)
+			}
+			current.Reset()
+		default:
+			current.WriteRune(r)
+		}
+	}
+	if part := strings.TrimSpace(current.String()); part != "" {
+		parts = append(parts, part)
+	}
+	return parts
 }
 
 func secretURL(secretIdentifier string) (string, error) {
