@@ -2,6 +2,7 @@ package expression
 
 import (
 	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"io"
 	"net/http"
@@ -509,5 +510,97 @@ func TestElapsedNeverRendersNegative(t *testing.T) {
 	}
 	if got := formatElapsed(3*time.Hour + 4*time.Minute + 5*time.Second + 6*time.Millisecond); got != "03:04:05.006" {
 		t.Fatalf("elapsed = %q", got)
+	}
+}
+
+func TestRequestTimeMembers(t *testing.T) {
+	request := httptest.NewRequest(http.MethodGet, "https://api.example/orders/A-1?x=1", nil)
+	leaf := testCertificate()
+
+	// With no rewrite, OriginalUrl IS the current URL: returning null would
+	// make a policy that logs it lose the common case.
+	plain := Bind(Context{Request: request})
+	if got, err := EvalEnv("@(context.Request.OriginalUrl.Path)", plain); err != nil || got.String() != "/orders/A-1" {
+		t.Fatalf("original url with no rewrite = %q, %v", got.String(), err)
+	}
+	// A caller that presented no certificate reads null, which is what a policy
+	// tests before reaching for a thumbprint.
+	if got, err := EvalEnv("@(context.Request.Certificate == null)", plain); err != nil || !got.Truthy() {
+		t.Fatalf("absent certificate = %v, %v", got.Truthy(), err)
+	}
+
+	rewritten := Bind(Context{
+		Request:           request,
+		OriginalUrl:       "https://api.example/original/path?y=2",
+		MatchedParameters: map[string]string{"orderId": "A-1"},
+	})
+	// The ORIGINAL, not the rewritten one: a policy routing or logging on where
+	// a request was aimed needs what the caller sent.
+	if got, err := EvalEnv("@(context.Request.OriginalUrl.Path)", rewritten); err != nil || got.String() != "/original/path" {
+		t.Fatalf("original url after rewrite = %q, %v", got.String(), err)
+	}
+	if got, err := EvalEnv(`@(context.Request.MatchedParameters["orderId"])`, rewritten); err != nil || got.String() != "A-1" {
+		t.Fatalf("matched parameters = %q, %v", got.String(), err)
+	}
+	// A parameter the template never captured is empty rather than an error.
+	if got, err := EvalEnv(`@(context.Request.MatchedParameters["absent"])`, rewritten); err != nil || got.String() != "" {
+		t.Fatalf("absent parameter = %q, %v", got.String(), err)
+	}
+	// An unparsable original is reported rather than silently treated as absent.
+	broken := Bind(Context{Request: request, OriginalUrl: "://nonsense"})
+	if _, err := EvalEnv("@(context.Request.OriginalUrl.Path)", broken); err == nil {
+		t.Fatal("an unparsable original url was accepted")
+	}
+
+	presented := request.Clone(request.Context())
+	presented.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{leaf}}
+	withCert := Bind(Context{Request: presented})
+	if got, err := EvalEnv("@(context.Request.Certificate.Subject)", withCert); err != nil || !strings.Contains(got.String(), "client.test") {
+		t.Fatalf("client certificate subject = %q, %v", got.String(), err)
+	}
+}
+
+func TestCertificateMembers(t *testing.T) {
+	env := Bind(Context{Certificates: map[string]*x509.Certificate{"client": testCertificate()},
+		Deployment: &DeploymentContext{ServiceName: "emulator"}})
+
+	// The thumbprint is uppercase hex of the SHA-1, which is the form Azure
+	// reports and the form a policy compares an uploaded certificate to.
+	got, err := EvalEnv(`@(context.Deployment.Certificates["client"].Thumbprint)`, env)
+	if err != nil || len(got.String()) != 40 || got.String() != strings.ToUpper(got.String()) {
+		t.Fatalf("thumbprint = %q, %v", got.String(), err)
+	}
+	// Validity only: there is no trust store here, and answering true from a
+	// chain nobody built would be the dangerous direction.
+	if verified, err := EvalEnv(`@(context.Deployment.Certificates["client"].Verify())`, env); err != nil || !verified.Truthy() {
+		t.Fatalf("verify = %v, %v", verified.Truthy(), err)
+	}
+	if _, err := EvalEnv(`@(context.Deployment.Certificates["client"].Verify("extra"))`, env); err == nil {
+		t.Fatal("Verify accepted an argument")
+	}
+	if _, err := EvalEnv(`@(context.Deployment.Certificates["client"].Nonexistent)`, env); err == nil {
+		t.Fatal("an unknown certificate member was accepted")
+	}
+	// A certificate nobody uploaded is null, not an error: a policy asking
+	// whether one exists must be able to ask.
+	if missing, err := EvalEnv(`@(context.Deployment.Certificates["absent"] == null)`, env); err != nil || !missing.Truthy() {
+		t.Fatalf("absent certificate = %v, %v", missing.Truthy(), err)
+	}
+	if _, err := EvalEnv("@(context.Deployment.Certificates[1])", env); err == nil {
+		t.Fatal("a non-string certificate key was accepted")
+	}
+	if _, err := EvalEnv("@(context.Deployment.Certificates.ContainsKey(1))", env); err == nil {
+		t.Fatal("ContainsKey accepted a non-string")
+	}
+	if _, err := EvalEnv("@(context.Deployment.Certificates.Nonexistent)", env); err == nil {
+		t.Fatal("an unknown certificates member was accepted")
+	}
+}
+
+// An unknown member on the deployment host is refused, not answered empty.
+func TestDeploymentRejectsUnknownMembers(t *testing.T) {
+	env := Bind(Context{Deployment: &DeploymentContext{ServiceName: "emulator"}})
+	if _, err := EvalEnv("@(context.Deployment.Nonexistent)", env); err == nil {
+		t.Fatal("an unknown deployment member was accepted")
 	}
 }

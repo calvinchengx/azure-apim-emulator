@@ -1,10 +1,14 @@
 package expression
 
 import (
+	"crypto/sha1"
+	"crypto/x509"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -115,6 +119,16 @@ type Context struct {
 	RequestId string
 	// Tracing reports whether the caller asked for a trace.
 	Tracing bool
+	// OriginalUrl is the URL as the CALLER sent it, before any policy rewrote
+	// it. A policy that logs or routes on where a request was actually aimed
+	// needs the original, not the one it just changed.
+	OriginalUrl string
+	// MatchedParameters are the values the operation's URL template captured,
+	// which is how a policy reads `{orderId}` out of the path.
+	MatchedParameters map[string]string
+	// Certificates are the service's client certificates, keyed by the name
+	// they were uploaded under.
+	Certificates map[string]*x509.Certificate
 	// AuthorizationContexts are credential-manager results, keyed by the
 	// variable name the policy stored them under. They ride alongside
 	// Variables rather than inside it because Variables is map[string]string
@@ -153,7 +167,7 @@ func (c *contextHost) member(name string) (Value, error) {
 		if c.ctx.Request == nil {
 			return Null(), nil
 		}
-		return Object(&requestHost{request: c.ctx.Request}), nil
+		return Object(&requestHost{request: c.ctx.Request, originalUrl: c.ctx.OriginalUrl, matched: c.ctx.MatchedParameters}), nil
 	case "Response":
 		if c.ctx.Response == nil {
 			return Null(), nil
@@ -192,7 +206,7 @@ func (c *contextHost) member(name string) (Value, error) {
 		if c.ctx.Deployment == nil {
 			return Null(), nil
 		}
-		return Object(&deploymentHost{ctx: c.ctx.Deployment}), nil
+		return Object(&deploymentHost{ctx: c.ctx.Deployment, certificates: c.ctx.Certificates}), nil
 	case "Timestamp":
 		return String(c.ctx.Timestamp.UTC().Format(time.RFC3339)), nil
 	case "Elapsed":
@@ -357,7 +371,8 @@ func (h *operationHost) member(name string) (Value, error) {
 }
 
 type deploymentHost struct {
-	ctx *DeploymentContext
+	ctx          *DeploymentContext
+	certificates map[string]*x509.Certificate
 }
 
 func (h *deploymentHost) member(name string) (Value, error) {
@@ -375,6 +390,8 @@ func (h *deploymentHost) member(name string) (Value, error) {
 			return Null(), nil
 		}
 		return Object(&gatewayHost{ctx: h.ctx.Gateway}), nil
+	case "Certificates":
+		return Object(&certificateMapHost{certificates: h.certificates}), nil
 	default:
 		return Null(), fmt.Errorf("unknown member %s", name)
 	}
@@ -395,6 +412,10 @@ func formatElapsed(d time.Duration) string {
 
 type requestHost struct {
 	request *http.Request
+	// originalUrl and matched come from the context rather than the request,
+	// because both describe what happened BEFORE a policy touched it.
+	originalUrl string
+	matched     map[string]string
 }
 
 func (r *requestHost) member(name string) (Value, error) {
@@ -413,6 +434,65 @@ func (r *requestHost) member(name string) (Value, error) {
 		return String(clientIP(r.request.RemoteAddr)), nil
 	case "Body":
 		return Object(&bodyHost{read: func() (string, error) { return readRequestBody(r.request) }}), nil
+	case "OriginalUrl":
+		if r.originalUrl == "" {
+			// No rewrite happened, so the original IS the current URL. Returning
+			// null would make a policy that logs OriginalUrl lose the common case.
+			return Object(&urlHost{request: r.request}), nil
+		}
+		parsed, err := url.Parse(r.originalUrl)
+		if err != nil {
+			return Null(), fmt.Errorf("original url %q is unparsable: %w", r.originalUrl, err)
+		}
+		return Object(&urlHost{request: &http.Request{URL: parsed, Host: parsed.Host, TLS: r.request.TLS}}), nil
+	case "MatchedParameters":
+		return Object(&mapHost{values: r.matched}), nil
+	case "Certificate":
+		// Null when the caller presented none, which is what a policy tests
+		// before reading a thumbprint off it.
+		if r.request.TLS == nil || len(r.request.TLS.PeerCertificates) == 0 {
+			return Null(), nil
+		}
+		return Object(&certificateHost{certificate: r.request.TLS.PeerCertificates[0]}), nil
+	default:
+		return Null(), fmt.Errorf("unknown member %s", name)
+	}
+}
+
+// certificateHost binds the members of an X509Certificate2 that APIM documents.
+type certificateHost struct {
+	certificate *x509.Certificate
+}
+
+func (c *certificateHost) member(name string) (Value, error) {
+	switch name {
+	case "Thumbprint":
+		// Uppercase hex of the SHA-1 hash, which is the form Azure reports and
+		// the form a policy compares an uploaded certificate's thumbprint to.
+		sum := sha1.Sum(c.certificate.Raw)
+		return String(strings.ToUpper(hex.EncodeToString(sum[:]))), nil
+	case "Subject":
+		return String(c.certificate.Subject.String()), nil
+	case "Issuer":
+		return String(c.certificate.Issuer.String()), nil
+	case "SerialNumber":
+		return String(c.certificate.SerialNumber.String()), nil
+	case "NotBefore":
+		return String(c.certificate.NotBefore.UTC().Format(time.RFC3339)), nil
+	case "NotAfter":
+		return String(c.certificate.NotAfter.UTC().Format(time.RFC3339)), nil
+	case "Verify":
+		// Validity only: this emulator has no trust store to chain against, and
+		// answering true from a chain nobody built would be the more dangerous
+		// direction. An expired certificate is the check a policy actually
+		// writes this for.
+		return Object(funcValue{fn: func(args []Value) (Value, error) {
+			if len(args) != 0 {
+				return Null(), fmt.Errorf("Verify takes no arguments")
+			}
+			now := time.Now().UTC()
+			return Bool(now.After(c.certificate.NotBefore) && now.Before(c.certificate.NotAfter)), nil
+		}}), nil
 	default:
 		return Null(), fmt.Errorf("unknown member %s", name)
 	}
@@ -571,6 +651,40 @@ func (h *headerHost) getValueOrDefault(args []Value) (Value, error) {
 		return args[1], nil
 	}
 	return String(value), nil
+}
+
+// certificateMapHost is the service's client certificates, keyed by name. It is
+// a dictionary of OBJECTS, which the text-only mapHost cannot carry.
+type certificateMapHost struct {
+	certificates map[string]*x509.Certificate
+}
+
+func (m *certificateMapHost) member(name string) (Value, error) {
+	switch name {
+	case "ContainsKey":
+		return Object(funcValue{fn: func(args []Value) (Value, error) {
+			if len(args) != 1 || args[0].kind != KindString {
+				return Null(), fmt.Errorf("ContainsKey requires a string")
+			}
+			_, ok := m.certificates[args[0].str]
+			return Bool(ok), nil
+		}}), nil
+	case "Count":
+		return Double(float64(len(m.certificates))), nil
+	default:
+		return Null(), fmt.Errorf("unknown member %s", name)
+	}
+}
+
+func (m *certificateMapHost) index(key Value) (Value, error) {
+	if key.kind != KindString {
+		return Null(), fmt.Errorf("certificate lookup requires a string")
+	}
+	certificate, ok := m.certificates[key.str]
+	if !ok {
+		return Null(), nil
+	}
+	return Object(&certificateHost{certificate: certificate}), nil
 }
 
 type mapHost struct {

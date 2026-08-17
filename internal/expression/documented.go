@@ -57,6 +57,11 @@ func Documented() []Member {
 	add("Group", "Id", "Name")
 	add("UserIdentity", "Id", "Provider")
 	add("Url", "Host", "Path", "Port", "Query", "QueryString", "Scheme")
+	// X509Certificate2, which `context.Request.Certificate` and each entry of
+	// `context.Deployment.Certificates` bind to. Only the members APIM's own
+	// examples use are listed: the .NET type has dozens this gateway would have
+	// no way to answer.
+	add("Certificate", "Issuer", "NotAfter", "NotBefore", "SerialNumber", "Subject", "Thumbprint", "Verify")
 	add("Body", "As", "AsFormUrlEncodedContent")
 	add("GraphQL", "Arguments", "Parent")
 	return members

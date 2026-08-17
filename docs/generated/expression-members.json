@@ -115,7 +115,7 @@
     {
       "type": "Deployment",
       "name": "Certificates",
-      "status": "planned"
+      "status": "bound"
     },
     {
       "type": "Deployment",
@@ -265,7 +265,7 @@
     {
       "type": "Request",
       "name": "Certificate",
-      "status": "planned"
+      "status": "bound"
     },
     {
       "type": "Request",
@@ -280,7 +280,7 @@
     {
       "type": "Request",
       "name": "MatchedParameters",
-      "status": "planned"
+      "status": "bound"
     },
     {
       "type": "Request",
@@ -290,7 +290,7 @@
     {
       "type": "Request",
       "name": "OriginalUrl",
-      "status": "planned"
+      "status": "bound"
     },
     {
       "type": "Request",
@@ -418,6 +418,41 @@
       "status": "planned"
     },
     {
+      "type": "Certificate",
+      "name": "Issuer",
+      "status": "bound"
+    },
+    {
+      "type": "Certificate",
+      "name": "NotAfter",
+      "status": "bound"
+    },
+    {
+      "type": "Certificate",
+      "name": "NotBefore",
+      "status": "bound"
+    },
+    {
+      "type": "Certificate",
+      "name": "SerialNumber",
+      "status": "bound"
+    },
+    {
+      "type": "Certificate",
+      "name": "Subject",
+      "status": "bound"
+    },
+    {
+      "type": "Certificate",
+      "name": "Thumbprint",
+      "status": "bound"
+    },
+    {
+      "type": "Certificate",
+      "name": "Verify",
+      "status": "bound"
+    },
+    {
       "type": "Url",
       "name": "Host",
       "status": "bound"
@@ -505,6 +540,16 @@
     {
       "type": "Headers",
       "name": "GetValueOrDefault",
+      "status": "bound"
+    },
+    {
+      "type": "Certificates",
+      "name": "ContainsKey",
+      "status": "bound"
+    },
+    {
+      "type": "Certificates",
+      "name": "Count",
       "status": "bound"
     },
     {

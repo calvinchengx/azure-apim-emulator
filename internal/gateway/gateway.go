@@ -5,6 +5,7 @@ import (
 	"bufio"
 	"bytes"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"hash/fnv"
@@ -815,6 +816,44 @@ func productContext(value model.Product) *expression.ProductContext {
 	}
 }
 
+// originalRequestURL is the URL as the caller sent it, captured before any
+// policy can rewrite it.
+func originalRequestURL(req *http.Request) string {
+	if req == nil || req.URL == nil {
+		return ""
+	}
+	scheme := "https"
+	if req.TLS == nil {
+		scheme = "http"
+	}
+	if req.URL.IsAbs() {
+		return req.URL.String()
+	}
+	return scheme + "://" + req.Host + req.URL.RequestURI()
+}
+
+// serviceCertificates exposes the service's uploaded certificates to policy
+// expressions, parsed rather than raw: `context.Deployment.Certificates` is a
+// dictionary of certificates, not of PFX blobs.
+func serviceCertificates(service *Service) map[string]*x509.Certificate {
+	if service == nil || len(service.Certificates) == 0 {
+		return nil
+	}
+	result := map[string]*x509.Certificate{}
+	for name, value := range service.Certificates {
+		leaf, _, err := certutil.ParsePKCS12(value.Data, value.Password)
+		if err != nil {
+			// A certificate that will not parse is omitted rather than failing
+			// the request: the policy asking for a DIFFERENT certificate should
+			// still work, and the broken one is already reported by the
+			// management plane's own status.
+			continue
+		}
+		result[name] = leaf
+	}
+	return result
+}
+
 func logicalAPIID(id string) string {
 	index := strings.LastIndex(strings.ToLower(id), ";rev=")
 	if index < 0 {
@@ -865,6 +904,13 @@ func (r *Runtime) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	diagnosticStart := time.Now()
+	// The request's own correlation id. A trace supplies one already, so the
+	// two agree when tracing is on rather than a policy and a trace naming the
+	// same request differently.
+	requestID := store.NewOpaqueID()
+	if trace != nil {
+		requestID = trace.ID
+	}
 	reqLimit, respLimit := diagnosticBodyLimits(append(append([]model.Diagnostic{}, service.Diagnostics...), route.Diagnostics...))
 	diagnosticOutput := &diagnosticWriter{ResponseWriter: w, bodyLimit: respLimit, requestBody: snapshotRequestBody(req, reqLimit)}
 	w = diagnosticOutput
@@ -873,7 +919,7 @@ func (r *Runtime) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		trace.API = route.API.ID()
 	}
 	traceEvent(trace, "route", route.API.Path)
-	operation, matched := matchOperationValue(route.Operations, req.Method, relative)
+	operation, matchedParameters, matched := matchOperationBindings(route.Operations, req.Method, relative)
 	if !matched {
 		// A GraphQL API is one endpoint, not a set of REST operations, so there
 		// is nothing for the matcher to match. The schema decides what is valid
@@ -911,7 +957,7 @@ func (r *Runtime) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 	cacheKey := service.Name + ":" + route.API.ID() + ":" + req.Method + ":" + req.URL.RequestURI()
 	apiCtx, operationCtx, productCtx, subscriptionCtx, userCtx, deploymentCtx := bindRequestContext(service, route, operation, req, selfHosted)
-	state := &policy.State{Request: req, BackendURL: route.API.ServiceURL, Path: relative, Headers: make(http.Header), ValidateToken: r.policyTokenValidator, SendRequest: r.policySendRequest, FetchCredential: r.credentialFetcher(req, route.API.ServiceID), Trace: func(phase, detail string) { traceEvent(trace, phase, detail) }, RateLimit: r.rateLimit, BandwidthLimit: r.bandwidthLimit, AcquireConcurrency: r.acquireConcurrency, CacheGet: r.cacheGet, CacheSet: r.cacheSet, ValueCacheGet: r.valueCacheGet, ValueCacheSet: r.valueCacheSet, ValueCacheRemove: r.valueCacheRemove, CacheKey: cacheKey, TokenLimit: r.tokenLimit, Api: apiCtx, Operation: operationCtx, Product: productCtx, Subscription: subscriptionCtx, User: userCtx, Deployment: deploymentCtx}
+	state := &policy.State{Request: req, BackendURL: route.API.ServiceURL, Path: relative, Headers: make(http.Header), ValidateToken: r.policyTokenValidator, SendRequest: r.policySendRequest, FetchCredential: r.credentialFetcher(req, route.API.ServiceID), Trace: func(phase, detail string) { traceEvent(trace, phase, detail) }, RateLimit: r.rateLimit, BandwidthLimit: r.bandwidthLimit, AcquireConcurrency: r.acquireConcurrency, CacheGet: r.cacheGet, CacheSet: r.cacheSet, ValueCacheGet: r.valueCacheGet, ValueCacheSet: r.valueCacheSet, ValueCacheRemove: r.valueCacheRemove, CacheKey: cacheKey, TokenLimit: r.tokenLimit, Timestamp: diagnosticStart, Elapsed: func() time.Duration { return time.Since(diagnosticStart) }, RequestId: requestID, Tracing: trace != nil, OriginalUrl: originalRequestURL(req), MatchedParameters: matchedParameters, Certificates: serviceCertificates(service), Api: apiCtx, Operation: operationCtx, Product: productCtx, Subscription: subscriptionCtx, User: userCtx, Deployment: deploymentCtx}
 	defer func() {
 		for index := len(state.ConcurrencyReleases) - 1; index >= 0; index-- {
 			state.ConcurrencyReleases[index]()
@@ -1902,28 +1948,58 @@ func matchOperation(operations []model.Operation, method, path string) bool {
 }
 
 func matchOperationValue(operations []model.Operation, method, path string) (model.Operation, bool) {
+	operation, _, ok := matchOperationBindings(operations, method, path)
+	return operation, ok
+}
+
+// matchOperationBindings finds the operation AND what its template captured.
+func matchOperationBindings(operations []model.Operation, method, path string) (model.Operation, map[string]string, bool) {
 	for _, operation := range operations {
-		if strings.EqualFold(operation.Method, method) && templateMatches(operation.URLTemplate, path) {
-			return operation, true
+		if !strings.EqualFold(operation.Method, method) {
+			continue
+		}
+		if bindings, ok := templateBindings(operation.URLTemplate, path); ok {
+			return operation, bindings, true
 		}
 	}
-	return model.Operation{}, false
+	return model.Operation{}, nil, false
 }
 
 func templateMatches(template, path string) bool {
+	_, ok := templateBindings(template, path)
+	return ok
+}
+
+// templateBindings reports the values an operation's URL template captured.
+//
+// The matcher used to answer only yes or no, which is all routing needed. A
+// policy reading `context.Request.MatchedParameters["orderId"]` needs the
+// values, and recomputing them elsewhere would be a second implementation of
+// the same match that could disagree with the first.
+func templateBindings(template, path string) (map[string]string, bool) {
 	want, got := splitPath(template), splitPath(path)
 	if len(want) != len(got) {
-		return false
+		return nil, false
 	}
+	bindings := map[string]string{}
 	for index := range want {
 		if strings.HasPrefix(want[index], "{") && strings.HasSuffix(want[index], "}") {
+			name := strings.TrimSuffix(strings.TrimPrefix(want[index], "{"), "}")
+			// APIM allows a format hint after a colon, as in `{id:int}`; the
+			// argument name is what precedes it.
+			if colon := strings.Index(name, ":"); colon >= 0 {
+				name = name[:colon]
+			}
+			if name != "" {
+				bindings[name] = got[index]
+			}
 			continue
 		}
 		if want[index] != got[index] {
-			return false
+			return nil, false
 		}
 	}
-	return true
+	return bindings, true
 }
 
 func splitPath(path string) []string {

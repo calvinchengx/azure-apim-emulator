@@ -1966,3 +1966,126 @@ func TestDeploymentContextNamesTheServingGateway(t *testing.T) {
 		t.Fatalf("self-hosted gateway = %#v", edge.Gateway)
 	}
 }
+
+// The URL as the caller sent it, captured before a policy can rewrite it.
+func TestOriginalRequestURL(t *testing.T) {
+	plain := httptest.NewRequest(http.MethodGet, "/orders/A-1?x=1", nil)
+	plain.Host = "api.example"
+	if got := originalRequestURL(plain); got != "http://api.example/orders/A-1?x=1" {
+		t.Fatalf("plain = %q", got)
+	}
+	secure := httptest.NewRequest(http.MethodGet, "/orders", nil)
+	secure.Host, secure.TLS = "api.example", &tls.ConnectionState{}
+	if got := originalRequestURL(secure); got != "https://api.example/orders" {
+		t.Fatalf("secure = %q", got)
+	}
+	// Outside a request there is nothing to capture, which must not panic.
+	if got := originalRequestURL(nil); got != "" {
+		t.Fatalf("nil request = %q", got)
+	}
+	if got := originalRequestURL(&http.Request{}); got != "" {
+		t.Fatalf("request with no URL = %q", got)
+	}
+}
+
+// The matcher reports what the template captured, so a policy reads the same
+// values routing used rather than a second implementation that could disagree.
+func TestTemplateBindings(t *testing.T) {
+	bindings, ok := templateBindings("/orders/{orderId}/items/{itemId:int}", "/orders/A-1/items/7")
+	if !ok || bindings["orderId"] != "A-1" || bindings["itemId"] != "7" {
+		t.Fatalf("bindings = %v, %v", bindings, ok)
+	}
+	if _, ok := templateBindings("/orders/{orderId}", "/invoices/A-1"); ok {
+		t.Fatal("a non-matching template bound")
+	}
+	if _, ok := templateBindings("/orders", "/orders/extra"); ok {
+		t.Fatal("a template of the wrong length bound")
+	}
+	// A nameless placeholder still matches the segment; there is simply nothing
+	// to bind it to.
+	if bindings, ok := templateBindings("/orders/{}", "/orders/A-1"); !ok || len(bindings) != 0 {
+		t.Fatalf("nameless placeholder = %v, %v", bindings, ok)
+	}
+}
+
+// A certificate that will not parse is omitted rather than failing the request:
+// a policy asking for a DIFFERENT certificate should still work.
+func TestServiceCertificatesSkipsUnparsableEntries(t *testing.T) {
+	if got := serviceCertificates(nil); got != nil {
+		t.Fatalf("nil service = %v", got)
+	}
+	if got := serviceCertificates(&Service{}); got != nil {
+		t.Fatalf("service with no certificates = %v", got)
+	}
+	service := &Service{Certificates: map[string]model.Certificate{
+		"broken": {Name: "broken", Data: []byte("not a pfx"), Password: "x"},
+	}}
+	if got := serviceCertificates(service); len(got) != 0 {
+		t.Fatalf("an unparsable certificate was exposed: %v", got)
+	}
+}
+
+// The request's own clock and identity, read through a REAL policy.
+//
+// #72 bound `context.Timestamp`, `Elapsed`, `RequestId` and `Tracing` on the
+// binder but never carried them on policy.State, so they evaluated as zero
+// through any actual policy while the binder's own tests passed on a hand-built
+// context. A member can be bound and still be empty; only an end-to-end path
+// tells the difference, which is why this test drives the gateway rather than
+// the binder.
+func TestRequestClockAndIdentityReachPolicies(t *testing.T) {
+	st, err := store.Open("", clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	var seen http.Header
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen = r.Header.Clone()
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer backend.Close()
+	service, _ := st.UpsertService(model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "emulator", Location: "local"})
+	api, _ := st.UpsertAPI(model.API{ServiceID: service.ID(), Name: "orders", DisplayName: "Orders", Path: "orders", ServiceURL: backend.URL, IsCurrent: true})
+	_, _ = st.UpsertOperation(model.Operation{APIID: api.ID(), Name: "get", DisplayName: "Get", Method: http.MethodGet, URLTemplate: "/orders/{orderId}"})
+	if _, err := st.UpsertPolicy(model.Policy{ScopeID: api.ID(), Value: `<policies><inbound>` +
+		`<set-header name="X-Stamp" exists-action="override"><value>@(context.Timestamp)</value></set-header>` +
+		`<set-header name="X-Elapsed" exists-action="override"><value>@(context.Elapsed)</value></set-header>` +
+		`<set-header name="X-Request" exists-action="override"><value>@(context.RequestId)</value></set-header>` +
+		`<set-header name="X-Traced" exists-action="override"><value>@(context.Tracing ? "yes" : "no")</value></set-header>` +
+		`<set-header name="X-Order" exists-action="override"><value>@(context.Request.MatchedParameters["orderId"])</value></set-header>` +
+		`<set-header name="X-Original" exists-action="override"><value>@(context.Request.OriginalUrl.Path)</value></set-header>` +
+		`</inbound></policies>`}); err != nil {
+		t.Fatal(err)
+	}
+	runtime := New("emulator", nil)
+	if err := runtime.Activate(st, true); err != nil {
+		t.Fatal(err)
+	}
+	recorder := httptest.NewRecorder()
+	runtime.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/orders/orders/A-1", nil))
+	if recorder.Code != http.StatusNoContent {
+		t.Fatalf("status = %d %s", recorder.Code, recorder.Body.String())
+	}
+	// A zero timestamp would render as year 1, which is what the #72 gap
+	// produced; the assertion is that it is a real clock reading.
+	if stamp := seen.Get("X-Stamp"); !strings.HasPrefix(stamp, "20") {
+		t.Fatalf("timestamp did not reach the policy: %q", stamp)
+	}
+	if elapsed := seen.Get("X-Elapsed"); !strings.HasPrefix(elapsed, "00:00:0") {
+		t.Fatalf("elapsed did not reach the policy: %q", elapsed)
+	}
+	if seen.Get("X-Request") == "" {
+		t.Fatal("request id did not reach the policy")
+	}
+	if got := seen.Get("X-Traced"); got != "no" {
+		t.Fatalf("tracing on an untraced request = %q", got)
+	}
+	// And the request-time facts this change adds.
+	if got := seen.Get("X-Order"); got != "A-1" {
+		t.Fatalf("matched parameter did not reach the policy: %q", got)
+	}
+	if got := seen.Get("X-Original"); got != "/orders/orders/A-1" {
+		t.Fatalf("original url did not reach the policy: %q", got)
+	}
+}
