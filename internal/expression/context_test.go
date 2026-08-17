@@ -209,7 +209,13 @@ func TestResponseAndLastErrorBindings(t *testing.T) {
 	if _, err := EvalEnv("@(context.Response.Missing)", env); err == nil {
 		t.Fatal("unknown response member accepted")
 	}
-	if _, err := EvalEnv("@(context.LastError.Reason)", Bind(Context{LastError: errors.New("temporary")})); err == nil {
+	// Reason is bound now. An error that carries no location reads it as empty
+	// rather than failing: the member exists, this failure just has no
+	// classification the engine could determine.
+	if got, err := EvalEnv("@(context.LastError.Reason)", Bind(Context{LastError: errors.New("temporary")})); err != nil || got.String() != "" {
+		t.Fatalf("unlocated reason = %q, %v", got.String(), err)
+	}
+	if _, err := EvalEnv("@(context.LastError.Nonexistent)", Bind(Context{LastError: errors.New("temporary")})); err == nil {
 		t.Fatal("unknown last-error member accepted")
 	}
 	if _, err := EvalEnv("@(context.Response.Body.AsJObject())", env); err == nil {

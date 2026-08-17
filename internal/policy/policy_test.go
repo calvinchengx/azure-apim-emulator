@@ -1338,7 +1338,7 @@ func TestChoosePolicy(t *testing.T) {
 	if err := Execute(lastErrorPlan.OnError, state); err != nil || state.Variables["picked"] != "err" {
 		t.Fatalf("last-error choose = %+v, %v", state, err)
 	}
-	if err := Execute([]Action{{Kind: ActionChoose, Branches: []ChooseBranch{{Condition: "@(context.LastError.Reason == 'boom')"}}}}, &State{LastError: errors.New("boom")}); err == nil {
+	if err := Execute([]Action{{Kind: ActionChoose, Branches: []ChooseBranch{{Condition: "@(context.LastError.Nonexistent == 'boom')"}}}}, &State{LastError: errors.New("boom")}); err == nil {
 		t.Fatal("unknown last-error member accepted")
 	}
 	apiPlan, err := Compile(`<policies><inbound><choose><when condition="@(context.Api.Id == 'pets' &amp;&amp; context.Operation.Method == 'GET' &amp;&amp; context.Product == null)"><set-variable name="picked"><value>api</value></set-variable></when></choose></inbound></policies>`, true)

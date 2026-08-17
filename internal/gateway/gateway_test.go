@@ -2089,3 +2089,54 @@ func TestRequestClockAndIdentityReachPolicies(t *testing.T) {
 		t.Fatalf("original url did not reach the policy: %q", got)
 	}
 }
+
+// A failure reports WHERE it happened, which is what an on-error policy routes
+// on. Driven through the gateway rather than the engine, because the section
+// and the scope are only known there.
+func TestLastErrorReportsItsLocation(t *testing.T) {
+	st, err := store.Open("", clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	service, _ := st.UpsertService(model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "emulator", Location: "local"})
+	api, _ := st.UpsertAPI(model.API{ServiceID: service.ID(), Name: "orders", DisplayName: "Orders", Path: "orders", ServiceURL: "https://backend.test", IsCurrent: true})
+	_, _ = st.UpsertOperation(model.Operation{APIID: api.ID(), Name: "get", DisplayName: "Get", Method: http.MethodGet, URLTemplate: "/"})
+	// An inbound expression that compiles and cannot evaluate, and an on-error
+	// section that reports where it happened.
+	if _, err := st.UpsertPolicy(model.Policy{ScopeID: api.ID(), Value: `<policies>` +
+		`<inbound><set-header name="X-Broken" exists-action="override"><value>@(context.Product.Name)</value></set-header></inbound>` +
+		`<on-error><return-response><set-status code="500" reason="Failed"/>` +
+		`<set-body>@(context.LastError.Section + "|" + context.LastError.Source + "|" + context.LastError.Scope + "|" + context.LastError.ElementPath + "|" + context.LastError.Reason)</set-body>` +
+		`</return-response></on-error></policies>`}); err != nil {
+		t.Fatal(err)
+	}
+	runtime := New("emulator", nil)
+	if err := runtime.Activate(st, true); err != nil {
+		t.Fatal(err)
+	}
+	recorder := httptest.NewRecorder()
+	runtime.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/orders", nil))
+	body := recorder.Body.String()
+	// section | source | scope | elementPath | reason
+	if body != "inbound|set-header|api|inbound/set-header|ExpressionValueEvaluationFailure" {
+		t.Fatalf("last error location = %q", body)
+	}
+}
+
+// A service-scoped policy reports the global scope, which is how an on-error
+// handler tells a service-wide failure from an API's own.
+func TestLastErrorScopeFollowsTheDocument(t *testing.T) {
+	if got := policy.ScopeOf("/subscriptions/s/service/emulator"); got != "global" {
+		t.Fatalf("service scope = %q", got)
+	}
+	if got := policy.ScopeOf("/subscriptions/s/service/emulator/apis/orders"); got != "api" {
+		t.Fatalf("api scope = %q", got)
+	}
+	if got := policy.ScopeOf("/subscriptions/s/service/emulator/apis/orders/operations/get"); got != "operation" {
+		t.Fatalf("operation scope = %q", got)
+	}
+	if got := policy.ScopeOf("/subscriptions/s/service/emulator/products/starter"); got != "product" {
+		t.Fatalf("product scope = %q", got)
+	}
+}

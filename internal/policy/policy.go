@@ -109,6 +109,12 @@ type Action struct {
 	ContentMax     int64
 	ContentAction  string
 	ContentTypes   []string
+	// Element is the policy element this action was compiled from, and Scope is
+	// the policy document it came from (global, product, api, operation). Both
+	// exist so a failure can say WHERE it happened, which is the whole of
+	// `context.LastError`.
+	Element string
+	Scope   string
 	// LLM carries the token-governance configuration of an `llm-token-limit`
 	// or `llm-emit-token-metric` node. Kept as one struct rather than a dozen
 	// more fields on Action, because these attributes are only meaningful
@@ -244,6 +250,9 @@ type State struct {
 	// the windows. The estimate is what an `estimate-prompt-tokens="true"`
 	// policy wants charged up front, and is 0 otherwise.
 	TokenLimit func(key string, tokensPerMinute, estimate int) (remaining, retryAfter int, allowed bool)
+	// Section is the policy section currently running, which a failure reports
+	// through `context.LastError.Section`.
+	Section string
 	// Timestamp, Elapsed, RequestId and Tracing are the request's own identity
 	// and clock. #72 bound them on the BINDER without carrying them here, so
 	// they evaluated as zero through any real policy while the binder's own
@@ -414,6 +423,10 @@ func compileNodes(nodes []node, strict bool) ([]Action, error) {
 		if strict && action.Kind == ActionUnsupported {
 			return nil, fmt.Errorf("%w: <%s>", ErrUnsupported, action.Source)
 		}
+		// Every action remembers the element it was compiled from, which is
+		// what `context.LastError.Source` reports. Recorded here, in the one
+		// place actions are built, rather than in sixty compile cases.
+		action.Element = item.Name
 		actions = append(actions, action)
 	}
 	return actions, nil
@@ -1643,7 +1656,21 @@ func ipMatches(remote, rule string) bool {
 }
 
 // Execute applies compiled actions to state.
+// Execute runs a section's actions, attaching to any failure the element that
+// produced it so `context.LastError` can report where it happened.
 func Execute(actions []Action, state *State) error {
+	for _, action := range actions {
+		if err := executeActions([]Action{action}, state); err != nil {
+			return locate(err, action, state)
+		}
+		if state.Returned {
+			return nil
+		}
+	}
+	return nil
+}
+
+func executeActions(actions []Action, state *State) error {
 	if state.Headers == nil {
 		state.Headers = make(http.Header)
 	}
@@ -2553,6 +2580,7 @@ func stateEnv(state *State) *expr.Env {
 		Response:              state.Response,
 		Variables:             state.Variables,
 		LastError:             state.LastError,
+		LastErrorLocation:     errorLocation(state.LastError),
 		Api:                   state.Api,
 		Operation:             state.Operation,
 		Product:               state.Product,
