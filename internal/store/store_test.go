@@ -437,6 +437,10 @@ func TestClosedStoreErrors(t *testing.T) {
 		"get API schema":      func() error { _, err := st.GetAPISchema("schema"); return err },
 		"list API schemas":    func() error { _, err := st.ListAPISchemas("api"); return err },
 		"delete API schema":   func() error { return st.DeleteAPISchema("schema") },
+		"upsert workspace":    func() error { _, err := st.UpsertWorkspace(model.Workspace{}); return err },
+		"get workspace":       func() error { _, err := st.GetWorkspace("ws"); return err },
+		"list workspaces":     func() error { _, err := st.ListWorkspaces("service"); return err },
+		"delete workspace":    func() error { return st.DeleteWorkspace("ws") },
 		"upsert API resolver": func() error { _, err := st.UpsertAPIResolver(model.APIResolver{}); return err },
 		"get API resolver":    func() error { _, err := st.GetAPIResolver("resolver"); return err },
 		"list API resolvers":  func() error { _, err := st.ListAPIResolvers("api"); return err },
@@ -633,6 +637,12 @@ func TestScanFunctionsRejectMalformedRows(t *testing.T) {
 			 CREATE TABLE api_schema_documents (schema_id, document_json)`,
 			`INSERT INTO api_schemas VALUES ('id', 'api', NULL, '', '{}', '')`,
 			func(db *sql.DB) error { _, err := (&Store{db: db}).ListAPISchemas("api"); return err },
+		},
+		{
+			"workspaces",
+			`CREATE TABLE workspaces (id, service_id, name, display_name, description, document_json, etag)`,
+			`INSERT INTO workspaces VALUES ('id', 'svc', NULL, '', '', '{}', '')`,
+			func(db *sql.DB) error { _, err := (&Store{db: db}).ListWorkspaces("svc"); return err },
 		},
 		{
 			"API resolvers",

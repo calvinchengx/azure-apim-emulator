@@ -95,6 +95,32 @@ func (h *Handler) dispatch(w http.ResponseWriter, r *http.Request, parsed route)
 		h.service(w, r, parsed)
 		return
 	}
+	// A workspace segment is peeled off and recorded as the SCOPE, then
+	// dispatch continues on the remaining path. That is the whole mechanism:
+	// every family below serves workspace-scoped requests without knowing
+	// workspaces exist, because the only thing that changed is the parent ID
+	// their resources hang off.
+	if equal(parsed.Tail[0], "workspaces") && parsed.Workspace == "" {
+		if len(parsed.Tail) == 1 {
+			h.workspaceCollection(w, r, parsed)
+			return
+		}
+		if len(parsed.Tail) == 2 {
+			h.workspaceResource(w, r, parsed, model.Workspace{ServiceID: parsed.service().ID(), Name: parsed.Tail[1]})
+			return
+		}
+		nested := parsed
+		nested.Workspace, nested.Tail = parsed.Tail[1], parsed.Tail[2:]
+		// The workspace must exist before anything can be parented to it,
+		// otherwise a typo in the path would silently create resources in a
+		// scope nobody can address.
+		if err := h.requireScope(nested); err != nil {
+			h.storeError(w, err, nested.scopeID())
+			return
+		}
+		h.dispatch(w, r, nested)
+		return
+	}
 	switch parsed.Tail[0] {
 	case "apis":
 		h.api(w, r, parsed)
@@ -127,19 +153,25 @@ func (h *Handler) dispatch(w http.ResponseWriter, r *http.Request, parsed route)
 	case "loggers":
 		h.logger(w, r, parsed)
 	case "diagnostics":
-		h.diagnostic(w, r, parsed, model.Service{SubscriptionID: parsed.SubscriptionID, ResourceGroup: parsed.ResourceGroup, Name: parsed.ServiceName}.ID(), 1)
+		h.diagnostic(w, r, parsed, parsed.scopeID(), 1)
 	case "products":
 		h.product(w, r, parsed)
 	case "subscriptions":
 		h.subscription(w, r, parsed)
 	case "policies":
-		service := model.Service{SubscriptionID: parsed.SubscriptionID, ResourceGroup: parsed.ResourceGroup, Name: parsed.ServiceName}
 		if len(parsed.Tail) == 2 && equal(parsed.Tail[1], "policy") {
-			if _, err := h.Store.GetService(service.ID()); err != nil {
-				h.storeError(w, err, service.ID())
+			// The parent must exist before a policy can hang off it, and which
+			// parent that is depends on the scope: a workspace policy belongs
+			// to the workspace, not to the service.
+			if err := h.requireScope(parsed); err != nil {
+				h.storeError(w, err, parsed.scopeID())
 				return
 			}
-			h.policyResource(w, r, service.ID(), "Microsoft.ApiManagement/service/policies")
+			armType := "Microsoft.ApiManagement/service/policies"
+			if parsed.Workspace != "" {
+				armType = "Microsoft.ApiManagement/service/workspaces/policies"
+			}
+			h.policyResource(w, r, parsed.scopeID(), armType)
 			return
 		}
 		writeError(w, http.StatusNotFound, "ResourceNotFound", "The requested APIM resource is not implemented in the P0 surface.", r.URL.Path)
@@ -150,7 +182,28 @@ func (h *Handler) dispatch(w http.ResponseWriter, r *http.Request, parsed route)
 
 type route struct {
 	SubscriptionID, ResourceGroup, ServiceName string
-	Tail                                       []string
+	// Workspace is set when the path carried a `/workspaces/{id}` segment. It
+	// is a SCOPE, not a resource kind: every family Azure exposes under a
+	// workspace is the same family it exposes under the service, parented
+	// differently. Modelling it as a scope is what lets one set of handlers
+	// serve both, and the store's exact parent matching is what keeps the two
+	// sets of resources from leaking into each other's listings.
+	Workspace string
+	Tail      []string
+}
+
+// service is the ARM service this route addresses.
+func (rt route) service() model.Service {
+	return model.Service{SubscriptionID: rt.SubscriptionID, ResourceGroup: rt.ResourceGroup, Name: rt.ServiceName}
+}
+
+// scopeID is the parent every resource under this route belongs to: the
+// service, or a workspace within it.
+func (rt route) scopeID() string {
+	if rt.Workspace == "" {
+		return rt.service().ID()
+	}
+	return rt.service().ID() + "/workspaces/" + rt.Workspace
 }
 
 type servicePayload struct {
@@ -326,15 +379,15 @@ func (h *Handler) listServices(w http.ResponseWriter, r *http.Request, rt route)
 }
 
 func (h *Handler) api(w http.ResponseWriter, r *http.Request, rt route) {
-	service := model.Service{SubscriptionID: rt.SubscriptionID, ResourceGroup: rt.ResourceGroup, Name: rt.ServiceName}
+	scope := rt.scopeID()
 	if len(rt.Tail) == 1 {
 		if r.Method != http.MethodGet {
 			methodNotAllowed(w)
 			return
 		}
-		values, err := h.Store.ListAPIs(service.ID())
+		values, err := h.Store.ListAPIs(scope)
 		if err != nil {
-			h.storeError(w, err, service.ID())
+			h.storeError(w, err, scope)
 			return
 		}
 		resources := make([]map[string]any, 0, len(values))
@@ -344,7 +397,7 @@ func (h *Handler) api(w http.ResponseWriter, r *http.Request, rt route) {
 		writeJSON(w, http.StatusOK, map[string]any{"value": resources})
 		return
 	}
-	api := model.API{ServiceID: service.ID(), Name: rt.Tail[1]}
+	api := model.API{ServiceID: scope, Name: rt.Tail[1]}
 	if len(rt.Tail) == 2 {
 		h.apiResource(w, r, api)
 		return
@@ -395,7 +448,7 @@ func (h *Handler) api(w http.ResponseWriter, r *http.Request, rt route) {
 			methodNotAllowed(w)
 			return
 		}
-		values, err := h.Store.ListAPIRevisions(service.ID(), api.Name)
+		values, err := h.Store.ListAPIRevisions(scope, api.Name)
 		if err != nil {
 			h.storeError(w, err, api.ID())
 			return
@@ -441,7 +494,7 @@ func (h *Handler) api(w http.ResponseWriter, r *http.Request, rt route) {
 			h.storeError(w, err, api.ID())
 			return
 		}
-		h.resourceTag(w, r, service.ID(), api.ID(), rt.Tail[3])
+		h.resourceTag(w, r, scope, api.ID(), rt.Tail[3])
 		return
 	}
 	if len(rt.Tail) == 5 && equal(rt.Tail[2], "operations") && equal(rt.Tail[4], "tags") {
@@ -459,7 +512,7 @@ func (h *Handler) api(w http.ResponseWriter, r *http.Request, rt route) {
 			h.storeError(w, err, operationID)
 			return
 		}
-		h.resourceTag(w, r, service.ID(), operationID, rt.Tail[5])
+		h.resourceTag(w, r, scope, operationID, rt.Tail[5])
 		return
 	}
 	if len(rt.Tail) == 4 && equal(rt.Tail[2], "releases") {
@@ -492,15 +545,15 @@ func (h *Handler) api(w http.ResponseWriter, r *http.Request, rt route) {
 }
 
 func (h *Handler) tag(w http.ResponseWriter, r *http.Request, rt route) {
-	service := model.Service{SubscriptionID: rt.SubscriptionID, ResourceGroup: rt.ResourceGroup, Name: rt.ServiceName}
+	scope := rt.scopeID()
 	if len(rt.Tail) == 1 {
 		if r.Method != http.MethodGet {
 			methodNotAllowed(w)
 			return
 		}
-		values, err := h.Store.ListTags(service.ID())
+		values, err := h.Store.ListTags(scope)
 		if err != nil {
-			h.storeError(w, err, service.ID())
+			h.storeError(w, err, scope)
 			return
 		}
 		resources := make([]map[string]any, 0, len(values))
@@ -514,7 +567,7 @@ func (h *Handler) tag(w http.ResponseWriter, r *http.Request, rt route) {
 		writeError(w, http.StatusNotFound, "ResourceNotFound", "The requested tag resource was not found.", r.URL.Path)
 		return
 	}
-	value := model.Tag{ServiceID: service.ID(), Name: rt.Tail[1]}
+	value := model.Tag{ServiceID: scope, Name: rt.Tail[1]}
 	switch r.Method {
 	case http.MethodGet, http.MethodHead:
 		got, err := h.Store.GetTag(value.ID())
@@ -652,15 +705,15 @@ func (h *Handler) resourceTag(w http.ResponseWriter, r *http.Request, serviceID,
 }
 
 func (h *Handler) group(w http.ResponseWriter, r *http.Request, rt route) {
-	service := model.Service{SubscriptionID: rt.SubscriptionID, ResourceGroup: rt.ResourceGroup, Name: rt.ServiceName}
+	scope := rt.scopeID()
 	if len(rt.Tail) == 1 {
 		if r.Method != http.MethodGet {
 			methodNotAllowed(w)
 			return
 		}
-		values, err := h.Store.ListGroups(service.ID())
+		values, err := h.Store.ListGroups(scope)
 		if err != nil {
-			h.storeError(w, err, service.ID())
+			h.storeError(w, err, scope)
 			return
 		}
 		resources := make([]map[string]any, 0, len(values))
@@ -671,7 +724,7 @@ func (h *Handler) group(w http.ResponseWriter, r *http.Request, rt route) {
 		return
 	}
 	if len(rt.Tail) >= 3 && equal(rt.Tail[2], "users") {
-		group := model.Group{ServiceID: service.ID(), Name: rt.Tail[1]}
+		group := model.Group{ServiceID: scope, Name: rt.Tail[1]}
 		if _, err := h.Store.GetGroup(group.ID()); err != nil {
 			h.storeError(w, err, group.ID())
 			return
@@ -694,7 +747,7 @@ func (h *Handler) group(w http.ResponseWriter, r *http.Request, rt route) {
 			return
 		}
 		if len(rt.Tail) == 4 {
-			h.groupUser(w, r, group, model.User{ServiceID: service.ID(), Name: rt.Tail[3]})
+			h.groupUser(w, r, group, model.User{ServiceID: scope, Name: rt.Tail[3]})
 			return
 		}
 	}
@@ -702,7 +755,7 @@ func (h *Handler) group(w http.ResponseWriter, r *http.Request, rt route) {
 		writeError(w, http.StatusNotFound, "ResourceNotFound", "The requested group resource was not found.", r.URL.Path)
 		return
 	}
-	value := model.Group{ServiceID: service.ID(), Name: rt.Tail[1], Type: "custom"}
+	value := model.Group{ServiceID: scope, Name: rt.Tail[1], Type: "custom"}
 	switch r.Method {
 	case http.MethodGet, http.MethodHead:
 		got, err := h.Store.GetGroup(value.ID())
@@ -856,15 +909,15 @@ func (h *Handler) groupUser(w http.ResponseWriter, r *http.Request, group model.
 }
 
 func (h *Handler) user(w http.ResponseWriter, r *http.Request, rt route) {
-	service := model.Service{SubscriptionID: rt.SubscriptionID, ResourceGroup: rt.ResourceGroup, Name: rt.ServiceName}
+	scope := rt.scopeID()
 	if len(rt.Tail) == 1 {
 		if r.Method != http.MethodGet {
 			methodNotAllowed(w)
 			return
 		}
-		values, err := h.Store.ListUsers(service.ID())
+		values, err := h.Store.ListUsers(scope)
 		if err != nil {
-			h.storeError(w, err, service.ID())
+			h.storeError(w, err, scope)
 			return
 		}
 		resources := make([]map[string]any, 0, len(values))
@@ -874,7 +927,7 @@ func (h *Handler) user(w http.ResponseWriter, r *http.Request, rt route) {
 		writeJSON(w, http.StatusOK, map[string]any{"value": resources, "count": len(resources)})
 		return
 	}
-	value := model.User{ServiceID: service.ID(), Name: rt.Tail[1], State: "active"}
+	value := model.User{ServiceID: scope, Name: rt.Tail[1], State: "active"}
 	if len(rt.Tail) == 3 && equal(rt.Tail[2], "groups") {
 		if _, err := h.Store.GetUser(value.ID()); err != nil {
 			h.storeError(w, err, value.ID())
@@ -1063,15 +1116,15 @@ func userToken(user model.User, keyType string, expiry time.Time) string {
 }
 
 func (h *Handler) policyFragment(w http.ResponseWriter, r *http.Request, rt route) {
-	service := model.Service{SubscriptionID: rt.SubscriptionID, ResourceGroup: rt.ResourceGroup, Name: rt.ServiceName}
+	scope := rt.scopeID()
 	if len(rt.Tail) == 1 {
 		if r.Method != http.MethodGet {
 			methodNotAllowed(w)
 			return
 		}
-		values, err := h.Store.ListPolicyFragments(service.ID())
+		values, err := h.Store.ListPolicyFragments(scope)
 		if err != nil {
-			h.storeError(w, err, service.ID())
+			h.storeError(w, err, scope)
 			return
 		}
 		resources := make([]map[string]any, 0, len(values))
@@ -1081,7 +1134,7 @@ func (h *Handler) policyFragment(w http.ResponseWriter, r *http.Request, rt rout
 		writeJSON(w, http.StatusOK, map[string]any{"value": resources, "count": len(resources)})
 		return
 	}
-	value := model.PolicyFragment{ServiceID: service.ID(), Name: rt.Tail[1], Format: "xml", ProvisioningState: "Succeeded"}
+	value := model.PolicyFragment{ServiceID: scope, Name: rt.Tail[1], Format: "xml", ProvisioningState: "Succeeded"}
 	if len(rt.Tail) == 3 && (equal(rt.Tail[2], "references") || equal(rt.Tail[2], "listReferences")) {
 		method := http.MethodGet
 		if equal(rt.Tail[2], "listReferences") {
@@ -1095,7 +1148,7 @@ func (h *Handler) policyFragment(w http.ResponseWriter, r *http.Request, rt rout
 			h.storeError(w, err, value.ID())
 			return
 		}
-		references, err := h.Store.ListPolicyFragmentReferences(service.ID(), value.Name)
+		references, err := h.Store.ListPolicyFragmentReferences(scope, value.Name)
 		if err != nil {
 			h.storeError(w, err, value.ID())
 			return
@@ -1171,7 +1224,7 @@ func (h *Handler) policyFragment(w http.ResponseWriter, r *http.Request, rt rout
 		}
 		writeResource(w, status, policyFragmentWire(got, ""), got.ETag)
 	case http.MethodDelete:
-		references, err := h.Store.ListPolicyFragmentReferences(service.ID(), value.Name)
+		references, err := h.Store.ListPolicyFragmentReferences(scope, value.Name)
 		if err != nil {
 			h.storeError(w, err, value.ID())
 			return
@@ -1747,15 +1800,15 @@ func clearNullAPIProperties(api *model.API, patch map[string]any) {
 }
 
 func (h *Handler) apiVersionSet(w http.ResponseWriter, r *http.Request, rt route) {
-	service := model.Service{SubscriptionID: rt.SubscriptionID, ResourceGroup: rt.ResourceGroup, Name: rt.ServiceName}
+	scope := rt.scopeID()
 	if len(rt.Tail) == 1 {
 		if r.Method != http.MethodGet {
 			methodNotAllowed(w)
 			return
 		}
-		values, err := h.Store.ListAPIVersionSets(service.ID())
+		values, err := h.Store.ListAPIVersionSets(scope)
 		if err != nil {
-			h.storeError(w, err, service.ID())
+			h.storeError(w, err, scope)
 			return
 		}
 		resources := make([]map[string]any, 0, len(values))
@@ -1769,7 +1822,7 @@ func (h *Handler) apiVersionSet(w http.ResponseWriter, r *http.Request, rt route
 		writeError(w, http.StatusNotFound, "ResourceNotFound", "The requested API version set resource was not found.", r.URL.Path)
 		return
 	}
-	value := model.APIVersionSet{ServiceID: service.ID(), Name: rt.Tail[1]}
+	value := model.APIVersionSet{ServiceID: scope, Name: rt.Tail[1]}
 	switch r.Method {
 	case http.MethodGet, http.MethodHead:
 		got, err := h.Store.GetAPIVersionSet(value.ID())
@@ -1904,15 +1957,15 @@ type namedValuePayload struct {
 }
 
 func (h *Handler) namedValue(w http.ResponseWriter, r *http.Request, rt route) {
-	service := model.Service{SubscriptionID: rt.SubscriptionID, ResourceGroup: rt.ResourceGroup, Name: rt.ServiceName}
+	scope := rt.scopeID()
 	if len(rt.Tail) == 1 {
 		if r.Method != http.MethodGet {
 			methodNotAllowed(w)
 			return
 		}
-		values, err := h.Store.ListNamedValues(service.ID())
+		values, err := h.Store.ListNamedValues(scope)
 		if err != nil {
-			h.storeError(w, err, service.ID())
+			h.storeError(w, err, scope)
 			return
 		}
 		resources := make([]map[string]any, 0, len(values))
@@ -1926,7 +1979,7 @@ func (h *Handler) namedValue(w http.ResponseWriter, r *http.Request, rt route) {
 		writeError(w, http.StatusNotFound, "ResourceNotFound", "The requested named value resource was not found.", r.URL.Path)
 		return
 	}
-	value := model.NamedValue{ServiceID: service.ID(), Name: rt.Tail[1]}
+	value := model.NamedValue{ServiceID: scope, Name: rt.Tail[1]}
 	if len(rt.Tail) == 3 {
 		h.namedValueAction(w, r, value, rt.Tail[2])
 		return
@@ -2113,15 +2166,15 @@ type backendPayload struct {
 }
 
 func (h *Handler) backend(w http.ResponseWriter, r *http.Request, rt route) {
-	service := model.Service{SubscriptionID: rt.SubscriptionID, ResourceGroup: rt.ResourceGroup, Name: rt.ServiceName}
+	scope := rt.scopeID()
 	if len(rt.Tail) == 1 {
 		if r.Method != http.MethodGet {
 			methodNotAllowed(w)
 			return
 		}
-		values, err := h.Store.ListBackends(service.ID())
+		values, err := h.Store.ListBackends(scope)
 		if err != nil {
-			h.storeError(w, err, service.ID())
+			h.storeError(w, err, scope)
 			return
 		}
 		resources := make([]map[string]any, 0, len(values))
@@ -2135,7 +2188,7 @@ func (h *Handler) backend(w http.ResponseWriter, r *http.Request, rt route) {
 		writeError(w, http.StatusNotFound, "ResourceNotFound", "The requested backend resource was not found.", r.URL.Path)
 		return
 	}
-	value := model.Backend{ServiceID: service.ID(), Name: rt.Tail[1]}
+	value := model.Backend{ServiceID: scope, Name: rt.Tail[1]}
 	if len(rt.Tail) == 3 {
 		if rt.Tail[2] != "reconnect" {
 			writeError(w, http.StatusNotFound, "ResourceNotFound", "The requested backend action was not found.", r.URL.Path)
@@ -2278,15 +2331,15 @@ type cachePayload struct {
 }
 
 func (h *Handler) cache(w http.ResponseWriter, r *http.Request, rt route) {
-	service := model.Service{SubscriptionID: rt.SubscriptionID, ResourceGroup: rt.ResourceGroup, Name: rt.ServiceName}
+	scope := rt.scopeID()
 	if len(rt.Tail) == 1 {
 		if r.Method != http.MethodGet {
 			methodNotAllowed(w)
 			return
 		}
-		values, err := h.Store.ListCaches(service.ID())
+		values, err := h.Store.ListCaches(scope)
 		if err != nil {
-			h.storeError(w, err, service.ID())
+			h.storeError(w, err, scope)
 			return
 		}
 		resources := make([]map[string]any, 0, len(values))
@@ -2300,7 +2353,7 @@ func (h *Handler) cache(w http.ResponseWriter, r *http.Request, rt route) {
 		writeError(w, http.StatusNotFound, "ResourceNotFound", "The requested cache resource was not found.", r.URL.Path)
 		return
 	}
-	value := model.Cache{ServiceID: service.ID(), Name: rt.Tail[1]}
+	value := model.Cache{ServiceID: scope, Name: rt.Tail[1]}
 	switch r.Method {
 	case http.MethodGet, http.MethodHead:
 		got, err := h.Store.GetCache(value.ID())
@@ -2466,15 +2519,15 @@ func canonicalizeIdentityProviderName(name string) (string, bool) {
 }
 
 func (h *Handler) identityProvider(w http.ResponseWriter, r *http.Request, rt route) {
-	service := model.Service{SubscriptionID: rt.SubscriptionID, ResourceGroup: rt.ResourceGroup, Name: rt.ServiceName}
+	scope := rt.scopeID()
 	if len(rt.Tail) == 1 {
 		if r.Method != http.MethodGet {
 			methodNotAllowed(w)
 			return
 		}
-		values, err := h.Store.ListIdentityProviders(service.ID())
+		values, err := h.Store.ListIdentityProviders(scope)
 		if err != nil {
-			h.storeError(w, err, service.ID())
+			h.storeError(w, err, scope)
 			return
 		}
 		resources := make([]map[string]any, 0, len(values))
@@ -2493,7 +2546,7 @@ func (h *Handler) identityProvider(w http.ResponseWriter, r *http.Request, rt ro
 		writeError(w, http.StatusBadRequest, "ValidationError", "identityProviderName must be facebook, google, microsoft, twitter, aad, or aadB2C.", "identityProviderName")
 		return
 	}
-	value := model.IdentityProvider{ServiceID: service.ID(), Name: name}
+	value := model.IdentityProvider{ServiceID: scope, Name: name}
 	if len(rt.Tail) == 3 {
 		h.identityProviderAction(w, r, value, rt.Tail[2])
 		return
@@ -2691,15 +2744,15 @@ type openIDConnectProviderPayload struct {
 }
 
 func (h *Handler) openIDConnectProvider(w http.ResponseWriter, r *http.Request, rt route) {
-	service := model.Service{SubscriptionID: rt.SubscriptionID, ResourceGroup: rt.ResourceGroup, Name: rt.ServiceName}
+	scope := rt.scopeID()
 	if len(rt.Tail) == 1 {
 		if r.Method != http.MethodGet {
 			methodNotAllowed(w)
 			return
 		}
-		values, err := h.Store.ListOpenIDConnectProviders(service.ID())
+		values, err := h.Store.ListOpenIDConnectProviders(scope)
 		if err != nil {
-			h.storeError(w, err, service.ID())
+			h.storeError(w, err, scope)
 			return
 		}
 		resources := make([]map[string]any, 0, len(values))
@@ -2713,7 +2766,7 @@ func (h *Handler) openIDConnectProvider(w http.ResponseWriter, r *http.Request, 
 		writeError(w, http.StatusNotFound, "ResourceNotFound", "The requested OpenID Connect provider resource was not found.", r.URL.Path)
 		return
 	}
-	value := model.OpenIDConnectProvider{ServiceID: service.ID(), Name: rt.Tail[1]}
+	value := model.OpenIDConnectProvider{ServiceID: scope, Name: rt.Tail[1]}
 	if len(rt.Tail) == 3 {
 		h.openIDConnectProviderAction(w, r, value, rt.Tail[2])
 		return
@@ -2891,15 +2944,15 @@ var authorizationServerGrantTypes = map[string]bool{
 }
 
 func (h *Handler) authorizationServer(w http.ResponseWriter, r *http.Request, rt route) {
-	service := model.Service{SubscriptionID: rt.SubscriptionID, ResourceGroup: rt.ResourceGroup, Name: rt.ServiceName}
+	scope := rt.scopeID()
 	if len(rt.Tail) == 1 {
 		if r.Method != http.MethodGet {
 			methodNotAllowed(w)
 			return
 		}
-		values, err := h.Store.ListAuthorizationServers(service.ID())
+		values, err := h.Store.ListAuthorizationServers(scope)
 		if err != nil {
-			h.storeError(w, err, service.ID())
+			h.storeError(w, err, scope)
 			return
 		}
 		resources := make([]map[string]any, 0, len(values))
@@ -2913,7 +2966,7 @@ func (h *Handler) authorizationServer(w http.ResponseWriter, r *http.Request, rt
 		writeError(w, http.StatusNotFound, "ResourceNotFound", "The requested authorization server resource was not found.", r.URL.Path)
 		return
 	}
-	value := model.AuthorizationServer{ServiceID: service.ID(), Name: rt.Tail[1]}
+	value := model.AuthorizationServer{ServiceID: scope, Name: rt.Tail[1]}
 	if len(rt.Tail) == 3 {
 		h.authorizationServerAction(w, r, value, rt.Tail[2])
 		return
@@ -3156,15 +3209,15 @@ type documentationPayload struct {
 }
 
 func (h *Handler) documentation(w http.ResponseWriter, r *http.Request, rt route) {
-	service := model.Service{SubscriptionID: rt.SubscriptionID, ResourceGroup: rt.ResourceGroup, Name: rt.ServiceName}
+	scope := rt.scopeID()
 	if len(rt.Tail) == 1 {
 		if r.Method != http.MethodGet {
 			methodNotAllowed(w)
 			return
 		}
-		values, err := h.Store.ListDocumentations(service.ID())
+		values, err := h.Store.ListDocumentations(scope)
 		if err != nil {
-			h.storeError(w, err, service.ID())
+			h.storeError(w, err, scope)
 			return
 		}
 		resources := make([]map[string]any, 0, len(values))
@@ -3182,7 +3235,7 @@ func (h *Handler) documentation(w http.ResponseWriter, r *http.Request, rt route
 		writeError(w, http.StatusBadRequest, "ValidationError", "documentationId must be 1-256 characters and must not contain * # & + : < > ?", "documentationId")
 		return
 	}
-	value := model.Documentation{ServiceID: service.ID(), Name: rt.Tail[1]}
+	value := model.Documentation{ServiceID: scope, Name: rt.Tail[1]}
 	switch r.Method {
 	case http.MethodGet, http.MethodHead:
 		got, err := h.Store.GetDocumentation(value.ID())
@@ -3291,15 +3344,15 @@ type loggerPayload struct {
 }
 
 func (h *Handler) logger(w http.ResponseWriter, r *http.Request, rt route) {
-	service := model.Service{SubscriptionID: rt.SubscriptionID, ResourceGroup: rt.ResourceGroup, Name: rt.ServiceName}
+	scope := rt.scopeID()
 	if len(rt.Tail) == 1 {
 		if r.Method != http.MethodGet {
 			methodNotAllowed(w)
 			return
 		}
-		values, err := h.Store.ListLoggers(service.ID())
+		values, err := h.Store.ListLoggers(scope)
 		if err != nil {
-			h.storeError(w, err, service.ID())
+			h.storeError(w, err, scope)
 			return
 		}
 		resources := make([]map[string]any, 0, len(values))
@@ -3313,7 +3366,7 @@ func (h *Handler) logger(w http.ResponseWriter, r *http.Request, rt route) {
 		writeError(w, http.StatusNotFound, "ResourceNotFound", "The requested logger resource was not found.", r.URL.Path)
 		return
 	}
-	value := model.Logger{ServiceID: service.ID(), Name: rt.Tail[1], IsBuffered: true}
+	value := model.Logger{ServiceID: scope, Name: rt.Tail[1], IsBuffered: true}
 	switch r.Method {
 	case http.MethodGet, http.MethodHead:
 		got, err := h.Store.GetLogger(value.ID())
@@ -3597,15 +3650,15 @@ type certificatePayload struct {
 }
 
 func (h *Handler) certificate(w http.ResponseWriter, r *http.Request, rt route) {
-	service := model.Service{SubscriptionID: rt.SubscriptionID, ResourceGroup: rt.ResourceGroup, Name: rt.ServiceName}
+	scope := rt.scopeID()
 	if len(rt.Tail) == 1 {
 		if r.Method != http.MethodGet {
 			methodNotAllowed(w)
 			return
 		}
-		values, err := h.Store.ListCertificates(service.ID())
+		values, err := h.Store.ListCertificates(scope)
 		if err != nil {
-			h.storeError(w, err, service.ID())
+			h.storeError(w, err, scope)
 			return
 		}
 		resources := make([]map[string]any, 0, len(values))
@@ -3619,7 +3672,7 @@ func (h *Handler) certificate(w http.ResponseWriter, r *http.Request, rt route) 
 		writeError(w, http.StatusNotFound, "ResourceNotFound", "The requested certificate resource was not found.", r.URL.Path)
 		return
 	}
-	value := model.Certificate{ServiceID: service.ID(), Name: rt.Tail[1]}
+	value := model.Certificate{ServiceID: scope, Name: rt.Tail[1]}
 	if len(rt.Tail) == 3 {
 		if rt.Tail[2] != "refreshSecret" {
 			writeError(w, http.StatusNotFound, "ResourceNotFound", "The requested certificate action was not found.", r.URL.Path)
@@ -3941,15 +3994,15 @@ func cleanResourceDocument(document map[string]any) {
 }
 
 func (h *Handler) product(w http.ResponseWriter, r *http.Request, rt route) {
-	service := model.Service{SubscriptionID: rt.SubscriptionID, ResourceGroup: rt.ResourceGroup, Name: rt.ServiceName}
+	scope := rt.scopeID()
 	if len(rt.Tail) == 1 {
 		if r.Method != http.MethodGet {
 			methodNotAllowed(w)
 			return
 		}
-		values, err := h.Store.ListProducts(service.ID())
+		values, err := h.Store.ListProducts(scope)
 		if err != nil {
-			h.storeError(w, err, service.ID())
+			h.storeError(w, err, scope)
 			return
 		}
 		resources := make([]map[string]any, 0, len(values))
@@ -3959,7 +4012,7 @@ func (h *Handler) product(w http.ResponseWriter, r *http.Request, rt route) {
 		writeJSON(w, http.StatusOK, map[string]any{"value": resources})
 		return
 	}
-	product := model.Product{ServiceID: service.ID(), Name: rt.Tail[1]}
+	product := model.Product{ServiceID: scope, Name: rt.Tail[1]}
 	if len(rt.Tail) == 2 {
 		h.productResource(w, r, product)
 		return
@@ -4016,7 +4069,7 @@ func (h *Handler) product(w http.ResponseWriter, r *http.Request, rt route) {
 		return
 	}
 	if len(rt.Tail) == 4 && equal(rt.Tail[2], "apis") {
-		apiID := service.ID() + "/apis/" + rt.Tail[3]
+		apiID := scope + "/apis/" + rt.Tail[3]
 		switch r.Method {
 		case http.MethodPut:
 			if err := h.Store.LinkProductAPI(product.ID(), apiID); err != nil {
@@ -4048,7 +4101,7 @@ func (h *Handler) product(w http.ResponseWriter, r *http.Request, rt route) {
 			h.storeError(w, err, product.ID())
 			return
 		}
-		h.resourceTag(w, r, service.ID(), product.ID(), rt.Tail[3])
+		h.resourceTag(w, r, scope, product.ID(), rt.Tail[3])
 		return
 	}
 	if len(rt.Tail) == 4 && equal(rt.Tail[2], "groups") {
@@ -4056,7 +4109,7 @@ func (h *Handler) product(w http.ResponseWriter, r *http.Request, rt route) {
 			h.storeError(w, err, product.ID())
 			return
 		}
-		group := model.Group{ServiceID: service.ID(), Name: rt.Tail[3]}
+		group := model.Group{ServiceID: scope, Name: rt.Tail[3]}
 		got, err := h.Store.GetGroup(group.ID())
 		if err != nil {
 			h.storeError(w, err, group.ID())
@@ -4206,15 +4259,15 @@ func applyProductPayload(product *model.Product, body productPayload) {
 }
 
 func (h *Handler) subscription(w http.ResponseWriter, r *http.Request, rt route) {
-	service := model.Service{SubscriptionID: rt.SubscriptionID, ResourceGroup: rt.ResourceGroup, Name: rt.ServiceName}
+	scope := rt.scopeID()
 	if len(rt.Tail) == 1 {
 		if r.Method != http.MethodGet {
 			methodNotAllowed(w)
 			return
 		}
-		values, err := h.Store.ListSubscriptions(service.ID())
+		values, err := h.Store.ListSubscriptions(scope)
 		if err != nil {
-			h.storeError(w, err, service.ID())
+			h.storeError(w, err, scope)
 			return
 		}
 		resources := make([]map[string]any, 0, len(values))
@@ -4224,7 +4277,7 @@ func (h *Handler) subscription(w http.ResponseWriter, r *http.Request, rt route)
 		writeJSON(w, http.StatusOK, map[string]any{"value": resources})
 		return
 	}
-	value := model.Subscription{ServiceID: service.ID(), Name: rt.Tail[1]}
+	value := model.Subscription{ServiceID: scope, Name: rt.Tail[1]}
 	if len(rt.Tail) == 2 {
 		h.subscriptionResource(w, r, value)
 		return
@@ -5086,4 +5139,15 @@ func wsdlOperations(schema *soapc.Schema) []model.Operation {
 		})
 	}
 	return operations
+}
+
+// requireScope reports whether the route's parent exists: the workspace when
+// the path named one, otherwise the service.
+func (h *Handler) requireScope(rt route) error {
+	if rt.Workspace != "" {
+		_, err := h.Store.GetWorkspace(rt.scopeID())
+		return err
+	}
+	_, err := h.Store.GetService(rt.service().ID())
+	return err
 }

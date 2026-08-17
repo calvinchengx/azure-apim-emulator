@@ -52,6 +52,10 @@ func Open(dataDir string, ck *clock.Clock) (*Store, error) {
 		db.Close()
 		return nil, err
 	}
+	if err := s.adoptScopes(); err != nil {
+		db.Close()
+		return nil, err
+	}
 	return s, nil
 }
 
@@ -67,12 +71,24 @@ CREATE TABLE IF NOT EXISTS services (
 	  sku_capacity INTEGER NOT NULL, publisher_name TEXT NOT NULL, publisher_email TEXT NOT NULL,
 	  provisioning_state TEXT NOT NULL, etag TEXT NOT NULL
 );
+-- A scope is the parent of every resource: the service itself, or a workspace
+-- inside it. Resource tables reference this rather than services(id), because a
+-- workspace-scoped API's parent is the workspace and the two must be
+-- indistinguishable to every family that does not care which it is.
+--
+-- service_id is the owning service for BOTH kinds, so deleting a service
+-- cascades to its own scope and to each of its workspaces', and from there to
+-- every resource in any of them.
+CREATE TABLE IF NOT EXISTS scopes (
+  id TEXT PRIMARY KEY,
+  service_id TEXT NOT NULL REFERENCES services(id) ON DELETE CASCADE
+);
 CREATE TABLE IF NOT EXISTS resource_documents (
   id TEXT PRIMARY KEY REFERENCES services(id) ON DELETE CASCADE,
   document_json TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS apis (
-  id TEXT PRIMARY KEY, service_id TEXT NOT NULL REFERENCES services(id) ON DELETE CASCADE,
+  id TEXT PRIMARY KEY, service_id TEXT NOT NULL REFERENCES scopes(id) ON DELETE CASCADE,
   name TEXT NOT NULL, display_name TEXT NOT NULL, path TEXT NOT NULL,
   service_url TEXT NOT NULL, protocols_json TEXT NOT NULL,
   subscription_required INTEGER NOT NULL, etag TEXT NOT NULL
@@ -91,7 +107,7 @@ CREATE TABLE IF NOT EXISTS api_definitions (
   format TEXT NOT NULL, value TEXT NOT NULL, source_url TEXT NOT NULL, etag TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS api_version_sets (
-  id TEXT PRIMARY KEY, service_id TEXT NOT NULL REFERENCES services(id) ON DELETE CASCADE,
+  id TEXT PRIMARY KEY, service_id TEXT NOT NULL REFERENCES scopes(id) ON DELETE CASCADE,
   name TEXT NOT NULL, display_name TEXT NOT NULL, versioning_scheme TEXT NOT NULL,
   version_header_name TEXT NOT NULL, version_query_name TEXT NOT NULL,
   description TEXT NOT NULL, etag TEXT NOT NULL
@@ -105,7 +121,7 @@ CREATE TABLE IF NOT EXISTS api_version_metadata (
   version TEXT NOT NULL, version_set_id TEXT REFERENCES api_version_sets(id) ON DELETE RESTRICT
 );
 CREATE TABLE IF NOT EXISTS named_values (
-  id TEXT PRIMARY KEY, service_id TEXT NOT NULL REFERENCES services(id) ON DELETE CASCADE,
+  id TEXT PRIMARY KEY, service_id TEXT NOT NULL REFERENCES scopes(id) ON DELETE CASCADE,
   name TEXT NOT NULL, display_name TEXT NOT NULL, value TEXT NOT NULL, tags_json TEXT NOT NULL,
   secret INTEGER NOT NULL, key_vault_secret_id TEXT NOT NULL,
   key_vault_identity_id TEXT NOT NULL, etag TEXT NOT NULL
@@ -117,12 +133,12 @@ CREATE TABLE IF NOT EXISTS named_value_documents (
 CREATE UNIQUE INDEX IF NOT EXISTS ux_named_values_service_display_name
   ON named_values(service_id, display_name COLLATE NOCASE);
 CREATE TABLE IF NOT EXISTS backends (
-  id TEXT PRIMARY KEY, service_id TEXT NOT NULL REFERENCES services(id) ON DELETE CASCADE,
+  id TEXT PRIMARY KEY, service_id TEXT NOT NULL REFERENCES scopes(id) ON DELETE CASCADE,
   name TEXT NOT NULL, title TEXT NOT NULL, description TEXT NOT NULL, url TEXT NOT NULL,
   protocol TEXT NOT NULL, resource_id TEXT NOT NULL, document_json TEXT NOT NULL, etag TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS certificates (
-  id TEXT PRIMARY KEY, service_id TEXT NOT NULL REFERENCES services(id) ON DELETE CASCADE,
+  id TEXT PRIMARY KEY, service_id TEXT NOT NULL REFERENCES scopes(id) ON DELETE CASCADE,
   name TEXT NOT NULL, subject TEXT NOT NULL, thumbprint TEXT NOT NULL, expiration INTEGER NOT NULL,
   data BLOB NOT NULL, password TEXT NOT NULL, key_vault_secret_id TEXT NOT NULL,
   key_vault_identity_id TEXT NOT NULL, etag TEXT NOT NULL
@@ -157,13 +173,19 @@ CREATE TABLE IF NOT EXISTS api_schema_documents (
   schema_id TEXT PRIMARY KEY REFERENCES api_schemas(id) ON DELETE CASCADE,
   document_json TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS workspaces (
+  id TEXT PRIMARY KEY REFERENCES scopes(id) ON DELETE CASCADE,
+  service_id TEXT NOT NULL REFERENCES scopes(id) ON DELETE CASCADE,
+  name TEXT NOT NULL, display_name TEXT NOT NULL, description TEXT NOT NULL,
+  document_json TEXT NOT NULL, etag TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS api_resolvers (
   id TEXT PRIMARY KEY, api_id TEXT NOT NULL REFERENCES apis(id) ON DELETE CASCADE,
   name TEXT NOT NULL, display_name TEXT NOT NULL, description TEXT NOT NULL,
   type TEXT NOT NULL, field TEXT NOT NULL, document_json TEXT NOT NULL, etag TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS tags (
-  id TEXT PRIMARY KEY, service_id TEXT NOT NULL REFERENCES services(id) ON DELETE CASCADE,
+  id TEXT PRIMARY KEY, service_id TEXT NOT NULL REFERENCES scopes(id) ON DELETE CASCADE,
   name TEXT NOT NULL, display_name TEXT NOT NULL, etag TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS tag_documents (
@@ -175,7 +197,7 @@ CREATE TABLE IF NOT EXISTS resource_tags (
   PRIMARY KEY (resource_id, tag_id)
 );
 CREATE TABLE IF NOT EXISTS groups (
-  id TEXT PRIMARY KEY, service_id TEXT NOT NULL REFERENCES services(id) ON DELETE CASCADE,
+  id TEXT PRIMARY KEY, service_id TEXT NOT NULL REFERENCES scopes(id) ON DELETE CASCADE,
   name TEXT NOT NULL, display_name TEXT NOT NULL, description TEXT NOT NULL, type TEXT NOT NULL,
   external_id TEXT NOT NULL, built_in INTEGER NOT NULL, etag TEXT NOT NULL
 );
@@ -184,7 +206,7 @@ CREATE TABLE IF NOT EXISTS group_documents (
   document_json TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS users (
-  id TEXT PRIMARY KEY, service_id TEXT NOT NULL REFERENCES services(id) ON DELETE CASCADE,
+  id TEXT PRIMARY KEY, service_id TEXT NOT NULL REFERENCES scopes(id) ON DELETE CASCADE,
   name TEXT NOT NULL, first_name TEXT NOT NULL, last_name TEXT NOT NULL,
   email TEXT NOT NULL COLLATE NOCASE, state TEXT NOT NULL, note TEXT NOT NULL,
   identities_json TEXT NOT NULL, registration_at INTEGER NOT NULL, password TEXT NOT NULL,
@@ -201,7 +223,7 @@ CREATE TABLE IF NOT EXISTS group_users (
   PRIMARY KEY (group_id, user_id)
 );
 CREATE TABLE IF NOT EXISTS policy_fragments (
-  id TEXT PRIMARY KEY, service_id TEXT NOT NULL REFERENCES services(id) ON DELETE CASCADE,
+  id TEXT PRIMARY KEY, service_id TEXT NOT NULL REFERENCES scopes(id) ON DELETE CASCADE,
   name TEXT NOT NULL, description TEXT NOT NULL, format TEXT NOT NULL, value TEXT NOT NULL,
   provisioning_state TEXT NOT NULL, etag TEXT NOT NULL
 );
@@ -210,12 +232,12 @@ CREATE TABLE IF NOT EXISTS policy_fragment_documents (
   document_json TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS documentations (
-  id TEXT PRIMARY KEY, service_id TEXT NOT NULL REFERENCES services(id) ON DELETE CASCADE,
+  id TEXT PRIMARY KEY, service_id TEXT NOT NULL REFERENCES scopes(id) ON DELETE CASCADE,
   name TEXT NOT NULL, title TEXT NOT NULL, content TEXT NOT NULL,
   document_json TEXT NOT NULL, etag TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS authorization_servers (
-  id TEXT PRIMARY KEY, service_id TEXT NOT NULL REFERENCES services(id) ON DELETE CASCADE,
+  id TEXT PRIMARY KEY, service_id TEXT NOT NULL REFERENCES scopes(id) ON DELETE CASCADE,
   name TEXT NOT NULL, display_name TEXT NOT NULL, description TEXT NOT NULL,
   authorization_endpoint TEXT NOT NULL, client_registration_endpoint TEXT NOT NULL,
   client_id TEXT NOT NULL, client_secret TEXT NOT NULL, token_endpoint TEXT NOT NULL,
@@ -224,13 +246,13 @@ CREATE TABLE IF NOT EXISTS authorization_servers (
   grant_types_json TEXT NOT NULL, document_json TEXT NOT NULL, etag TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS openid_connect_providers (
-  id TEXT PRIMARY KEY, service_id TEXT NOT NULL REFERENCES services(id) ON DELETE CASCADE,
+  id TEXT PRIMARY KEY, service_id TEXT NOT NULL REFERENCES scopes(id) ON DELETE CASCADE,
   name TEXT NOT NULL, display_name TEXT NOT NULL, description TEXT NOT NULL,
   metadata_endpoint TEXT NOT NULL, client_id TEXT NOT NULL, client_secret TEXT NOT NULL,
   document_json TEXT NOT NULL, etag TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS identity_providers (
-  id TEXT PRIMARY KEY, service_id TEXT NOT NULL REFERENCES services(id) ON DELETE CASCADE,
+  id TEXT PRIMARY KEY, service_id TEXT NOT NULL REFERENCES scopes(id) ON DELETE CASCADE,
   name TEXT NOT NULL, client_id TEXT NOT NULL, client_secret TEXT NOT NULL,
   authority TEXT NOT NULL, signin_tenant TEXT NOT NULL, signup_policy_name TEXT NOT NULL,
   signin_policy_name TEXT NOT NULL, profile_editing_policy_name TEXT NOT NULL,
@@ -238,33 +260,33 @@ CREATE TABLE IF NOT EXISTS identity_providers (
   document_json TEXT NOT NULL, etag TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS caches (
-  id TEXT PRIMARY KEY, service_id TEXT NOT NULL REFERENCES services(id) ON DELETE CASCADE,
+  id TEXT PRIMARY KEY, service_id TEXT NOT NULL REFERENCES scopes(id) ON DELETE CASCADE,
   name TEXT NOT NULL, description TEXT NOT NULL, connection_string TEXT NOT NULL,
   use_from_location TEXT NOT NULL, resource_id TEXT NOT NULL,
   document_json TEXT NOT NULL, etag TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS loggers (
-  id TEXT PRIMARY KEY, service_id TEXT NOT NULL REFERENCES services(id) ON DELETE CASCADE,
+  id TEXT PRIMARY KEY, service_id TEXT NOT NULL REFERENCES scopes(id) ON DELETE CASCADE,
   name TEXT NOT NULL, logger_type TEXT NOT NULL, description TEXT NOT NULL,
   is_buffered INTEGER NOT NULL, resource_id TEXT NOT NULL, credentials_json TEXT NOT NULL,
   document_json TEXT NOT NULL, etag TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS diagnostics (
-  id TEXT PRIMARY KEY, service_id TEXT NOT NULL REFERENCES services(id) ON DELETE CASCADE,
+  id TEXT PRIMARY KEY, service_id TEXT NOT NULL REFERENCES scopes(id) ON DELETE CASCADE,
   scope_id TEXT NOT NULL, name TEXT NOT NULL, logger_id TEXT NOT NULL,
   always_log TEXT NOT NULL, log_client_ip INTEGER NOT NULL, verbosity TEXT NOT NULL,
   sampling_type TEXT NOT NULL, sampling_percentage REAL NOT NULL,
   document_json TEXT NOT NULL, etag TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS diagnostic_events (
-  id TEXT PRIMARY KEY, service_id TEXT NOT NULL REFERENCES services(id) ON DELETE CASCADE,
+  id TEXT PRIMARY KEY, service_id TEXT NOT NULL REFERENCES scopes(id) ON DELETE CASCADE,
   api_id TEXT NOT NULL, diagnostic_id TEXT NOT NULL, correlation_id TEXT NOT NULL,
   method TEXT NOT NULL, path TEXT NOT NULL, status_code INTEGER NOT NULL,
   timestamp INTEGER NOT NULL, duration_nanos INTEGER NOT NULL, client_ip TEXT NOT NULL,
   metadata_json TEXT NOT NULL DEFAULT '{}'
 );
 CREATE TABLE IF NOT EXISTS products (
-  id TEXT PRIMARY KEY, service_id TEXT NOT NULL REFERENCES services(id) ON DELETE CASCADE,
+  id TEXT PRIMARY KEY, service_id TEXT NOT NULL REFERENCES scopes(id) ON DELETE CASCADE,
   name TEXT NOT NULL, display_name TEXT NOT NULL, state TEXT NOT NULL,
   approval_required INTEGER NOT NULL, etag TEXT NOT NULL
 );
@@ -283,7 +305,7 @@ CREATE TABLE IF NOT EXISTS product_groups (
   PRIMARY KEY (product_id, group_id)
 );
 CREATE TABLE IF NOT EXISTS subscriptions (
-  id TEXT PRIMARY KEY, service_id TEXT NOT NULL REFERENCES services(id) ON DELETE CASCADE,
+  id TEXT PRIMARY KEY, service_id TEXT NOT NULL REFERENCES scopes(id) ON DELETE CASCADE,
   name TEXT NOT NULL, display_name TEXT NOT NULL, scope TEXT NOT NULL,
   state TEXT NOT NULL, primary_key TEXT NOT NULL, secondary_key TEXT NOT NULL,
   etag TEXT NOT NULL
@@ -354,6 +376,12 @@ func (s *Store) UpsertService(v model.Service) (model.Service, error) {
 		v.ID(), v.SubscriptionID, v.ResourceGroup, v.Name, v.Location, v.SKUName,
 		v.SKUCapacity, v.PublisherName, v.PublisherEmail, v.ProvisioningState, v.ETag)
 	if err != nil {
+		return v, err
+	}
+	// A service is its own scope. Registering it here is what lets every
+	// resource table reference scopes(id) uniformly, whether its parent is a
+	// service or a workspace.
+	if _, err := tx.Exec(`INSERT INTO scopes (id, service_id) VALUES (?, ?) ON CONFLICT(id) DO NOTHING`, v.ID(), v.ID()); err != nil {
 		return v, err
 	}
 	for _, group := range []struct{ name, displayName string }{{"administrators", "Administrators"}, {"developers", "Developers"}, {"guests", "Guests"}} {
@@ -2903,4 +2931,148 @@ func (s *Store) ListAPIResolvers(apiID string) ([]model.APIResolver, error) {
 // DeleteAPIResolver removes a GraphQL resolver.
 func (s *Store) DeleteAPIResolver(id string) error {
 	return deleteScopedResource(s.db, "api_resolvers", id)
+}
+
+// UpsertWorkspace creates or replaces a workspace.
+func (s *Store) UpsertWorkspace(v model.Workspace) (model.Workspace, error) {
+	document, err := json.Marshal(v.Document)
+	if err != nil {
+		return v, err
+	}
+	v.ETag = newETag()
+	tx, err := s.db.Begin()
+	if err != nil {
+		return v, err
+	}
+	defer tx.Rollback()
+	// The scope comes first: the workspace row hangs off it, and so does every
+	// resource parented to the workspace, so deleting the scope is what takes
+	// the whole subtree.
+	if _, err := tx.Exec(`INSERT INTO scopes (id, service_id) VALUES (?, ?) ON CONFLICT(id) DO NOTHING`, v.ID(), v.ServiceID); err != nil {
+		return v, err
+	}
+	if _, err := tx.Exec(`INSERT INTO workspaces (id, service_id, name, display_name, description, document_json, etag)
+        VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET display_name=excluded.display_name,
+          description=excluded.description, document_json=excluded.document_json, etag=excluded.etag`,
+		v.ID(), v.ServiceID, v.Name, v.DisplayName, v.Description, string(document), v.ETag); err != nil {
+		return v, err
+	}
+	return v, tx.Commit()
+}
+
+// GetWorkspace finds one workspace.
+func (s *Store) GetWorkspace(id string) (model.Workspace, error) {
+	var v model.Workspace
+	var document string
+	err := s.db.QueryRow(`SELECT service_id, name, display_name, description, document_json, etag
+	        FROM workspaces WHERE lower(id)=lower(?)`, id).
+		Scan(&v.ServiceID, &v.Name, &v.DisplayName, &v.Description, &document, &v.ETag)
+	if errors.Is(err, sql.ErrNoRows) {
+		return model.Workspace{}, ErrNotFound
+	}
+	if err == nil {
+		_ = json.Unmarshal([]byte(document), &v.Document)
+	}
+	return v, err
+}
+
+// ListWorkspaces returns a service's workspaces in stable ID order.
+func (s *Store) ListWorkspaces(serviceID string) ([]model.Workspace, error) {
+	rows, err := s.db.Query(`SELECT service_id, name, display_name, description, document_json, etag
+        FROM workspaces WHERE lower(service_id)=lower(?) ORDER BY id`, serviceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	values := make([]model.Workspace, 0)
+	for rows.Next() {
+		var v model.Workspace
+		var document string
+		if err := rows.Scan(&v.ServiceID, &v.Name, &v.DisplayName, &v.Description, &document, &v.ETag); err != nil {
+			return nil, err
+		}
+		_ = json.Unmarshal([]byte(document), &v.Document)
+		values = append(values, v)
+	}
+	return values, rows.Err()
+}
+
+// DeleteWorkspace removes a workspace and everything parented to it.
+//
+// Deleting the SCOPE is the whole operation: the workspace row and every
+// resource inside it hang off it, so one delete takes the subtree. Removing
+// only the workspace row would leave its contents addressable at a scope whose
+// owner no longer exists.
+func (s *Store) DeleteWorkspace(id string) error {
+	return deleteScopedResource(s.db, "scopes", id)
+}
+
+// adoptScopes brings a database created before workspaces existed onto the
+// scopes model.
+//
+// SQLite cannot alter a foreign key in place, so a table whose parent is still
+// services(id) has to be rebuilt: create, copy, drop, rename. Without this an
+// existing data directory keeps working for everything EXCEPT workspaces, which
+// fail on the foreign key at insert time. That is a silent capability gap
+// rather than a visible error, which is the worse of the two.
+//
+// The work is driven from sqlite_master rather than a hand-written list of
+// tables, so a table added later cannot be forgotten here, and it is emitted as
+// ONE script so the whole migration is a single all-or-nothing statement.
+func (s *Store) adoptScopes() error {
+	// Every service is its own scope. Backfilling first means the rebuilt
+	// tables' foreign keys are satisfiable the moment they are created.
+	if _, err := s.db.Exec(`INSERT INTO scopes (id, service_id) SELECT id, id FROM services WHERE id NOT IN (SELECT id FROM scopes)`); err != nil {
+		return err
+	}
+	script, err := s.scopeRebuildScript()
+	if err != nil || script == "" {
+		return err
+	}
+	// Foreign keys stay off for the rebuild: the copy would otherwise be
+	// checked against the very table being replaced.
+	_, err = s.db.Exec("PRAGMA foreign_keys = OFF;\nBEGIN;\n" + script + "COMMIT;\nPRAGMA foreign_keys = ON;")
+	if err != nil {
+		_, _ = s.db.Exec("ROLLBACK;\nPRAGMA foreign_keys = ON;")
+		return fmt.Errorf("adopt scopes: %w", err)
+	}
+	return nil
+}
+
+// scopeRebuildScript renders the DDL that repoints legacy parent keys, or "" if
+// the database is already on the scopes model.
+//
+// The legacy definitions come back as ONE value rather than a row per table.
+// Iterating rows would mean a per-row Scan whose error the query's own filter
+// makes unreachable, and an unreachable error check is a branch that can only
+// ever be wrong about itself. Unit separator joins the two fields, record
+// separator joins the tables; neither can occur in a SQLite identifier or DDL.
+func (s *Store) scopeRebuildScript() (string, error) {
+	const (
+		fieldSep  = "\x1f"
+		recordSep = "\x1e"
+	)
+	var joined sql.NullString
+	err := s.db.QueryRow(`SELECT group_concat(name || char(31) || sql, char(30)) FROM sqlite_master
+	        WHERE type='table' AND sql LIKE '%REFERENCES services(id)%'
+	          AND name NOT IN ('scopes', 'resource_documents')`).Scan(&joined)
+	if err != nil {
+		return "", err
+	}
+	if !joined.Valid || joined.String == "" {
+		return "", nil
+	}
+	var script strings.Builder
+	for _, record := range strings.Split(joined.String, recordSep) {
+		name, ddl, found := strings.Cut(record, fieldSep)
+		if !found {
+			continue
+		}
+		rebuilt := strings.ReplaceAll(ddl, "REFERENCES services(id)", "REFERENCES scopes(id)")
+		rebuilt = strings.Replace(rebuilt, "CREATE TABLE IF NOT EXISTS "+name, "CREATE TABLE "+name+"_scoped", 1)
+		rebuilt = strings.Replace(rebuilt, "CREATE TABLE "+name, "CREATE TABLE "+name+"_scoped", 1)
+		fmt.Fprintf(&script, "%s;\nINSERT INTO %s_scoped SELECT * FROM %s;\nDROP TABLE %s;\nALTER TABLE %s_scoped RENAME TO %s;\n",
+			rebuilt, name, name, name, name, name)
+	}
+	return script.String(), nil
 }
