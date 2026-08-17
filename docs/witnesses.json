@@ -235,7 +235,10 @@
       "go:TestPrivateEndpointConnectionApprovalWorkflow",
       "go:TestPrivateLinkResources",
       "go:TestNetworkStatus",
-      "go:TestOutboundNetworkDependencies"
+      "go:TestOutboundNetworkDependencies",
+      "go:TestCustomDomainCertificateIsParsedAndTheSecretDropped",
+      "go:TestExpiredCustomDomainCertificateIsReportedFailed",
+      "go:TestNegotiateClientCertificateRefusesAnUnauthenticatedRequest"
     ]
   }
 }

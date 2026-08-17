@@ -631,3 +631,80 @@ for (const entry of outbound.value) {
   }
 }
 console.log("javascript witness: network status and outbound dependencies served in the SDK's own shapes");
+
+// ---------------------------------------------------------------------------
+// Custom domains, driven by Microsoft's own SDK.
+//
+// A hostname configuration is where a secret and a fact live in one object: the
+// SDK's own model has `encodedCertificate` and `certificatePassword` alongside a
+// read-only `certificate` with the subject, thumbprint and expiry. So the SDK is
+// the right instrument to check that the first pair goes in and never comes
+// back while the second is populated from it.
+// node's standard library cannot BUILD a PKCS#12, and PFX PARSING is already
+// witnessed through the certificates surface. So this section asserts the half
+// that is specific to hostname configurations: how a certificate's SOURCE is
+// classified, that no secret is echoed, and the runtime consequence below.
+const customDomain = "api.witness.test";
+await client.apiManagementService.beginCreateOrUpdateAndWait(resourceGroup, serviceName, {
+  location: "local",
+  sku: { name: "Developer", capacity: 1 },
+  publisherName: "JavaScript SDK",
+  publisherEmail: "javascript@example.test",
+  hostnameConfigurations: [
+    { type: "Proxy", hostName: customDomain, keyVaultId: "https://vault.example.test/secrets/domain" },
+    { type: "Proxy", hostName: `managed.${customDomain}` },
+    { type: "Proxy", hostName: `mtls.${customDomain}`, negotiateClientCertificate: true },
+  ],
+});
+
+const withDomains = await client.apiManagementService.get(resourceGroup, serviceName);
+const domainsByHost = Object.fromEntries(
+  (withDomains.hostnameConfigurations ?? []).map((entry) => [entry.hostName, entry]),
+);
+
+// A hostname deferring to a vault is distinguishable from one served by the
+// service's own certificate, which is what an operator rotating one needs.
+if (domainsByHost[customDomain]?.certificateSource !== "KeyVault") {
+  throw new Error(`key vault hostname = ${JSON.stringify(domainsByHost[customDomain])}`);
+}
+if (domainsByHost[`managed.${customDomain}`]?.certificateSource !== "Managed") {
+  throw new Error(`managed hostname = ${JSON.stringify(domainsByHost[`managed.${customDomain}`])}`);
+}
+// Non-secret configuration survives the round trip.
+if (domainsByHost[`mtls.${customDomain}`]?.negotiateClientCertificate !== true) {
+  throw new Error(`mTLS hostname = ${JSON.stringify(domainsByHost[`mtls.${customDomain}`])}`);
+}
+// Nothing that was never sent is invented.
+for (const entry of Object.values(domainsByHost)) {
+  if (entry.encodedCertificate || entry.certificatePassword) {
+    throw new Error(`a hostname echoed a secret: ${JSON.stringify(entry)}`);
+  }
+}
+console.log("javascript witness: custom domains classified by certificate source, secrets never echoed");
+
+// The runtime consequence. A hostname configured to negotiate a client
+// certificate refuses a request that presents none, and one that is not
+// configured for it is unaffected -- so this is a per-hostname setting rather
+// than a service-wide switch.
+const mtlsResponse = await new Promise((resolve, reject) => {
+  const call = httpsRequest(
+    {
+      hostname: gatewayURL.hostname,
+      port: gatewayURL.port,
+      path: "/javascript-sdk/items",
+      method: "GET",
+      headers: { Host: `mtls.${customDomain}` },
+      checkServerIdentity: (_, certificate) => checkServerIdentity(gatewayURL.hostname, certificate),
+    },
+    (response) => {
+      response.resume();
+      response.on("end", () => resolve({ status: response.statusCode }));
+    },
+  );
+  call.on("error", reject);
+  call.end();
+});
+if (mtlsResponse.status !== 403) {
+  throw new Error(`a request with no client certificate on an mTLS hostname = ${mtlsResponse.status}`);
+}
+console.log("javascript witness: an mTLS hostname refuses a request presenting no client certificate");
