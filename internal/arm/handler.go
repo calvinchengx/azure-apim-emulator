@@ -377,6 +377,10 @@ func (h *Handler) service(w http.ResponseWriter, r *http.Request, rt route) {
 		}
 		value.Location, value.SKUName, value.SKUCapacity = body.Location, body.SKU.Name, body.SKU.Capacity
 		value.PublisherName, value.PublisherEmail, value.Document = body.Properties.PublisherName, body.Properties.PublisherEmail, document
+		// A hostname configuration carries a write-only PFX and read-only facts
+		// about it in one object. Resolving here, on the way in, is what lets
+		// the secret be dropped before it is ever stored.
+		resolveHostnameCertificates(value.Document, time.Now().UTC())
 		if value.SKUName == "" {
 			value.SKUName = "Developer"
 		}

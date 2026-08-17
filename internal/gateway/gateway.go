@@ -64,6 +64,12 @@ type Service struct {
 	Diagnostics           []model.Diagnostic
 	Products              map[string]model.Product
 	Subscriptions         map[string]model.Subscription
+	// ClientCertificateHosts are the custom hostnames configured with
+	// negotiateClientCertificate. A request arriving on one without a client
+	// certificate is refused before any policy runs, because the refusal
+	// belongs to the TLS handshake in Azure and there is nothing for a policy
+	// to inspect.
+	ClientCertificateHosts map[string]bool
 	// Gateways are the service's self-hosted gateway registrations, each with
 	// the hostnames it answers on and the subset of the service's routes it is
 	// associated with.
@@ -488,7 +494,7 @@ func (r *Runtime) Activate(st *store.Store, strict bool) error {
 	}
 	snapshot := &Snapshot{Services: map[string]*Service{}}
 	for _, item := range services {
-		snapshot.Services[strings.ToLower(item.Name)] = &Service{Name: item.Name, Location: item.Location, Hostnames: customHostnames(item.Document), PublicNetworkDisabled: !publicNetworkAccess(item.Document), Backends: backends[strings.ToLower(item.ID())], Certificates: certificates[strings.ToLower(item.ID())], Diagnostics: diagnostics[strings.ToLower(item.ID())], Products: map[string]model.Product{}, Subscriptions: map[string]model.Subscription{}}
+		snapshot.Services[strings.ToLower(item.Name)] = &Service{Name: item.Name, Location: item.Location, Hostnames: customHostnames(item.Document), ClientCertificateHosts: clientCertificateHosts(item.Document), PublicNetworkDisabled: !publicNetworkAccess(item.Document), Backends: backends[strings.ToLower(item.ID())], Certificates: certificates[strings.ToLower(item.ID())], Diagnostics: diagnostics[strings.ToLower(item.ID())], Products: map[string]model.Product{}, Subscriptions: map[string]model.Subscription{}}
 	}
 	indexServiceIdentities(snapshot.Services, products, subscriptions)
 	for _, api := range apis {
@@ -770,6 +776,15 @@ func (r *Runtime) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 	if service.PublicNetworkDisabled {
 		gatewayError(w, http.StatusForbidden, "PublicNetworkAccessDisabled", "Public network access is disabled for this service.")
+		return
+	}
+	if requiresClientCertificate(service, req) {
+		// In Azure this refusal happens in the TLS handshake, so no policy ever
+		// sees the request. Refusing here, before the plan runs, is the nearest
+		// truthful equivalent: a policy that inspected the certificate would be
+		// running in a situation Azure never reaches.
+		gatewayError(w, http.StatusForbidden, "ClientCertificateRequired",
+			"This hostname is configured to negotiate a client certificate and the request presented none.")
 		return
 	}
 	// On a self-hosted gateway's hostname only that gateway's APIs are
@@ -1688,6 +1703,22 @@ func attachSelfHostedGateways(st *store.Store, services []model.Service, snapsho
 // Gateway hostnames are checked after the service's own so that a hostname
 // configured in both places keeps answering as the service, which is the
 // behaviour that existed before gateways were routable.
+// requiresClientCertificate reports whether the request arrived on a hostname
+// configured to demand one and did not present it.
+func requiresClientCertificate(service *Service, req *http.Request) bool {
+	if len(service.ClientCertificateHosts) == 0 {
+		return false
+	}
+	host := strings.ToLower(req.Host)
+	if parsed, _, err := net.SplitHostPort(req.Host); err == nil {
+		host = strings.ToLower(parsed)
+	}
+	if !service.ClientCertificateHosts[host] {
+		return false
+	}
+	return req.TLS == nil || len(req.TLS.PeerCertificates) == 0
+}
+
 func serviceForHost(snapshot *Snapshot, host, fallback string) (string, *SelfHostedGateway) {
 	normalized := strings.ToLower(host)
 	if parsed, _, err := net.SplitHostPort(host); err == nil {
@@ -1716,18 +1747,25 @@ func serviceForHost(snapshot *Snapshot, host, fallback string) (string, *SelfHos
 
 func customHostnames(document map[string]any) map[string]bool {
 	result := map[string]bool{}
+	forEachHostnameConfiguration(document, func(configuration map[string]any) {
+		if host, ok := configuration["hostName"].(string); ok && strings.TrimSpace(host) != "" {
+			result[strings.ToLower(strings.TrimSpace(host))] = true
+		}
+	})
+	return result
+}
+
+// forEachHostnameConfiguration walks a service document's hostname
+// configurations, from wherever the caller put them.
+func forEachHostnameConfiguration(document map[string]any, visit func(map[string]any)) {
 	collect := func(value any) {
 		entries, ok := value.([]any)
 		if !ok {
 			return
 		}
 		for _, entry := range entries {
-			configuration, ok := entry.(map[string]any)
-			if !ok {
-				continue
-			}
-			if host, ok := configuration["hostName"].(string); ok && strings.TrimSpace(host) != "" {
-				result[strings.ToLower(strings.TrimSpace(host))] = true
+			if configuration, ok := entry.(map[string]any); ok {
+				visit(configuration)
 			}
 		}
 	}
@@ -1735,6 +1773,21 @@ func customHostnames(document map[string]any) map[string]bool {
 	if properties, ok := document["properties"].(map[string]any); ok {
 		collect(properties["hostnameConfigurations"])
 	}
+}
+
+// clientCertificateHosts reports the custom hostnames that demand a client
+// certificate, lowercased for host comparison.
+func clientCertificateHosts(document map[string]any) map[string]bool {
+	result := map[string]bool{}
+	forEachHostnameConfiguration(document, func(configuration map[string]any) {
+		negotiate, _ := configuration["negotiateClientCertificate"].(bool)
+		if !negotiate {
+			return
+		}
+		if host, ok := configuration["hostName"].(string); ok && strings.TrimSpace(host) != "" {
+			result[strings.ToLower(strings.TrimSpace(host))] = true
+		}
+	})
 	return result
 }
 
