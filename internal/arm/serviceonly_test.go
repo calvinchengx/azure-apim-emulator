@@ -1,0 +1,88 @@
+package arm
+
+import (
+	"net/http"
+	"strings"
+	"testing"
+)
+
+// The families Azure scopes to a SERVICE only must 404 under a workspace, and
+// the ones it genuinely scopes to a workspace must not.
+//
+// Both halves matter. The refusals are the fix; the control below is what stops
+// the fix from being a blunt instrument that takes the whole workspace surface
+// down with it, which a test asserting only 404s would never notice.
+func TestServiceOnlyFamiliesAreRefusedAtWorkspaceScope(t *testing.T) {
+	handler, st := testHandler(t)
+	seedService(t, st)
+	assertStatus(t, handler, http.MethodPut, basePath+"/workspaces/team"+apiQuery,
+		`{"properties":{"displayName":"Team"}}`, http.StatusCreated)
+
+	// The workspace exists, so a 404 here is the family's refusal and not a
+	// missing parent -- otherwise this test would pass with the guard removed.
+	refused := []struct{ family, body string }{
+		{"caches", `{"properties":{"connectionString":"host","useFromLocation":"default"}}`},
+		{"identityProviders", `{"properties":{"clientId":"id","clientSecret":"secret"}}`},
+		{"openidConnectProviders", `{"properties":{"displayName":"o","metadataEndpoint":"https://idp.test/.well-known/openid-configuration","clientId":"id"}}`},
+		{"authorizationServers", `{"properties":{"displayName":"a","clientRegistrationEndpoint":"https://idp.test","authorizationEndpoint":"https://idp.test","grantTypes":["authorizationCode"],"clientId":"id"}}`},
+		{"documentations", `{"properties":{"title":"t","content":"c"}}`},
+		{"gateways", `{"properties":{"locationData":{"name":"dc"}}}`},
+		{"users", `{"properties":{"email":"a@b.test","firstName":"A","lastName":"B"}}`},
+	}
+	for _, family := range refused {
+		collection := basePath + "/workspaces/team/" + family.family
+		assertStatus(t, handler, http.MethodGet, collection+apiQuery, "", http.StatusNotFound)
+		assertStatus(t, handler, http.MethodGet, collection+"/probe"+apiQuery, "", http.StatusNotFound)
+		assertStatus(t, handler, http.MethodPut, collection+"/probe"+apiQuery, family.body, http.StatusNotFound)
+	}
+
+	// The refusal must come BEFORE the store, or the PUTs above would each
+	// have left a resource behind at one scope or the other.
+	for _, family := range refused {
+		for _, listing := range []string{
+			basePath + "/" + family.family + apiQuery,
+			basePath + "/workspaces/team/" + family.family + apiQuery,
+		} {
+			if body := request(t, handler, http.MethodGet, listing, "").Body.String(); strings.Contains(body, "probe") {
+				t.Fatalf("a refused %s PUT still wrote something: %s => %s", family.family, listing, body)
+			}
+		}
+	}
+
+	// The control. These families DO have a Workspace* operation group in the
+	// SDK, so they must still be creatable inside a workspace.
+	for _, family := range []struct{ family, body string }{
+		{"backends", `{"properties":{"url":"https://backend.test","protocol":"http"}}`},
+		{"namedValues", `{"properties":{"displayName":"Probe","value":"v"}}`},
+		{"tags", `{"properties":{"displayName":"Probe"}}`},
+		{"groups", `{"properties":{"displayName":"Probe"}}`},
+	} {
+		assertStatus(t, handler, http.MethodPut, basePath+"/workspaces/team/"+family.family+"/probe"+apiQuery,
+			family.body, http.StatusCreated)
+	}
+}
+
+// The list is a claim about Azure, so it is asserted rather than left implicit:
+// a family added here by accident silently removes a working surface.
+func TestServiceOnlyFamilyListIsExact(t *testing.T) {
+	want := map[string]bool{
+		"caches": true, "identityproviders": true, "openidconnectproviders": true,
+		"authorizationproviders": true, "authorizationservers": true,
+		"documentations": true, "gateways": true, "users": true,
+	}
+	if len(serviceOnlyFamilies) != len(want) {
+		t.Fatalf("serviceOnlyFamilies = %v, want %v", serviceOnlyFamilies, want)
+	}
+	for name := range want {
+		if !serviceOnlyFamilies[name] {
+			t.Fatalf("%q missing from serviceOnlyFamilies", name)
+		}
+	}
+	// Lowercased, because the lookup lowercases the path segment. A mixed-case
+	// key here would never match and the guard would go quiet.
+	for name := range serviceOnlyFamilies {
+		if name != strings.ToLower(name) {
+			t.Fatalf("serviceOnlyFamilies key %q is not lowercase", name)
+		}
+	}
+}

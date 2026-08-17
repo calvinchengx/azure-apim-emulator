@@ -153,6 +153,12 @@ func (h *Handler) dispatch(w http.ResponseWriter, r *http.Request, parsed route)
 			h.storeError(w, err, nested.scopeID())
 			return
 		}
+		if serviceOnlyFamilies[strings.ToLower(nested.Tail[0])] {
+			writeError(w, http.StatusNotFound, "ResourceNotFound",
+				nested.Tail[0]+" is not a workspace-scoped resource in Azure; it belongs to the service.",
+				nested.scopeID()+"/"+nested.Tail[0])
+			return
+		}
 		h.dispatch(w, r, nested)
 		return
 	}
@@ -220,6 +226,42 @@ func (h *Handler) dispatch(w http.ResponseWriter, r *http.Request, parsed route)
 	default:
 		writeError(w, http.StatusNotFound, "ResourceNotFound", "The requested APIM resource is not implemented in the P0 surface.", r.URL.Path)
 	}
+}
+
+// serviceOnlyFamilies are the resource families Azure exposes at SERVICE scope
+// only, so a `/workspaces/{id}/<family>` path must 404 rather than be served.
+//
+// The peeling above is deliberately family-blind -- that is what let workspaces
+// ship without per-family work -- and this is the price of that design: a
+// family Azure does NOT put in a workspace is otherwise happily created there,
+// parented to the workspace, retrievable, and absent from Azure. That is the
+// leniency direction, which has no local symptom: the flow works here and 404s
+// the first time it runs against a real tenant.
+//
+// The list is derived from `@azure/arm-apimanagement@10.0.0`, which publishes a
+// separate `Workspace*` operation group for every family Azure genuinely scopes
+// to a workspace (WorkspaceApi, WorkspaceBackend, WorkspaceCertificate,
+// WorkspaceNamedValue, WorkspaceProduct, WorkspaceSubscription, WorkspaceTag,
+// WorkspaceGroup, WorkspaceLogger, WorkspaceDiagnostic, WorkspacePolicy,
+// WorkspacePolicyFragment, WorkspaceApiVersionSet, WorkspaceGlobalSchema,
+// WorkspaceNotification). A family below has no such group.
+//
+// `users` is the one worth explaining: there IS a `WorkspaceGroupUser`, but it
+// is a MEMBERSHIP link, not user CRUD. Users are a service-level directory that
+// a workspace group draws members from, so the directory itself is not
+// workspace-scoped.
+//
+// Being a snapshot of one SDK version, this is evidence rather than proof: if a
+// later SDK adds a Workspace* group for one of these, delete the row.
+var serviceOnlyFamilies = map[string]bool{
+	"caches":                 true,
+	"identityproviders":      true,
+	"openidconnectproviders": true,
+	"authorizationproviders": true,
+	"authorizationservers":   true,
+	"documentations":         true,
+	"gateways":               true,
+	"users":                  true,
 }
 
 type route struct {
@@ -5197,23 +5239,6 @@ func (h *Handler) requireScope(rt route) error {
 // authorizationProviderRoute dispatches the credential-manager resource tree:
 // providers, the credentials under them, and each credential's access policies.
 func (h *Handler) authorizationProviderRoute(w http.ResponseWriter, r *http.Request, rt route) {
-	// The credential manager is one of the few families Azure does NOT expose
-	// inside a workspace: the SDK has WorkspaceBackend, WorkspaceNamedValue and
-	// two dozen other Workspace* operation groups, but no
-	// WorkspaceAuthorizationProvider. The store says the same thing — a provider
-	// hangs off a SERVICE, not off a scope.
-	//
-	// So this family must refuse the workspace scope the router peeled off,
-	// rather than serve it from the service. Serving it would be the dangerous
-	// direction of wrong: a PUT under a workspace would create a SERVICE-level
-	// provider the caller never named, and a GET would report service-level
-	// providers as the workspace's, with no local symptom until the same call
-	// reaches real Azure and 404s there.
-	if rt.Workspace != "" {
-		writeError(w, http.StatusNotFound, "ResourceNotFound",
-			"The credential manager is not available at workspace scope.", rt.scopeID()+"/authorizationProviders")
-		return
-	}
 	serviceID := rt.service().ID()
 	switch len(rt.Tail) {
 	case 1:
