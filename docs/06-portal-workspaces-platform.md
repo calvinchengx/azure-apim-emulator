@@ -105,7 +105,34 @@ generated from `sqlite_master` rather than a hand-written list, so a table added
 later cannot be forgotten, and it runs as one all-or-nothing transaction, so a
 failure leaves the original schema untouched rather than half-migrated.
 
-**Workspace RBAC is not modelled.** Access to a workspace in Azure is granted
-through Azure RBAC role assignments, which belong to a different resource
-provider that this emulator has no surface for. Nothing here is an access-control
-claim: the isolation described above is about resource parentage, not permission.
+## Azure RBAC
+
+Access to a workspace in Azure is granted through Azure RBAC role assignments,
+which belong to `Microsoft.Authorization`, a different resource provider. The
+emulator now serves that provider too.
+
+**Two access systems, and they are not the same one.** Azure RBAC governs the
+CONTROL plane: who may call ARM to manage the service. APIM's own users, groups,
+products and subscriptions govern the DATA plane: who may call an API through
+the gateway. Conflating them produces an emulator that enforces the wrong thing.
+
+Role assignments hang off any scope, because a scope is just a resource ID. That
+is why workspaces needed nothing special: an assignment made at a workspace
+covers everything inside it, and one made at the service covers the workspace,
+by resource-ID prefix. The boundary check matters, so `/service/prod` does not
+cover `/service/prod-canary`.
+
+Evaluation follows Azure's model. A role definition lists `actions` matched with
+wildcards, reduced by `notActions`; an action is named after the resource TYPE,
+so instance names are stripped from the path; and the result is deny-by-default.
+The published built-in role GUIDs are served unchanged, because tooling
+hard-codes them and a caller assigning by GUID must find the same role here.
+
+**Enforcement is opt-in.** `APIM_ENFORCE_RBAC` defaults off, and a valid ARM
+token means full access, which is what every existing caller assumes. Enabling
+it requires `APIM_RBAC_OWNER`: creating a role assignment is itself an ARM action
+needing a role, so without a bootstrap principal nobody could ever grant the
+first one, and the emulator would refuse every request including the one that
+would fix it. Azure resolves the same circularity through the subscription
+owner. The config refuses to start when enforcement is on and no owner is named,
+rather than leaving that trap for someone to find at runtime.

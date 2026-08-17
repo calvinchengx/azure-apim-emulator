@@ -3397,6 +3397,18 @@ func TestAbsoluteAndOperationHelpers(t *testing.T) {
 	}
 }
 
+// testHandlerAt is testHandler over a file-backed store, so a test can open a
+// second connection and install a trigger.
+func testHandlerAt(t *testing.T, dir string) (*Handler, *store.Store) {
+	t.Helper()
+	st, err := store.Open(dir, clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	return &Handler{Store: st, Auth: auth.AllowAll{}}, st
+}
+
 func testHandler(t *testing.T) (*Handler, *store.Store) {
 	t.Helper()
 	st, err := store.Open("", clock.New())

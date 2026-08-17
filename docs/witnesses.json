@@ -208,6 +208,12 @@
       "go:TestAuthorizationContextWithholdsTheRefreshToken",
       "go:TestAuthorizationLifecycleAndConsentState",
       "go:TestServerWiresTheConsentHandshake"
+    ],
+    "Azure RBAC": [
+      "ci:sdk-witnesses",
+      "go:TestRBACEnforcementDecisions",
+      "go:TestAuthorizeIsDenyByDefault",
+      "go:TestBuiltInRolesMatchTheirNames"
     ]
   }
 }

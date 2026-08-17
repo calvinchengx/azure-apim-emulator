@@ -221,3 +221,66 @@ if (stillThere) {
   throw new Error("deleting a workspace left its API addressable");
 }
 console.log("javascript witness: workspaces scoped, isolated, and cascaded");
+
+// ---------------------------------------------------------------------------
+// Role assignments, driven by Microsoft's AUTHORIZATION SDK.
+//
+// A second client, from a different resource provider, pointed at the same
+// emulator. That is the assertion: role assignments are not an APIM resource,
+// and a caller manages them exactly as they would in Azure, with the library
+// built for Microsoft.Authorization rather than the APIM one.
+const { AuthorizationManagementClient } = await import("@azure/arm-authorization");
+const authorization = new AuthorizationManagementClient(
+  credential,
+  process.env.APIM_SUBSCRIPTION_ID,
+  { endpoint },
+);
+
+const serviceScope =
+  `/subscriptions/${process.env.APIM_SUBSCRIPTION_ID}/resourceGroups/${resourceGroup}` +
+  `/providers/Microsoft.ApiManagement/service/${serviceName}`;
+const workspaceScope = `${serviceScope}/workspaces/rbac-team`;
+
+await client.workspace.createOrUpdate(resourceGroup, serviceName, "rbac-team", {
+  displayName: "RBAC Team",
+});
+
+// The built-in role GUIDs are fixed in every Azure tenant and tooling hard-codes
+// them, so the emulator must answer to the same ones.
+const workspaceContributor = "0c34c906-8d99-4cb7-8df9-b5d5b0e4a5f1";
+const definition = await authorization.roleDefinitions.get(serviceScope, workspaceContributor);
+if (definition.roleName !== "API Management Workspace Contributor") {
+  throw new Error(`unexpected role definition: ${definition.roleName}`);
+}
+
+const assignmentName = "11111111-2222-3333-4444-555555555555";
+const created = await authorization.roleAssignments.create(workspaceScope, assignmentName, {
+  roleDefinitionId: `/providers/Microsoft.Authorization/roleDefinitions/${workspaceContributor}`,
+  principalId: "ada-object-id",
+  principalType: "User",
+});
+if (created.principalId !== "ada-object-id") {
+  throw new Error(`unexpected principal: ${created.principalId}`);
+}
+if (!created.id.includes("/providers/Microsoft.Authorization/roleAssignments/")) {
+  throw new Error(`assignment id is not an authorization resource: ${created.id}`);
+}
+
+// Listing at the SERVICE must surface the workspace-scoped assignment, because
+// that is where a caller looks to find out who has access to what.
+const assignments = [];
+for await (const item of authorization.roleAssignments.listForScope(serviceScope)) {
+  assignments.push(item.name);
+}
+if (!assignments.includes(assignmentName)) {
+  throw new Error(`assignment missing from listForScope: ${assignments.join(", ")}`);
+}
+
+const fetched = await authorization.roleAssignments.get(workspaceScope, assignmentName);
+if (fetched.scope !== workspaceScope) {
+  throw new Error(`assignment scope = ${fetched.scope}`);
+}
+
+await authorization.roleAssignments.delete(workspaceScope, assignmentName);
+await client.workspace.delete(resourceGroup, serviceName, "rbac-team", "*");
+console.log("javascript witness: role assignments created, listed and deleted through Microsoft.Authorization");
