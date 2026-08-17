@@ -1,11 +1,17 @@
 package expression
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/json"
 	"errors"
 	"go/ast"
 	goparser "go/parser"
 	"go/token"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -79,9 +85,12 @@ func TestAllowlistBoundMembersEvaluate(t *testing.T) {
 			GatewayId: "managed",
 			Gateway:   &GatewayContext{Id: "managed", InstanceId: "emulator", IsManaged: true, RegionName: "local"},
 		},
-		Timestamp: time.Unix(0, 0).UTC(),
-		Elapsed:   func() time.Duration { return 0 },
-		RequestId: "req-1",
+		Timestamp:         time.Unix(0, 0).UTC(),
+		Elapsed:           func() time.Duration { return 0 },
+		RequestId:         "req-1",
+		OriginalUrl:       "https://api.example/pets?x=1",
+		MatchedParameters: map[string]string{"orderId": "A-1"},
+		Certificates:      map[string]*x509.Certificate{"client": testCertificate()},
 		AuthorizationContexts: map[string]AuthorizationContext{
 			"auth-context": {AccessToken: "tok", ClientID: "client", Scopes: "read", ExpiresIn: 3600},
 		},
@@ -102,6 +111,19 @@ func TestAllowlistBoundMembersEvaluate(t *testing.T) {
 		"context.User":                 "@(context.User != null)",
 		"context.Deployment":           "@(context.Deployment != null)",
 		"context.Timestamp":            "@(context.Timestamp != null)",
+		"Deployment.Certificates":      "@(context.Deployment.Certificates.Count == 1)",
+		"Certificates.ContainsKey":     "@(context.Deployment.Certificates.ContainsKey('client'))",
+		"Certificates.Count":           "@(context.Deployment.Certificates.Count)",
+		"Request.OriginalUrl":          "@(context.Request.OriginalUrl.Path)",
+		"Request.MatchedParameters":    `@(context.Request.MatchedParameters["orderId"])`,
+		"Request.Certificate":          "@(context.Request.Certificate == null)",
+		"Certificate.Thumbprint":       `@(context.Deployment.Certificates["client"].Thumbprint)`,
+		"Certificate.Subject":          `@(context.Deployment.Certificates["client"].Subject)`,
+		"Certificate.Issuer":           `@(context.Deployment.Certificates["client"].Issuer)`,
+		"Certificate.SerialNumber":     `@(context.Deployment.Certificates["client"].SerialNumber)`,
+		"Certificate.NotBefore":        `@(context.Deployment.Certificates["client"].NotBefore)`,
+		"Certificate.NotAfter":         `@(context.Deployment.Certificates["client"].NotAfter)`,
+		"Certificate.Verify":           `@(context.Deployment.Certificates["client"].Verify())`,
 		"context.Elapsed":              "@(context.Elapsed != null)",
 		"context.RequestId":            "@(context.RequestId != null)",
 		"context.Tracing":              "@(context.Tracing == false)",
@@ -233,24 +255,26 @@ func boundByType(members []Member) map[string]map[string]bool {
 func binderCases(t *testing.T) map[string]map[string]bool {
 	t.Helper()
 	hosts := map[string][]string{
-		"contextHost":       {"context"},
-		"requestHost":       {"Request"},
-		"responseHost":      {"Response"},
-		"lastErrorHost":     {"LastError"},
-		"urlHost":           {"Url"},
-		"headerHost":        {"Headers"},
-		"mapHost":           {"Variables"},
-		"bodyHost":          {"Body"},
-		"apiHost":           {"Api"},
-		"operationHost":     {"Operation"},
-		"namedHost":         {"User"},
-		"productHost":       {"Product"},
-		"subscriptionHost":  {"Subscription"},
-		"deploymentHost":    {"Deployment"},
-		"gatewayHost":       {"Gateway"},
-		"graphQLHost":       {"GraphQL"},
-		"jsonMapHost":       {"Arguments"},
-		"authorizationHost": {"Authorization"},
+		"contextHost":        {"context"},
+		"requestHost":        {"Request"},
+		"responseHost":       {"Response"},
+		"lastErrorHost":      {"LastError"},
+		"urlHost":            {"Url"},
+		"headerHost":         {"Headers"},
+		"mapHost":            {"Variables"},
+		"bodyHost":           {"Body"},
+		"apiHost":            {"Api"},
+		"operationHost":      {"Operation"},
+		"namedHost":          {"User"},
+		"productHost":        {"Product"},
+		"subscriptionHost":   {"Subscription"},
+		"deploymentHost":     {"Deployment"},
+		"gatewayHost":        {"Gateway"},
+		"certificateHost":    {"Certificate"},
+		"certificateMapHost": {"Certificates"},
+		"graphQLHost":        {"GraphQL"},
+		"jsonMapHost":        {"Arguments"},
+		"authorizationHost":  {"Authorization"},
 	}
 	// Both files, because a host that binds members is a host wherever it
 	// lives. Parsing only context.go would let a new file expose members the
@@ -383,7 +407,7 @@ func TestAllowlistDoesNotInventContextMembers(t *testing.T) {
 	// Documented(), so they are named here instead of silently tolerated.
 	helpers := map[string]bool{
 		"Arguments": true, "Authorization": true, "Headers": true,
-		"Variables": true, "value": true, "string": true,
+		"Variables": true, "value": true, "string": true, "Certificates": true,
 	}
 	for _, member := range Allowlist() {
 		if helpers[member.Type] || documented[member.Type][member.Name] {
@@ -411,4 +435,28 @@ func TestPlannedMembersDoNotResolve(t *testing.T) {
 	if planned == 0 {
 		t.Fatal("no planned members: either the surface is complete or the inventory stopped measuring")
 	}
+}
+
+// testCertificate builds a self-signed leaf so the certificate members have
+// something real to read rather than a zero struct.
+func testCertificate() *x509.Certificate {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		panic(err)
+	}
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(42),
+		Subject:      pkix.Name{CommonName: "client.test"},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(24 * time.Hour),
+	}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if err != nil {
+		panic(err)
+	}
+	leaf, err := x509.ParseCertificate(der)
+	if err != nil {
+		panic(err)
+	}
+	return leaf
 }

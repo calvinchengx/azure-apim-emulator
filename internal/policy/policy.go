@@ -3,6 +3,7 @@ package policy
 
 import (
 	"crypto/sha1"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
 	"encoding/xml"
@@ -243,6 +244,22 @@ type State struct {
 	// the windows. The estimate is what an `estimate-prompt-tokens="true"`
 	// policy wants charged up front, and is 0 otherwise.
 	TokenLimit func(key string, tokensPerMinute, estimate int) (remaining, retryAfter int, allowed bool)
+	// Timestamp, Elapsed, RequestId and Tracing are the request's own identity
+	// and clock. #72 bound them on the BINDER without carrying them here, so
+	// they evaluated as zero through any real policy while the binder's own
+	// tests passed on a hand-built context — a member can be bound and still be
+	// empty, and only an end-to-end path shows the difference.
+	Timestamp time.Time
+	Elapsed   func() time.Duration
+	RequestId string
+	Tracing   bool
+	// OriginalUrl, MatchedParameters and Certificates are request-time facts a
+	// policy can read. They are carried on the state rather than recomputed in
+	// the binder because only the gateway knows them: the URL before a rewrite,
+	// what the operation's template captured, and the service's certificates.
+	OriginalUrl       string
+	MatchedParameters map[string]string
+	Certificates      map[string]*x509.Certificate
 	// LLM is left by a token-governance action for the gateway to complete
 	// once the model has answered. Nil when no such policy ran.
 	LLM *LLMGovernance
@@ -2544,6 +2561,13 @@ func stateEnv(state *State) *expr.Env {
 		Deployment:            state.Deployment,
 		GraphQL:               state.GraphQL,
 		AuthorizationContexts: state.AuthorizationContexts,
+		Timestamp:             state.Timestamp,
+		Elapsed:               state.Elapsed,
+		RequestId:             state.RequestId,
+		Tracing:               state.Tracing,
+		OriginalUrl:           state.OriginalUrl,
+		MatchedParameters:     state.MatchedParameters,
+		Certificates:          state.Certificates,
 	})
 }
 
