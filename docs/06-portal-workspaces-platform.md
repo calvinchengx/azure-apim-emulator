@@ -79,3 +79,33 @@ and deployment constraints. Validation and the parity UI read the same data.
 Changes in Microsoft capability tables produce an upstream-audit diff requiring
 review before release.
 
+## Workspaces, as implemented
+
+A workspace is a **scope**, not another resource kind. The ARM router peels a
+`/workspaces/{id}` segment off the path, records it, and dispatches the rest
+unchanged, so every family the emulator implements at service scope is available
+inside a workspace with no per-family work. That is the whole mechanism: the
+only thing that differs is the parent ID the resources hang off.
+
+**The store was rebuilt to allow it.** Every resource table previously declared
+`REFERENCES services(id)`, which made "a resource's parent is a service" a
+database-level invariant, and workspaces make that false. There is now a
+`scopes` table that services and workspaces both register in, with 20 resource
+foreign keys repointed at it. A service is its own scope; a workspace is a scope
+owned by its service, so deleting a service cascades through its workspaces'
+scopes to everything inside them.
+
+Isolation is exact rather than prefix-based, because the store matches parent
+IDs exactly. The same API name can exist at service scope and in a workspace,
+and neither listing sees the other.
+
+**Existing databases are migrated on open.** SQLite cannot alter a foreign key
+in place, so legacy tables are rebuilt: create, copy, drop, rename. The script is
+generated from `sqlite_master` rather than a hand-written list, so a table added
+later cannot be forgotten, and it runs as one all-or-nothing transaction, so a
+failure leaves the original schema untouched rather than half-migrated.
+
+**Workspace RBAC is not modelled.** Access to a workspace in Azure is granted
+through Azure RBAC role assignments, which belong to a different resource
+provider that this emulator has no surface for. Nothing here is an access-control
+claim: the isolation described above is about resource parentage, not permission.

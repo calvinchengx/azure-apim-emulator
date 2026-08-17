@@ -244,6 +244,21 @@ type APISchema struct {
 // ID returns the API schema ARM resource ID.
 func (v APISchema) ID() string { return v.APIID + "/schemas/" + v.Name }
 
+// Workspace is a team-scoped container inside a service. Every APIM resource
+// family can be parented to a workspace instead of to the service, which is why
+// it is modelled as a scope rather than as another resource kind.
+type Workspace struct {
+	ServiceID   string
+	Name        string
+	DisplayName string
+	Description string
+	Document    map[string]any
+	ETag        string
+}
+
+// ID returns the workspace ARM resource ID.
+func (v Workspace) ID() string { return v.ServiceID + "/workspaces/" + v.Name }
+
 // APIResolver binds one GraphQL schema field to a data source. Azure addresses
 // it by Type and Field (the portal calls the pair a "path", e.g. Query/items),
 // and the resolver's own policy at .../resolvers/{name}/policies/policy holds

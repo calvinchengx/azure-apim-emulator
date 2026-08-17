@@ -126,3 +126,98 @@ if (gatewayResponse.status !== 200 || (await gatewayResponse.text()) !== "sdk-ba
   throw new Error(`gateway response: ${gatewayResponse.status}`);
 }
 console.log("JavaScript APIM SDK witness passed");
+
+// ---------------------------------------------------------------------------
+// Workspaces, driven by Microsoft's own SDK.
+//
+// This is the assertion that matters for the scoping model: the SDK builds the
+// workspace-scoped URLs itself, from its own understanding of the resource
+// hierarchy. If the emulator composed those paths or IDs differently, the SDK
+// would not find what it just created.
+const workspaceId = "team-a";
+const workspace = await client.workspace.createOrUpdate(resourceGroup, serviceName, workspaceId, {
+  displayName: "Team A",
+  description: "workspace witness",
+});
+if (workspace.name !== workspaceId) {
+  throw new Error(`unexpected workspace name: ${workspace.name}`);
+}
+if (!workspace.id.endsWith(`/service/${serviceName}/workspaces/${workspaceId}`)) {
+  throw new Error(`workspace id is not workspace-scoped: ${workspace.id}`);
+}
+
+const listed = [];
+for await (const item of client.workspace.listByService(resourceGroup, serviceName)) {
+  listed.push(item.name);
+}
+if (!listed.includes(workspaceId)) {
+  throw new Error(`workspace missing from listByService: ${listed.join(", ")}`);
+}
+
+// An API inside the workspace, created through the SDK's workspace client.
+const scopedApi = await client.workspaceApi.beginCreateOrUpdateAndWait(
+  resourceGroup,
+  serviceName,
+  workspaceId,
+  "scoped-api",
+  {
+    displayName: "Scoped API",
+    path: "scoped",
+    serviceUrl: process.env.APIM_BACKEND_URL,
+    protocols: ["https"],
+    subscriptionRequired: false,
+  },
+);
+if (!scopedApi.id.includes(`/workspaces/${workspaceId}/apis/scoped-api`)) {
+  throw new Error(`workspace API id is not workspace-scoped: ${scopedApi.id}`);
+}
+
+// The two scopes must not see each other. This is the property that makes a
+// workspace a boundary rather than a naming convention.
+const workspaceApis = [];
+for await (const item of client.workspaceApi.listByService(resourceGroup, serviceName, workspaceId)) {
+  workspaceApis.push(item.name);
+}
+if (!workspaceApis.includes("scoped-api")) {
+  throw new Error(`workspace API listing missing its own API: ${workspaceApis.join(", ")}`);
+}
+if (workspaceApis.includes("javascript-sdk-api")) {
+  throw new Error("the service's API leaked into the workspace listing");
+}
+
+const serviceApis = [];
+for await (const item of client.api.listByService(resourceGroup, serviceName)) {
+  serviceApis.push(item.name);
+}
+if (!serviceApis.includes("javascript-sdk-api")) {
+  throw new Error(`service API listing lost its own API: ${serviceApis.join(", ")}`);
+}
+if (serviceApis.includes("scoped-api")) {
+  throw new Error("the workspace API leaked into the service listing");
+}
+
+// A workspace-scoped product, to prove the scoping is not special-cased to APIs.
+await client.workspaceProduct.createOrUpdate(resourceGroup, serviceName, workspaceId, "scoped-product", {
+  displayName: "Scoped Product",
+});
+const workspaceProducts = [];
+for await (const item of client.workspaceProduct.listByService(resourceGroup, serviceName, workspaceId)) {
+  workspaceProducts.push(item.name);
+}
+if (!workspaceProducts.includes("scoped-product")) {
+  throw new Error(`workspace product listing = ${workspaceProducts.join(", ")}`);
+}
+
+// Deleting the workspace takes its contents with it.
+await client.workspace.delete(resourceGroup, serviceName, workspaceId, "*");
+let stillThere = false;
+try {
+  await client.workspaceApi.get(resourceGroup, serviceName, workspaceId, "scoped-api");
+  stillThere = true;
+} catch {
+  // expected: the scope is gone, so nothing inside it resolves
+}
+if (stillThere) {
+  throw new Error("deleting a workspace left its API addressable");
+}
+console.log("javascript witness: workspaces scoped, isolated, and cascaded");

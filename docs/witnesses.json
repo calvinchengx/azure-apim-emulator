@@ -195,6 +195,12 @@
       "go:TestWSDLImportDerivesOperationsAndMarksTheAPI",
       "go:TestSOAPForwardsTheEnvelopeVerbatim",
       "go:TestSOAPRefusesUnknownOperationsWithAFault"
+    ],
+    "workspaces": [
+      "ci:sdk-witnesses",
+      "go:TestWorkspaceScopesEveryResourceFamily",
+      "go:TestLegacyDatabaseAdoptsScopes",
+      "go:TestAdoptScopesIsAllOrNothing"
     ]
   }
 }
