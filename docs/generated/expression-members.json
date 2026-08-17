@@ -1,30 +1,30 @@
 {
-  "source": "expression binder",
+  "source": "Microsoft Learn policy-expressions reference, cross-checked against the expression binder",
   "status": "partial",
   "members": [
     {
       "type": "context",
-      "name": "Request",
+      "name": "Api",
       "status": "bound"
     },
     {
       "type": "context",
-      "name": "Response",
+      "name": "Deployment",
       "status": "bound"
     },
     {
       "type": "context",
-      "name": "Variables",
+      "name": "Elapsed",
+      "status": "planned"
+    },
+    {
+      "type": "context",
+      "name": "GraphQL",
       "status": "bound"
     },
     {
       "type": "context",
       "name": "LastError",
-      "status": "bound"
-    },
-    {
-      "type": "context",
-      "name": "Api",
       "status": "bound"
     },
     {
@@ -39,8 +39,33 @@
     },
     {
       "type": "context",
+      "name": "Request",
+      "status": "bound"
+    },
+    {
+      "type": "context",
+      "name": "RequestId",
+      "status": "planned"
+    },
+    {
+      "type": "context",
+      "name": "Response",
+      "status": "bound"
+    },
+    {
+      "type": "context",
       "name": "Subscription",
       "status": "bound"
+    },
+    {
+      "type": "context",
+      "name": "Timestamp",
+      "status": "planned"
+    },
+    {
+      "type": "context",
+      "name": "Tracing",
+      "status": "planned"
     },
     {
       "type": "context",
@@ -49,13 +74,388 @@
     },
     {
       "type": "context",
-      "name": "Deployment",
+      "name": "Variables",
       "status": "bound"
     },
     {
-      "type": "context",
-      "name": "GraphQL",
+      "type": "Api",
+      "name": "Id",
       "status": "bound"
+    },
+    {
+      "type": "Api",
+      "name": "IsCurrentRevision",
+      "status": "planned"
+    },
+    {
+      "type": "Api",
+      "name": "Name",
+      "status": "bound"
+    },
+    {
+      "type": "Api",
+      "name": "Path",
+      "status": "bound"
+    },
+    {
+      "type": "Api",
+      "name": "Revision",
+      "status": "planned"
+    },
+    {
+      "type": "Api",
+      "name": "ServiceUrl",
+      "status": "planned"
+    },
+    {
+      "type": "Api",
+      "name": "Version",
+      "status": "planned"
+    },
+    {
+      "type": "Deployment",
+      "name": "Certificates",
+      "status": "planned"
+    },
+    {
+      "type": "Deployment",
+      "name": "Gateway",
+      "status": "planned"
+    },
+    {
+      "type": "Deployment",
+      "name": "GatewayId",
+      "status": "planned"
+    },
+    {
+      "type": "Deployment",
+      "name": "Region",
+      "status": "bound"
+    },
+    {
+      "type": "Deployment",
+      "name": "ServiceId",
+      "status": "planned"
+    },
+    {
+      "type": "Deployment",
+      "name": "ServiceName",
+      "status": "bound"
+    },
+    {
+      "type": "Gateway",
+      "name": "Id",
+      "status": "planned"
+    },
+    {
+      "type": "Gateway",
+      "name": "InstanceId",
+      "status": "planned"
+    },
+    {
+      "type": "Gateway",
+      "name": "IsManaged",
+      "status": "planned"
+    },
+    {
+      "type": "Gateway",
+      "name": "RegionName",
+      "status": "planned"
+    },
+    {
+      "type": "LastError",
+      "name": "Element",
+      "status": "planned"
+    },
+    {
+      "type": "LastError",
+      "name": "ElementPath",
+      "status": "planned"
+    },
+    {
+      "type": "LastError",
+      "name": "Message",
+      "status": "bound"
+    },
+    {
+      "type": "LastError",
+      "name": "Reason",
+      "status": "planned"
+    },
+    {
+      "type": "LastError",
+      "name": "Scope",
+      "status": "planned"
+    },
+    {
+      "type": "LastError",
+      "name": "Section",
+      "status": "planned"
+    },
+    {
+      "type": "LastError",
+      "name": "Source",
+      "status": "planned"
+    },
+    {
+      "type": "Operation",
+      "name": "Id",
+      "status": "bound"
+    },
+    {
+      "type": "Operation",
+      "name": "Method",
+      "status": "bound"
+    },
+    {
+      "type": "Operation",
+      "name": "Name",
+      "status": "bound"
+    },
+    {
+      "type": "Operation",
+      "name": "UrlTemplate",
+      "status": "bound"
+    },
+    {
+      "type": "Product",
+      "name": "Apis",
+      "status": "planned"
+    },
+    {
+      "type": "Product",
+      "name": "ApprovalRequired",
+      "status": "planned"
+    },
+    {
+      "type": "Product",
+      "name": "Groups",
+      "status": "planned"
+    },
+    {
+      "type": "Product",
+      "name": "Id",
+      "status": "bound"
+    },
+    {
+      "type": "Product",
+      "name": "Name",
+      "status": "bound"
+    },
+    {
+      "type": "Product",
+      "name": "State",
+      "status": "planned"
+    },
+    {
+      "type": "Product",
+      "name": "SubscriptionRequired",
+      "status": "planned"
+    },
+    {
+      "type": "Product",
+      "name": "SubscriptionsLimit",
+      "status": "planned"
+    },
+    {
+      "type": "Request",
+      "name": "Body",
+      "status": "bound"
+    },
+    {
+      "type": "Request",
+      "name": "Certificate",
+      "status": "planned"
+    },
+    {
+      "type": "Request",
+      "name": "Headers",
+      "status": "bound"
+    },
+    {
+      "type": "Request",
+      "name": "IpAddress",
+      "status": "bound"
+    },
+    {
+      "type": "Request",
+      "name": "MatchedParameters",
+      "status": "planned"
+    },
+    {
+      "type": "Request",
+      "name": "Method",
+      "status": "bound"
+    },
+    {
+      "type": "Request",
+      "name": "OriginalUrl",
+      "status": "planned"
+    },
+    {
+      "type": "Request",
+      "name": "Url",
+      "status": "bound"
+    },
+    {
+      "type": "Response",
+      "name": "Body",
+      "status": "bound"
+    },
+    {
+      "type": "Response",
+      "name": "Headers",
+      "status": "bound"
+    },
+    {
+      "type": "Response",
+      "name": "StatusCode",
+      "status": "bound"
+    },
+    {
+      "type": "Response",
+      "name": "StatusReason",
+      "status": "bound"
+    },
+    {
+      "type": "Subscription",
+      "name": "CreatedDate",
+      "status": "planned"
+    },
+    {
+      "type": "Subscription",
+      "name": "EndDate",
+      "status": "planned"
+    },
+    {
+      "type": "Subscription",
+      "name": "Id",
+      "status": "bound"
+    },
+    {
+      "type": "Subscription",
+      "name": "Key",
+      "status": "planned"
+    },
+    {
+      "type": "Subscription",
+      "name": "Name",
+      "status": "bound"
+    },
+    {
+      "type": "Subscription",
+      "name": "PrimaryKey",
+      "status": "planned"
+    },
+    {
+      "type": "Subscription",
+      "name": "SecondaryKey",
+      "status": "planned"
+    },
+    {
+      "type": "Subscription",
+      "name": "StartDate",
+      "status": "planned"
+    },
+    {
+      "type": "User",
+      "name": "Email",
+      "status": "planned"
+    },
+    {
+      "type": "User",
+      "name": "FirstName",
+      "status": "planned"
+    },
+    {
+      "type": "User",
+      "name": "Groups",
+      "status": "planned"
+    },
+    {
+      "type": "User",
+      "name": "Id",
+      "status": "bound"
+    },
+    {
+      "type": "User",
+      "name": "Identities",
+      "status": "planned"
+    },
+    {
+      "type": "User",
+      "name": "LastName",
+      "status": "planned"
+    },
+    {
+      "type": "User",
+      "name": "Note",
+      "status": "planned"
+    },
+    {
+      "type": "User",
+      "name": "RegistrationDate",
+      "status": "planned"
+    },
+    {
+      "type": "Group",
+      "name": "Id",
+      "status": "planned"
+    },
+    {
+      "type": "Group",
+      "name": "Name",
+      "status": "planned"
+    },
+    {
+      "type": "UserIdentity",
+      "name": "Id",
+      "status": "planned"
+    },
+    {
+      "type": "UserIdentity",
+      "name": "Provider",
+      "status": "planned"
+    },
+    {
+      "type": "Url",
+      "name": "Host",
+      "status": "bound"
+    },
+    {
+      "type": "Url",
+      "name": "Path",
+      "status": "bound"
+    },
+    {
+      "type": "Url",
+      "name": "Port",
+      "status": "bound"
+    },
+    {
+      "type": "Url",
+      "name": "Query",
+      "status": "bound"
+    },
+    {
+      "type": "Url",
+      "name": "QueryString",
+      "status": "bound"
+    },
+    {
+      "type": "Url",
+      "name": "Scheme",
+      "status": "bound"
+    },
+    {
+      "type": "Body",
+      "name": "As",
+      "status": "planned"
+    },
+    {
+      "type": "Body",
+      "name": "AsFormUrlEncodedContent",
+      "status": "planned"
     },
     {
       "type": "GraphQL",
@@ -98,101 +498,6 @@
       "status": "bound"
     },
     {
-      "type": "Request",
-      "name": "Method",
-      "status": "bound"
-    },
-    {
-      "type": "Request",
-      "name": "Url",
-      "status": "bound"
-    },
-    {
-      "type": "Request",
-      "name": "URL",
-      "status": "bound"
-    },
-    {
-      "type": "Request",
-      "name": "Headers",
-      "status": "bound"
-    },
-    {
-      "type": "Request",
-      "name": "IpAddress",
-      "status": "bound"
-    },
-    {
-      "type": "Request",
-      "name": "Body",
-      "status": "bound"
-    },
-    {
-      "type": "Request",
-      "name": "OriginalUrl",
-      "status": "planned"
-    },
-    {
-      "type": "Response",
-      "name": "StatusCode",
-      "status": "bound"
-    },
-    {
-      "type": "Response",
-      "name": "StatusReason",
-      "status": "bound"
-    },
-    {
-      "type": "Response",
-      "name": "Headers",
-      "status": "bound"
-    },
-    {
-      "type": "Response",
-      "name": "Body",
-      "status": "bound"
-    },
-    {
-      "type": "LastError",
-      "name": "Message",
-      "status": "bound"
-    },
-    {
-      "type": "LastError",
-      "name": "Reason",
-      "status": "planned"
-    },
-    {
-      "type": "Url",
-      "name": "Path",
-      "status": "bound"
-    },
-    {
-      "type": "Url",
-      "name": "Host",
-      "status": "bound"
-    },
-    {
-      "type": "Url",
-      "name": "Scheme",
-      "status": "bound"
-    },
-    {
-      "type": "Url",
-      "name": "Query",
-      "status": "bound"
-    },
-    {
-      "type": "Url",
-      "name": "QueryString",
-      "status": "bound"
-    },
-    {
-      "type": "Url",
-      "name": "Port",
-      "status": "bound"
-    },
-    {
       "type": "Headers",
       "name": "Get",
       "status": "bound"
@@ -210,117 +515,12 @@
     {
       "type": "Body",
       "name": "AsString",
-      "status": "bound"
-    },
-    {
-      "type": "Body",
-      "name": "AsJObject",
-      "status": "planned"
-    },
-    {
-      "type": "Body",
-      "name": "AsJson",
-      "status": "planned"
-    },
-    {
-      "type": "Api",
-      "name": "Id",
-      "status": "bound"
-    },
-    {
-      "type": "Api",
-      "name": "Name",
-      "status": "bound"
-    },
-    {
-      "type": "Api",
-      "name": "Path",
-      "status": "bound"
-    },
-    {
-      "type": "Api",
-      "name": "Revision",
-      "status": "planned"
-    },
-    {
-      "type": "Operation",
-      "name": "Id",
-      "status": "bound"
-    },
-    {
-      "type": "Operation",
-      "name": "Name",
-      "status": "bound"
-    },
-    {
-      "type": "Operation",
-      "name": "Method",
-      "status": "bound"
-    },
-    {
-      "type": "Operation",
-      "name": "UrlTemplate",
-      "status": "bound"
-    },
-    {
-      "type": "Product",
-      "name": "Id",
-      "status": "bound"
-    },
-    {
-      "type": "Product",
-      "name": "Name",
-      "status": "bound"
-    },
-    {
-      "type": "Product",
-      "name": "Apis",
-      "status": "planned"
-    },
-    {
-      "type": "Subscription",
-      "name": "Id",
-      "status": "bound"
-    },
-    {
-      "type": "Subscription",
-      "name": "Name",
-      "status": "bound"
-    },
-    {
-      "type": "Subscription",
-      "name": "Key",
-      "status": "planned"
-    },
-    {
-      "type": "User",
-      "name": "Id",
-      "status": "bound"
+      "status": "extension"
     },
     {
       "type": "User",
       "name": "Name",
-      "status": "bound"
-    },
-    {
-      "type": "User",
-      "name": "Email",
-      "status": "planned"
-    },
-    {
-      "type": "Deployment",
-      "name": "ServiceName",
-      "status": "bound"
-    },
-    {
-      "type": "Deployment",
-      "name": "Region",
-      "status": "bound"
-    },
-    {
-      "type": "Deployment",
-      "name": "Gateway",
-      "status": "planned"
+      "status": "extension"
     },
     {
       "type": "value",

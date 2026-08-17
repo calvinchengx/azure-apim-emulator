@@ -23,7 +23,7 @@ func TestRequestEnvBindings(t *testing.T) {
 		{"@(context.Request.Method == 'POST')", true},
 		{"@(context.Request.Url.Path == '/match')", true},
 		{`@(context.Request.Url + "")`, "https://api.example/match?x=1"},
-		{"@(context.Request.URL.Path)", "/match"},
+		{"@(context.Request.Url.Path)", "/match"},
 		{"@(context.Request.Url.Host)", "api.example"},
 		{"@(context.Request.Url.Scheme)", "https"},
 		{"@(context.Request.Url.Query)", "x=1"},
