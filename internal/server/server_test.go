@@ -854,3 +854,51 @@ func TestServerValidatesResolverPoliciesAsDataSources(t *testing.T) {
 		t.Fatalf("a valid <http-data-source> returned %d", accepted.StatusCode)
 	}
 }
+
+// The server is what connects the credential-manager ARM operations to the
+// OAuth2 engine. Asserted here rather than in the handler tests, because a
+// handler test with hand-set hooks asserts the test's own wiring rather than
+// the server's.
+func TestServerWiresTheConsentHandshake(t *testing.T) {
+	srv := newTestServer(t, false, nil)
+	front := httptest.NewServer(srv.Handler())
+	defer front.Close()
+
+	base := "/subscriptions/" + testSubscription + "/resourceGroups/test-rg/providers/Microsoft.ApiManagement/service/emulator"
+	service := management(t, front.Client(), http.MethodPut, front.URL+base+"?api-version=2024-05-01",
+		`{"location":"local","sku":{"name":"Developer","capacity":1},"properties":{"publisherName":"Local","publisherEmail":"local@example.test"}}`)
+	service.Body.Close()
+
+	putOK(t, front, base+"/authorizationProviders/idp",
+		`{"properties":{"displayName":"IdP","identityProvider":"oauth2","oauth2":{"authorizationEndpoint":"https://idp.test/auth","tokenEndpoint":"https://idp.test/token","grantTypes":{"authorizationCode":{"clientId":"cid","clientSecret":"s","scopes":"offline_access"}}}}}`)
+	putOK(t, front, base+"/authorizationProviders/idp/authorizations/user",
+		`{"properties":{"authorizationType":"OAuth2","oauth2grantType":"AuthorizationCode"}}`)
+
+	// getLoginLinks reaches the OAuth2 engine and returns a real consent URL.
+	links := management(t, front.Client(), http.MethodPost,
+		front.URL+base+"/authorizationProviders/idp/authorizations/user/getLoginLinks?api-version=2024-05-01", `{}`)
+	defer links.Body.Close()
+	if links.StatusCode != http.StatusOK {
+		fatalResponse(t, links)
+	}
+	body, _ := io.ReadAll(links.Body)
+	if !strings.Contains(string(body), "https://idp.test/auth") {
+		t.Fatalf("loginLink = %s", body)
+	}
+	// offline_access was requested, so the link must ask for consent or the
+	// provider issues no refresh token.
+	if !strings.Contains(string(body), "prompt=consent") {
+		t.Fatalf("the login link must request consent for offline access: %s", body)
+	}
+
+	// confirmConsentCode reaches the engine too: the exchange is attempted
+	// against the configured endpoint and fails because nothing is listening,
+	// which is the engine running rather than a stub answering.
+	confirm := management(t, front.Client(), http.MethodPost,
+		front.URL+base+"/authorizationProviders/idp/authorizations/user/confirmConsentCode?api-version=2024-05-01",
+		`{"consentCode":"the-code"}`)
+	defer confirm.Body.Close()
+	if confirm.StatusCode < 400 {
+		t.Fatalf("redeeming against an unreachable provider must fail, got %d", confirm.StatusCode)
+	}
+}

@@ -154,3 +154,78 @@ func TestBuildRequestWithNoBody(t *testing.T) {
 		t.Fatalf("body = %q", body)
 	}
 }
+
+// get-authorization-context is how a policy reaches a stored credential. The
+// action carries only NAMES; the gateway resolves them, so a policy can never
+// name a service and reach another tenant's credentials.
+func TestGetAuthorizationContextCompilesAndExecutes(t *testing.T) {
+	plan, err := Compile(`<policies><inbound>
+	  <get-authorization-context provider-id="idp" authorization-id="cred" context-variable-name="auth" ignore-error="false" />
+	</inbound></policies>`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.Inbound) != 1 || plan.Inbound[0].Kind != ActionGetAuthorizationContext {
+		t.Fatalf("plan = %+v", plan.Inbound)
+	}
+
+	var asked [2]string
+	state := &State{FetchCredential: func(provider, authorization string) (expr.AuthorizationContext, error) {
+		asked = [2]string{provider, authorization}
+		return expr.AuthorizationContext{AccessToken: "at", ClientID: "cid"}, nil
+	}}
+	if err := Execute(plan.Inbound, state); err != nil {
+		t.Fatal(err)
+	}
+	if asked != [2]string{"idp", "cred"} {
+		t.Fatalf("resolved %v", asked)
+	}
+	if state.AuthorizationContexts["auth"].AccessToken != "at" {
+		t.Fatalf("contexts = %+v", state.AuthorizationContexts)
+	}
+}
+
+func TestGetAuthorizationContextRefusesIncompleteConfiguration(t *testing.T) {
+	for name, document := range map[string]string{
+		"no provider":      `<policies><inbound><get-authorization-context authorization-id="c" context-variable-name="v" /></inbound></policies>`,
+		"no authorization": `<policies><inbound><get-authorization-context provider-id="p" context-variable-name="v" /></inbound></policies>`,
+		"no variable":      `<policies><inbound><get-authorization-context provider-id="p" authorization-id="c" /></inbound></policies>`,
+	} {
+		plan, err := Compile(document, false)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if plan.Inbound[0].Kind != ActionUnsupported {
+			t.Errorf("%s must not compile to a runnable action", name)
+		}
+	}
+}
+
+// A credential that cannot be resolved stops the pipeline by default: sending
+// the request uncredentialed would reach the backend as an anonymous call and
+// read as a backend authorization bug.
+func TestGetAuthorizationContextFailureHandling(t *testing.T) {
+	strict, _ := Compile(`<policies><inbound><get-authorization-context provider-id="p" authorization-id="c" context-variable-name="v" /></inbound></policies>`, true)
+	failing := func(string, string) (expr.AuthorizationContext, error) {
+		return expr.AuthorizationContext{}, errors.New("not consented")
+	}
+	if err := Execute(strict.Inbound, &State{FetchCredential: failing}); err == nil {
+		t.Fatal("an unresolvable credential must stop the pipeline")
+	}
+
+	// ignore-error is the documented way to let the request proceed without it.
+	lenient, _ := Compile(`<policies><inbound><get-authorization-context provider-id="p" authorization-id="c" context-variable-name="v" ignore-error="true" /></inbound></policies>`, true)
+	state := &State{FetchCredential: failing}
+	if err := Execute(lenient.Inbound, state); err != nil {
+		t.Fatalf("ignore-error=true must not fail the pipeline: %v", err)
+	}
+	if _, present := state.AuthorizationContexts["v"]; present {
+		t.Fatal("a failed fetch must not leave a credential behind for a later policy to read")
+	}
+
+	// With no credential engine attached the action refuses rather than
+	// silently doing nothing, which would send an uncredentialed request.
+	if err := Execute(strict.Inbound, &State{}); err == nil {
+		t.Fatal("a missing credential store must be reported")
+	}
+}

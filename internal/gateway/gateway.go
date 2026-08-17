@@ -103,6 +103,7 @@ type Runtime struct {
 	eventStore           atomic.Pointer[store.Store]
 	breakerMu            sync.Mutex
 	breakers             map[string]circuitState
+	credentials          *credentialCache
 	policyTokenValidator func(string) error
 	policySendRequest    func(*http.Request) (*http.Response, error)
 	faultMu              sync.Mutex
@@ -178,7 +179,7 @@ func New(defaultService string, client *http.Client) *Runtime {
 	if client == nil {
 		client = http.DefaultClient
 	}
-	r := &Runtime{defaultService: defaultService, client: client, policySendRequest: client.Do, traces: map[string]Trace{}, breakers: map[string]circuitState{}, faults: map[string]Fault{}, rateWindows: map[string][]time.Time{}, bandwidthWindows: map[string][]bandwidthStamp{}, cache: map[string]cacheEntry{}, valueCache: map[string]valueCacheEntry{}, concurrency: map[string]chan struct{}{}}
+	r := &Runtime{defaultService: defaultService, client: client, policySendRequest: client.Do, traces: map[string]Trace{}, breakers: map[string]circuitState{}, faults: map[string]Fault{}, rateWindows: map[string][]time.Time{}, bandwidthWindows: map[string][]bandwidthStamp{}, cache: map[string]cacheEntry{}, valueCache: map[string]valueCacheEntry{}, concurrency: map[string]chan struct{}{}, credentials: newCredentialCache()}
 	r.current.Store(&Snapshot{Services: map[string]*Service{}})
 	return r
 }
@@ -794,7 +795,7 @@ func (r *Runtime) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 	cacheKey := service.Name + ":" + route.API.ID() + ":" + req.Method + ":" + req.URL.RequestURI()
 	apiCtx, operationCtx, productCtx, subscriptionCtx, userCtx, deploymentCtx := bindRequestContext(service, route, operation, req)
-	state := &policy.State{Request: req, BackendURL: route.API.ServiceURL, Path: relative, Headers: make(http.Header), ValidateToken: r.policyTokenValidator, SendRequest: r.policySendRequest, Trace: func(phase, detail string) { traceEvent(trace, phase, detail) }, RateLimit: r.rateLimit, BandwidthLimit: r.bandwidthLimit, AcquireConcurrency: r.acquireConcurrency, CacheGet: r.cacheGet, CacheSet: r.cacheSet, ValueCacheGet: r.valueCacheGet, ValueCacheSet: r.valueCacheSet, ValueCacheRemove: r.valueCacheRemove, CacheKey: cacheKey, Api: apiCtx, Operation: operationCtx, Product: productCtx, Subscription: subscriptionCtx, User: userCtx, Deployment: deploymentCtx}
+	state := &policy.State{Request: req, BackendURL: route.API.ServiceURL, Path: relative, Headers: make(http.Header), ValidateToken: r.policyTokenValidator, SendRequest: r.policySendRequest, FetchCredential: r.credentialFetcher(req, route.API.ServiceID), Trace: func(phase, detail string) { traceEvent(trace, phase, detail) }, RateLimit: r.rateLimit, BandwidthLimit: r.bandwidthLimit, AcquireConcurrency: r.acquireConcurrency, CacheGet: r.cacheGet, CacheSet: r.cacheSet, ValueCacheGet: r.valueCacheGet, ValueCacheSet: r.valueCacheSet, ValueCacheRemove: r.valueCacheRemove, CacheKey: cacheKey, Api: apiCtx, Operation: operationCtx, Product: productCtx, Subscription: subscriptionCtx, User: userCtx, Deployment: deploymentCtx}
 	defer func() {
 		for index := len(state.ConcurrencyReleases) - 1; index >= 0; index-- {
 			state.ConcurrencyReleases[index]()

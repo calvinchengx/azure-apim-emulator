@@ -78,6 +78,26 @@
       "status": "bound"
     },
     {
+      "type": "Authorization",
+      "name": "AccessToken",
+      "status": "bound"
+    },
+    {
+      "type": "Authorization",
+      "name": "ClientId",
+      "status": "bound"
+    },
+    {
+      "type": "Authorization",
+      "name": "Scopes",
+      "status": "bound"
+    },
+    {
+      "type": "Authorization",
+      "name": "ExpiresIn",
+      "status": "bound"
+    },
+    {
       "type": "Request",
       "name": "Method",
       "status": "bound"

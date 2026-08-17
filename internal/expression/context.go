@@ -48,6 +48,12 @@ type Context struct {
 	Subscription *NamedContext
 	User         *NamedContext
 	Deployment   *DeploymentContext
+	// AuthorizationContexts are credential-manager results, keyed by the
+	// variable name the policy stored them under. They ride alongside
+	// Variables rather than inside it because Variables is map[string]string
+	// and a credential is an object: `context.Variables["x"].AccessToken` has
+	// to resolve a member, which a string cannot answer.
+	AuthorizationContexts map[string]AuthorizationContext
 	// GraphQL is bound only while a GraphQL resolver's policy is running. It
 	// is null everywhere else, so `context.GraphQL` in an inbound policy
 	// evaluates to null rather than to an empty argument set that would read
@@ -87,7 +93,7 @@ func (c *contextHost) member(name string) (Value, error) {
 		}
 		return Object(&responseHost{response: c.ctx.Response}), nil
 	case "Variables":
-		return Object(&mapHost{values: c.ctx.Variables}), nil
+		return Object(&mapHost{values: c.ctx.Variables, objects: c.ctx.AuthorizationContexts}), nil
 	case "LastError":
 		if c.ctx.LastError == nil {
 			return Null(), nil
@@ -382,6 +388,8 @@ func (h *headerHost) getValueOrDefault(args []Value) (Value, error) {
 
 type mapHost struct {
 	values map[string]string
+	// objects are variables whose value is a credential rather than text.
+	objects map[string]AuthorizationContext
 }
 
 func (m *mapHost) member(name string) (Value, error) {
@@ -405,6 +413,13 @@ func (m *mapHost) member(name string) (Value, error) {
 func (m *mapHost) index(key Value) (Value, error) {
 	if key.kind != KindString {
 		return Null(), fmt.Errorf("index requires a string")
+	}
+	// An object variable is checked FIRST: get-authorization-context stores a
+	// credential, and the documented expression reads a member off it. Falling
+	// through to the string map would answer null and make
+	// `.AccessToken` fail on a variable that is genuinely present.
+	if credential, ok := m.objects[key.str]; ok {
+		return Object(&authorizationHost{context: credential}), nil
 	}
 	if m.values == nil {
 		return Null(), nil
@@ -491,4 +506,37 @@ func clientIP(remote string) string {
 		return remote
 	}
 	return host
+}
+
+// AuthorizationContext is what get-authorization-context stores: the credential
+// APIM holds for a backend call.
+//
+// AccessToken is the only member a policy needs to attach the credential, and
+// it is deliberately the only one carrying secret material. The rest describe
+// WHICH credential was used, so a policy can branch on it without handling the
+// token itself.
+type AuthorizationContext struct {
+	AccessToken string
+	ClientID    string
+	Scopes      string
+	ExpiresIn   int64
+}
+
+type authorizationHost struct {
+	context AuthorizationContext
+}
+
+func (h *authorizationHost) member(name string) (Value, error) {
+	switch name {
+	case "AccessToken":
+		return String(h.context.AccessToken), nil
+	case "ClientId":
+		return String(h.context.ClientID), nil
+	case "Scopes":
+		return String(h.context.Scopes), nil
+	case "ExpiresIn":
+		return Int(h.context.ExpiresIn), nil
+	default:
+		return Null(), fmt.Errorf("unknown member %s", name)
+	}
 }

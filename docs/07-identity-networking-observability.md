@@ -11,6 +11,50 @@ APIM uses identity in several distinct places:
 - self-hosted gateways authenticating to configuration endpoints
 - OAuth/OIDC authorization servers and credential managers
 
+### Credential manager (authorizationProviders)
+
+**The direction is the thing to keep straight.** This is OUTBOUND
+authentication: APIM acts as the OAuth2 **client** and token vault for calls to
+a backend. It is not authenticating the caller of your API (that is
+`validate-jwt`), and it is not the developer portal's sign-in (that is
+`identityProviders` and `authorizationServers`). The names sit one word apart
+and the resources are unrelated.
+
+An `authorizationProvider` holds the OAuth2 app configuration for a SaaS. Under
+it, each `authorization` is one stored credential, in one of two grants:
+
+- **clientCredentials** is service-to-service and usable the moment it is
+  configured.
+- **authorizationCode** needs a person. It is created in `Error` status, and
+  becomes `Connected` only after `getLoginLinks` hands back a URL someone
+  visits and `confirmConsentCode` redeems what they came back with. The
+  emulator never auto-consents: a flow that completed without anyone approving
+  it would look finished here and stall in Azure.
+
+`accessPolicies` name the principals permitted to use a credential. Deleting a
+provider cascades, because withdrawing an integration must revoke what it
+issued rather than orphan it.
+
+A policy reaches the credential through `get-authorization-context`, which puts
+it in a variable read as
+`@(((Authorization)context.Variables["auth"]).AccessToken)`. By default a
+credential that cannot be resolved stops the pipeline; `ignore-error="true"` is
+the documented way to let the request proceed without it.
+
+**What never leaves the emulator.** The client secret is not echoed by the
+management plane, and the refresh token is not bound into the expression
+context. A policy sees the access token and nothing else, because an expression
+able to export a refresh token would export a long-lived grant, which is the
+one thing a credential manager exists to prevent. The scope a policy may reach
+comes from the route the request landed on, not from anything the policy names.
+
+**Pending.** Managed-identity and JWT `identity-type`, per-caller access-policy
+enforcement at request time, and the Azure-hosted providers (GitHub, Google,
+Dropbox, MS Graph). Those last need registered OAuth apps and, for the
+authorization-code grant, a human at a browser, so they belong in an opt-in
+differential suite rather than CI.
+
+
 Each is modeled separately even when all tokens come from `entra-emulator`.
 
 ## Entra integration

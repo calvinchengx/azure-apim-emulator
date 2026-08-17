@@ -73,6 +73,9 @@ func TestAllowlistBoundMembersEvaluate(t *testing.T) {
 		Subscription: &NamedContext{Id: "dev", Name: "Dev"},
 		User:         &NamedContext{Id: "ada", Name: "Ada"},
 		Deployment:   &DeploymentContext{ServiceName: "emulator", Region: "local"},
+		AuthorizationContexts: map[string]AuthorizationContext{
+			"auth-context": {AccessToken: "tok", ClientID: "client", Scopes: "read", ExpiresIn: 3600},
+		},
 		GraphQL: &GraphQLContext{
 			Arguments: map[string]any{"id": "42", "first": float64(10)},
 			Parent:    map[string]any{"id": "parent"},
@@ -94,6 +97,10 @@ func TestAllowlistBoundMembersEvaluate(t *testing.T) {
 		"GraphQL.Parent":            `@(context.GraphQL.Parent["id"])`,
 		"Arguments.ContainsKey":     "@(context.GraphQL.Arguments.ContainsKey('id'))",
 		"Arguments.Count":           "@(context.GraphQL.Arguments.Count)",
+		"Authorization.AccessToken": `@(((Authorization)context.Variables["auth-context"]).AccessToken)`,
+		"Authorization.ClientId":    `@(((Authorization)context.Variables["auth-context"]).ClientId)`,
+		"Authorization.Scopes":      `@(((Authorization)context.Variables["auth-context"]).Scopes)`,
+		"Authorization.ExpiresIn":   `@(((Authorization)context.Variables["auth-context"]).ExpiresIn)`,
 		"Request.Method":            "@(context.Request.Method)",
 		"Request.Url":               "@(context.Request.Url != null)",
 		"Request.URL":               "@(context.Request.URL != null)",
@@ -190,20 +197,21 @@ func boundByType(members []Member) map[string]map[string]bool {
 func binderCases(t *testing.T) map[string]map[string]bool {
 	t.Helper()
 	hosts := map[string][]string{
-		"contextHost":    {"context"},
-		"requestHost":    {"Request"},
-		"responseHost":   {"Response"},
-		"lastErrorHost":  {"LastError"},
-		"urlHost":        {"Url"},
-		"headerHost":     {"Headers"},
-		"mapHost":        {"Variables"},
-		"bodyHost":       {"Body"},
-		"apiHost":        {"Api"},
-		"operationHost":  {"Operation"},
-		"namedHost":      {"Product", "Subscription", "User"},
-		"deploymentHost": {"Deployment"},
-		"graphQLHost":    {"GraphQL"},
-		"jsonMapHost":    {"Arguments"},
+		"contextHost":       {"context"},
+		"requestHost":       {"Request"},
+		"responseHost":      {"Response"},
+		"lastErrorHost":     {"LastError"},
+		"urlHost":           {"Url"},
+		"headerHost":        {"Headers"},
+		"mapHost":           {"Variables"},
+		"bodyHost":          {"Body"},
+		"apiHost":           {"Api"},
+		"operationHost":     {"Operation"},
+		"namedHost":         {"Product", "Subscription", "User"},
+		"deploymentHost":    {"Deployment"},
+		"graphQLHost":       {"GraphQL"},
+		"jsonMapHost":       {"Arguments"},
+		"authorizationHost": {"Authorization"},
 	}
 	// Both files, because a host that binds members is a host wherever it
 	// lives. Parsing only context.go would let a new file expose members the

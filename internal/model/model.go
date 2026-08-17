@@ -445,3 +445,56 @@ type Policy struct {
 	Value   string
 	ETag    string
 }
+
+// AuthorizationProvider is a credential-manager identity provider: the OAuth2
+// service APIM will obtain and store tokens from.
+//
+// Distinct from AuthorizationServer, which is the OAuth2 server the DEVELOPER
+// PORTAL sends users to for its own console. The names are one word apart and
+// the resources are unrelated.
+type AuthorizationProvider struct {
+	ServiceID        string
+	Name             string
+	DisplayName      string
+	IdentityProvider string
+	Document         map[string]any
+	ETag             string
+}
+
+// ID returns the authorization provider ARM resource ID.
+func (v AuthorizationProvider) ID() string {
+	return v.ServiceID + "/authorizationProviders/" + v.Name
+}
+
+// Authorization is one stored credential under a provider.
+type Authorization struct {
+	ProviderID        string
+	Name              string
+	AuthorizationType string
+	OAuth2GrantType   string
+	// Status and Error mirror what Azure reports once a credential has been
+	// consented. A credential that was never consented is not usable, and the
+	// gateway has to be able to tell the two apart.
+	Status   string
+	ErrorMsg string
+	Document map[string]any
+	ETag     string
+}
+
+// ID returns the authorization ARM resource ID.
+func (v Authorization) ID() string { return v.ProviderID + "/authorizations/" + v.Name }
+
+// AuthorizationAccessPolicy names a principal permitted to use a credential.
+type AuthorizationAccessPolicy struct {
+	AuthorizationID string
+	Name            string
+	TenantID        string
+	ObjectID        string
+	Document        map[string]any
+	ETag            string
+}
+
+// ID returns the access-policy ARM resource ID.
+func (v AuthorizationAccessPolicy) ID() string {
+	return v.AuthorizationID + "/accessPolicies/" + v.Name
+}
