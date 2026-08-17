@@ -186,6 +186,23 @@ func (h *Handler) dispatch(w http.ResponseWriter, r *http.Request, parsed route)
 		h.authorizationServer(w, r, parsed)
 	case "gateways":
 		h.gatewayRoute(w, r, parsed)
+	case "privateEndpointConnections":
+		h.privateEndpointConnectionRoute(w, r, parsed)
+	case "privateLinkResources":
+		h.privateLinkResourceRoute(w, r, parsed)
+	case "networkstatus":
+		h.networkStatusRoute(w, r, parsed, "")
+	case "outboundNetworkDependenciesEndpoints":
+		h.outboundNetworkDependenciesRoute(w, r, parsed)
+	case "locations":
+		// `locations/{name}/networkstatus` is the per-region form. It is the
+		// only thing under `locations`, so anything else there is a 404 rather
+		// than a hint that more exists.
+		if len(parsed.Tail) == 3 && equal(parsed.Tail[2], "networkstatus") {
+			h.networkStatusRoute(w, r, parsed, parsed.Tail[1])
+			return
+		}
+		writeError(w, http.StatusNotFound, "ResourceNotFound", "The requested APIM resource is not implemented in the P0 surface.", r.URL.Path)
 	case "documentations":
 		h.documentation(w, r, parsed)
 	case "certificates":
@@ -262,6 +279,12 @@ var serviceOnlyFamilies = map[string]bool{
 	"documentations":         true,
 	"gateways":               true,
 	"users":                  true,
+	// Networking belongs to the service, never to a workspace inside it.
+	"privateendpointconnections":           true,
+	"privatelinkresources":                 true,
+	"networkstatus":                        true,
+	"outboundnetworkdependenciesendpoints": true,
+	"locations":                            true,
 }
 
 type route struct {

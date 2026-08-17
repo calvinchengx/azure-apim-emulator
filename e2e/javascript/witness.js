@@ -490,3 +490,139 @@ if (afterDelete.status !== 200) {
   throw new Error(`the gateway's restriction outlived the gateway: ${afterDelete.status}`);
 }
 console.log("javascript witness: self-hosted gateway registered, token verified, and serving only its associated APIs");
+
+// ---------------------------------------------------------------------------
+// Private networking, driven by Microsoft's own SDK.
+//
+// Three separate operation groups -- privateEndpointConnection, networkStatus
+// and outboundNetworkDependenciesEndpoints -- each with its own URL shape and
+// its own response model. The SDK composes all three from its own understanding
+// of the contract, which is what makes it evidence rather than a restatement of
+// the routes I wrote.
+//
+// What is NOT asserted here, because it could not be true: that a private
+// endpoint carries traffic. One lives in a consumer's own virtual network and
+// this emulator never reaches it. The approval workflow is the emulatable part.
+const connectionName = "from-consumer-vnet";
+const consumerEndpoint =
+  `/subscriptions/${process.env.APIM_SUBSCRIPTION_ID}/resourceGroups/${resourceGroup}` +
+  `/providers/Microsoft.Network/privateEndpoints/consumer-pe`;
+
+// The consumer's side, which is deliberately NOT the SDK. Microsoft's
+// `PrivateEndpointConnectionRequest` model carries only the connection STATE:
+// there is no field for the endpoint, because in Azure the endpoint is created
+// by the consumer through the Network resource provider and APIM surfaces what
+// arrived. So the request is seeded the way it arrives -- from elsewhere -- and
+// the SDK is used for the half it actually models, which is the decision.
+const connectionArrival = await fetch(
+  `${endpoint}/subscriptions/${process.env.APIM_SUBSCRIPTION_ID}/resourceGroups/${resourceGroup}` +
+    `/providers/Microsoft.ApiManagement/service/${serviceName}` +
+    `/privateEndpointConnections/${connectionName}?api-version=2024-05-01`,
+  {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", Authorization: "Bearer sdk-token" },
+    body: JSON.stringify({ properties: { privateEndpoint: { id: consumerEndpoint } } }),
+  },
+);
+if (connectionArrival.status !== 201) {
+  throw new Error(`the consumer's connection request was refused: ${connectionArrival.status}`);
+}
+
+const pending = await client.privateEndpointConnectionOperations.getByName(resourceGroup, serviceName, connectionName);
+// A connection arrives Pending. Anything else would be access the service owner
+// never granted.
+if (pending.privateLinkServiceConnectionState?.status !== "Pending") {
+  throw new Error(`a new connection was ${JSON.stringify(pending.privateLinkServiceConnectionState)}`);
+}
+if (pending.provisioningState !== "Succeeded") {
+  throw new Error(`provisioningState = ${pending.provisioningState}`);
+}
+// The consumer's endpoint is in another subscription: surfaced to the owner,
+// never resolved by this emulator.
+if (pending.privateEndpoint?.id !== consumerEndpoint) {
+  throw new Error(`the consumer's endpoint was lost: ${JSON.stringify(pending.privateEndpoint)}`);
+}
+
+const approved = await client.privateEndpointConnectionOperations.beginCreateOrUpdateAndWait(
+  resourceGroup,
+  serviceName,
+  connectionName,
+  { properties: { privateLinkServiceConnectionState: { status: "Approved", description: "reviewed by platform" } } },
+);
+if (approved.privateLinkServiceConnectionState?.status !== "Approved") {
+  throw new Error(`approval = ${JSON.stringify(approved.privateLinkServiceConnectionState)}`);
+}
+if (approved.privateLinkServiceConnectionState?.description !== "reviewed by platform") {
+  throw new Error("the approval reason was lost");
+}
+// Approving must not discard what the consumer sent, even though the SDK's
+// request model has no field for it.
+if (approved.privateEndpoint?.id !== consumerEndpoint) {
+  throw new Error(`approval dropped the consumer's endpoint: ${JSON.stringify(approved.privateEndpoint)}`);
+}
+
+const connections = [];
+for await (const item of client.privateEndpointConnectionOperations.listByService(resourceGroup, serviceName)) {
+  connections.push(item.name);
+}
+if (!connections.includes(connectionName)) {
+  throw new Error(`connection listing = ${connections.join(", ")}`);
+}
+
+// A service exposes exactly one private-link sub-resource, and a consumer needs
+// its group id to build an endpoint at all.
+const linkResources = await client.privateEndpointConnectionOperations.listPrivateLinkResources(resourceGroup, serviceName);
+if (!(linkResources.value ?? []).some((entry) => entry.groupId === "Gateway")) {
+  throw new Error(`private link resources = ${JSON.stringify(linkResources.value)}`);
+}
+const gatewayLink = await client.privateEndpointConnectionOperations.getPrivateLinkResource(resourceGroup, serviceName, "Gateway");
+if (!gatewayLink.requiredZoneNames?.includes("privatelink.azure-api.net")) {
+  throw new Error(`gateway link resource = ${JSON.stringify(gatewayLink)}`);
+}
+
+await client.privateEndpointConnectionOperations.beginDeleteAndWait(resourceGroup, serviceName, connectionName);
+let stillConnected = false;
+try {
+  await client.privateEndpointConnectionOperations.getByName(resourceGroup, serviceName, connectionName);
+  stillConnected = true;
+} catch {
+  // expected: the connection is gone
+}
+if (stillConnected) {
+  throw new Error("a deleted connection was still addressable");
+}
+console.log("javascript witness: private endpoint connection requested, approved, listed and deleted");
+
+// The two read-only status surfaces an operator uses to find out whether the
+// service can reach what it depends on. The SDK models them differently -- one
+// is a list by location, the other a single status -- so both shapes are driven.
+const byLocation = await client.networkStatus.listByService(resourceGroup, serviceName);
+if (!Array.isArray(byLocation) || byLocation.length === 0 || !byLocation[0].networkStatus) {
+  throw new Error(`networkStatus.listByService = ${JSON.stringify(byLocation)}`);
+}
+const located = await client.networkStatus.listByLocation(resourceGroup, serviceName, byLocation[0].location);
+if (!Array.isArray(located.dnsServers) || !Array.isArray(located.connectivityStatus) || located.connectivityStatus.length === 0) {
+  throw new Error(`networkStatus.listByLocation = ${JSON.stringify(located)}`);
+}
+// Every dependency reports success, and that is a statement about the emulator
+// rather than about a deployment: there is no virtual network here to be
+// misconfigured, so a synthesised failure would be a fault it invented.
+if (located.connectivityStatus.some((entry) => entry.status !== "success")) {
+  throw new Error(`connectivityStatus = ${JSON.stringify(located.connectivityStatus)}`);
+}
+
+const outbound = await client.outboundNetworkDependenciesEndpoints.listByService(resourceGroup, serviceName);
+if (!(outbound.value ?? []).length) {
+  throw new Error("outbound dependencies were empty");
+}
+for (const entry of outbound.value) {
+  if (!entry.category || !(entry.endpoints ?? []).length) {
+    throw new Error(`outbound entry = ${JSON.stringify(entry)}`);
+  }
+  for (const endpoint of entry.endpoints) {
+    if (!endpoint.domainName || !(endpoint.endpointDetails ?? []).length) {
+      throw new Error(`outbound endpoint = ${JSON.stringify(endpoint)}`);
+    }
+  }
+}
+console.log("javascript witness: network status and outbound dependencies served in the SDK's own shapes");

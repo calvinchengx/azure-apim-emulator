@@ -425,31 +425,44 @@ func TestClosedStoreErrors(t *testing.T) {
 			_, err := st.ListNamedValues("service")
 			return err
 		},
-		"delete named value":   func() error { return st.DeleteNamedValue("named") },
-		"upsert backend":       func() error { _, err := st.UpsertBackend(model.Backend{}); return err },
-		"get backend":          func() error { _, err := st.GetBackend("backend"); return err },
-		"list backends":        func() error { _, err := st.ListBackends("service"); return err },
-		"delete backend":       func() error { return st.DeleteBackend("backend") },
-		"upsert certificate":   func() error { _, err := st.UpsertCertificate(model.Certificate{}); return err },
-		"get certificate":      func() error { _, err := st.GetCertificate("certificate"); return err },
-		"list certificates":    func() error { _, err := st.ListCertificates("service"); return err },
-		"delete certificate":   func() error { return st.DeleteCertificate("certificate") },
-		"upsert API schema":    func() error { _, err := st.UpsertAPISchema(model.APISchema{}); return err },
-		"get API schema":       func() error { _, err := st.GetAPISchema("schema"); return err },
-		"list API schemas":     func() error { _, err := st.ListAPISchemas("api"); return err },
-		"delete API schema":    func() error { return st.DeleteAPISchema("schema") },
-		"upsert workspace":     func() error { _, err := st.UpsertWorkspace(model.Workspace{}); return err },
-		"get workspace":        func() error { _, err := st.GetWorkspace("ws"); return err },
-		"list workspaces":      func() error { _, err := st.ListWorkspaces("service"); return err },
-		"delete workspace":     func() error { return st.DeleteWorkspace("ws") },
-		"upsert gateway":       func() error { _, err := st.UpsertGateway(model.Gateway{}); return err },
-		"get gateway":          func() error { _, err := st.GetGateway("gw"); return err },
-		"list gateways":        func() error { _, err := st.ListGateways("service"); return err },
-		"delete gateway":       func() error { return st.DeleteGateway("gw") },
-		"attach gateway API":   func() error { return st.AttachGatewayAPI("gw", "api") },
-		"detach gateway API":   func() error { return st.DetachGatewayAPI("gw", "api") },
-		"list gateway APIs":    func() error { _, err := st.ListGatewayAPIs("gw"); return err },
-		"gateway API attached": func() error { _, err := st.GatewayAPIAttached("gw", "api"); return err },
+		"delete named value": func() error { return st.DeleteNamedValue("named") },
+		"upsert backend":     func() error { _, err := st.UpsertBackend(model.Backend{}); return err },
+		"get backend":        func() error { _, err := st.GetBackend("backend"); return err },
+		"list backends":      func() error { _, err := st.ListBackends("service"); return err },
+		"delete backend":     func() error { return st.DeleteBackend("backend") },
+		"upsert certificate": func() error { _, err := st.UpsertCertificate(model.Certificate{}); return err },
+		"get certificate":    func() error { _, err := st.GetCertificate("certificate"); return err },
+		"list certificates":  func() error { _, err := st.ListCertificates("service"); return err },
+		"delete certificate": func() error { return st.DeleteCertificate("certificate") },
+		"upsert API schema":  func() error { _, err := st.UpsertAPISchema(model.APISchema{}); return err },
+		"get API schema":     func() error { _, err := st.GetAPISchema("schema"); return err },
+		"list API schemas":   func() error { _, err := st.ListAPISchemas("api"); return err },
+		"delete API schema":  func() error { return st.DeleteAPISchema("schema") },
+		"upsert workspace":   func() error { _, err := st.UpsertWorkspace(model.Workspace{}); return err },
+		"get workspace":      func() error { _, err := st.GetWorkspace("ws"); return err },
+		"list workspaces":    func() error { _, err := st.ListWorkspaces("service"); return err },
+		"delete workspace":   func() error { return st.DeleteWorkspace("ws") },
+		"upsert private endpoint connection": func() error {
+			_, err := st.UpsertPrivateEndpointConnection(model.PrivateEndpointConnection{})
+			return err
+		},
+		"get private endpoint connection": func() error {
+			_, err := st.GetPrivateEndpointConnection("pec")
+			return err
+		},
+		"list private endpoint connections": func() error {
+			_, err := st.ListPrivateEndpointConnections("service")
+			return err
+		},
+		"delete private endpoint connection": func() error { return st.DeletePrivateEndpointConnection("pec") },
+		"upsert gateway":                     func() error { _, err := st.UpsertGateway(model.Gateway{}); return err },
+		"get gateway":                        func() error { _, err := st.GetGateway("gw"); return err },
+		"list gateways":                      func() error { _, err := st.ListGateways("service"); return err },
+		"delete gateway":                     func() error { return st.DeleteGateway("gw") },
+		"attach gateway API":                 func() error { return st.AttachGatewayAPI("gw", "api") },
+		"detach gateway API":                 func() error { return st.DetachGatewayAPI("gw", "api") },
+		"list gateway APIs":                  func() error { _, err := st.ListGatewayAPIs("gw"); return err },
+		"gateway API attached":               func() error { _, err := st.GatewayAPIAttached("gw", "api"); return err },
 		"upsert gateway host": func() error {
 			_, err := st.UpsertGatewayHostnameConfiguration(model.GatewayHostnameConfiguration{})
 			return err
@@ -697,6 +710,15 @@ func TestScanFunctionsRejectMalformedRows(t *testing.T) {
 			`CREATE TABLE workspaces (id, service_id, name, display_name, description, document_json, etag)`,
 			`INSERT INTO workspaces VALUES ('id', 'svc', NULL, '', '', '{}', '')`,
 			func(db *sql.DB) error { _, err := (&Store{db: db}).ListWorkspaces("svc"); return err },
+		},
+		{
+			"private endpoint connections",
+			`CREATE TABLE private_endpoint_connections (id, service_id, name, status, description, actions_required, endpoint_id, document_json, etag)`,
+			`INSERT INTO private_endpoint_connections VALUES ('id', 'svc', NULL, '', '', '', '', '{}', '')`,
+			func(db *sql.DB) error {
+				_, err := (&Store{db: db}).ListPrivateEndpointConnections("svc")
+				return err
+			},
 		},
 		{
 			"gateways",
