@@ -155,27 +155,27 @@ func TestIndexServiceIdentitiesAndBindRequestContext(t *testing.T) {
 	operation := model.Operation{Name: "get-pet", DisplayName: "Get pet", Method: http.MethodGet, URLTemplate: "/{id}"}
 	request := httptest.NewRequest(http.MethodGet, "/pets/1", nil)
 	request.Header.Set("Ocp-Apim-Subscription-Key", "PRIMARY")
-	api, op, productCtx, subscriptionCtx, user, deployment := bindRequestContext(services["emulator"], route, operation, request)
+	api, op, productCtx, subscriptionCtx, user, deployment := bindRequestContext(services["emulator"], route, operation, request, nil)
 	if api.Id != "pets" || api.Name != "Pets API" || api.Path != "pets" || op.UrlTemplate != "/{id}" || productCtx.Name != "Starter" || subscriptionCtx.Id != "dev" || user != nil || deployment.Region != "local" {
 		t.Fatalf("bound context = api=%+v op=%+v product=%+v sub=%+v user=%v deploy=%+v", api, op, productCtx, subscriptionCtx, user, deployment)
 	}
-	api, _, productCtx, subscriptionCtx, _, deployment = bindRequestContext(nil, nil, model.Operation{Name: "anon"}, nil)
+	api, _, productCtx, subscriptionCtx, _, deployment = bindRequestContext(nil, nil, model.Operation{Name: "anon"}, nil, nil)
 	if api != nil || productCtx != nil || subscriptionCtx != nil || deployment != nil {
 		t.Fatalf("nil service/route = api=%v product=%v sub=%v deploy=%v", api, productCtx, subscriptionCtx, deployment)
 	}
 	bare := &Service{Name: "bare", Location: "east"}
-	_, _, productCtx, subscriptionCtx, _, deployment = bindRequestContext(bare, route, operation, request)
+	_, _, productCtx, subscriptionCtx, _, deployment = bindRequestContext(bare, route, operation, request, nil)
 	if productCtx != nil || subscriptionCtx != nil || deployment.ServiceName != "bare" {
 		t.Fatalf("nil maps = product=%v sub=%v deploy=%+v", productCtx, subscriptionCtx, deployment)
 	}
 	noProduct := &Service{Name: "np", Subscriptions: map[string]model.Subscription{"primary": {Name: "only"}}}
-	_, _, productCtx, subscriptionCtx, _, _ = bindRequestContext(noProduct, route, operation, request)
+	_, _, productCtx, subscriptionCtx, _, _ = bindRequestContext(noProduct, route, operation, request, nil)
 	if productCtx != nil || subscriptionCtx.Id != "only" {
 		t.Fatalf("subscription without product = %+v %+v", productCtx, subscriptionCtx)
 	}
 	unknown := httptest.NewRequest(http.MethodGet, "/", nil)
 	unknown.Header.Set("Ocp-Apim-Subscription-Key", "nope")
-	_, _, productCtx, subscriptionCtx, _, _ = bindRequestContext(services["emulator"], route, operation, unknown)
+	_, _, productCtx, subscriptionCtx, _, _ = bindRequestContext(services["emulator"], route, operation, unknown, nil)
 	if productCtx != nil || subscriptionCtx != nil {
 		t.Fatal("unknown key bound identity")
 	}
@@ -1912,3 +1912,57 @@ func (f roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) 
 type errReader struct{}
 
 func (errReader) Read([]byte) (int, error) { return 0, errors.New("read") }
+
+// A product's subscription limit lives in the lossless ARM document rather than
+// a column, and it is nullable: a product with no limit must report null, not
+// zero, because zero reads as "no subscriptions allowed".
+func TestProductContextReadsTheSubscriptionsLimit(t *testing.T) {
+	limited := productContext(model.Product{
+		Name: "starter", DisplayName: "Starter", State: "published",
+		Document: map[string]any{"properties": map[string]any{
+			"subscriptionsLimit": float64(3), "subscriptionRequired": true,
+		}},
+	})
+	if limited.SubscriptionsLimit.String() != "3" || !limited.SubscriptionRequired {
+		t.Fatalf("limited product = %#v", limited)
+	}
+	unlimited := productContext(model.Product{Name: "open", DisplayName: "Open"})
+	if unlimited.SubscriptionsLimit.String() != "" {
+		t.Fatalf("a product with no limit reported %q", unlimited.SubscriptionsLimit.String())
+	}
+}
+
+// The subscription context reports the key the CALLER presented, and reads its
+// dates from the stored document.
+func TestSubscriptionContextReportsThePresentedKey(t *testing.T) {
+	got := subscriptionContext(model.Subscription{
+		Name: "dev", DisplayName: "Dev", PrimaryKey: "primary", SecondaryKey: "secondary",
+		Document: map[string]any{"properties": map[string]any{
+			"createdDate": "2026-01-01T00:00:00Z", "startDate": "2026-01-02T00:00:00Z",
+		}},
+	}, "secondary")
+	if got.Key != "secondary" || got.PrimaryKey != "primary" {
+		t.Fatalf("presented key = %#v", got)
+	}
+	if got.CreatedDate != "2026-01-01T00:00:00Z" || got.EndDate != "" {
+		t.Fatalf("dates = %#v", got)
+	}
+}
+
+// A request served by a self-hosted gateway reports that gateway, and one on
+// the service's own front door reports the managed gateway. A policy testing
+// IsManaged is the reason both exist.
+func TestDeploymentContextNamesTheServingGateway(t *testing.T) {
+	service := &Service{Name: "emulator", Location: "local", ID: "/subscriptions/s/service/emulator"}
+	_, _, _, _, _, managed := bindRequestContext(service, nil, model.Operation{}, nil, nil)
+	if managed.Gateway == nil || !managed.Gateway.IsManaged || managed.GatewayId != "managed" {
+		t.Fatalf("managed gateway = %#v", managed.Gateway)
+	}
+	if managed.ServiceId != "/subscriptions/s/service/emulator" {
+		t.Fatalf("service id = %q", managed.ServiceId)
+	}
+	_, _, _, _, _, edge := bindRequestContext(service, nil, model.Operation{}, nil, &SelfHostedGateway{Name: "edge"})
+	if edge.Gateway == nil || edge.Gateway.IsManaged || edge.Gateway.Id != "edge" {
+		t.Fatalf("self-hosted gateway = %#v", edge.Gateway)
+	}
+}

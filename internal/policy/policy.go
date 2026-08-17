@@ -233,8 +233,8 @@ type State struct {
 	LastError               error
 	Api                     *expr.ApiContext
 	Operation               *expr.OperationContext
-	Product                 *expr.NamedContext
-	Subscription            *expr.NamedContext
+	Product                 *expr.ProductContext
+	Subscription            *expr.SubscriptionContext
 	User                    *expr.NamedContext
 	Deployment              *expr.DeploymentContext
 	GraphQL                 *expr.GraphQLContext

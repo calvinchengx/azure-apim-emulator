@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // NamedContext is Id/Name for Product, Subscription, and User.
@@ -20,6 +21,13 @@ type ApiContext struct {
 	Id   string
 	Name string
 	Path string
+	// Revision, Version and IsCurrentRevision describe WHICH api this is among
+	// its revisions and versions. A policy routing on them is the reason APIM
+	// exposes them at all.
+	Revision          string
+	Version           string
+	IsCurrentRevision bool
+	ServiceUrl        string
 }
 
 // OperationContext is the documented scalar operation identity.
@@ -34,6 +42,53 @@ type OperationContext struct {
 type DeploymentContext struct {
 	ServiceName string
 	Region      string
+	ServiceId   string
+	GatewayId   string
+	// Gateway describes the gateway serving this request. It is null on the
+	// managed gateway in Azure only for older platform versions; here it is
+	// always present, and IsManaged distinguishes the built-in gateway from a
+	// self-hosted one.
+	Gateway *GatewayContext
+}
+
+// GatewayContext is the documented identity of the gateway serving a request.
+type GatewayContext struct {
+	Id         string
+	InstanceId string
+	IsManaged  bool
+	RegionName string
+}
+
+// ProductContext is the documented product identity.
+//
+// Separate from NamedContext, rather than sharing it with User, because Azure's
+// IProduct and IUser are different types: one struct carrying both would let a
+// policy read a product field off a user and get an empty string instead of an
+// error.
+type ProductContext struct {
+	Id                   string
+	Name                 string
+	State                string
+	ApprovalRequired     bool
+	SubscriptionRequired bool
+	SubscriptionsLimit   Value
+}
+
+// SubscriptionContext is the documented subscription identity.
+//
+// The keys are here because Azure puts them here: a policy may read
+// `context.Subscription.Key` to key a rate limit by caller. They are the same
+// secrets the management plane refuses to echo on a GET, which is not a
+// contradiction -- a policy already runs on behalf of the service.
+type SubscriptionContext struct {
+	Id           string
+	Name         string
+	Key          string
+	PrimaryKey   string
+	SecondaryKey string
+	CreatedDate  string
+	StartDate    string
+	EndDate      string
 }
 
 // Context is the APIM `context` binding for one evaluation.
@@ -44,10 +99,22 @@ type Context struct {
 	LastError    error
 	Api          *ApiContext
 	Operation    *OperationContext
-	Product      *NamedContext
-	Subscription *NamedContext
+	Product      *ProductContext
+	Subscription *SubscriptionContext
 	User         *NamedContext
 	Deployment   *DeploymentContext
+	// Timestamp is when the gateway received the request, and Elapsed is
+	// measured from it. Both are zero outside a request, where `context` still
+	// binds so a literal expression can be evaluated.
+	Timestamp time.Time
+	// Elapsed is supplied as a function rather than a value because a policy
+	// reading it in the outbound section must see the time spent so far, not
+	// the time when the context was built.
+	Elapsed func() time.Duration
+	// RequestId is the gateway's own correlation id for this request.
+	RequestId string
+	// Tracing reports whether the caller asked for a trace.
+	Tracing bool
 	// AuthorizationContexts are credential-manager results, keyed by the
 	// variable name the policy stored them under. They ride alongside
 	// Variables rather than inside it because Variables is map[string]string
@@ -103,23 +170,40 @@ func (c *contextHost) member(name string) (Value, error) {
 		if c.ctx.Api == nil {
 			return Null(), nil
 		}
-		return Object(&apiHost{id: c.ctx.Api.Id, name: c.ctx.Api.Name, path: c.ctx.Api.Path}), nil
+		return Object(&apiHost{ctx: c.ctx.Api}), nil
 	case "Operation":
 		if c.ctx.Operation == nil {
 			return Null(), nil
 		}
 		return Object(&operationHost{id: c.ctx.Operation.Id, name: c.ctx.Operation.Name, method: c.ctx.Operation.Method, urlTemplate: c.ctx.Operation.UrlTemplate}), nil
 	case "Product":
-		return namedObject(c.ctx.Product), nil
+		if c.ctx.Product == nil {
+			return Null(), nil
+		}
+		return Object(&productHost{ctx: c.ctx.Product}), nil
 	case "Subscription":
-		return namedObject(c.ctx.Subscription), nil
+		if c.ctx.Subscription == nil {
+			return Null(), nil
+		}
+		return Object(&subscriptionHost{ctx: c.ctx.Subscription}), nil
 	case "User":
 		return namedObject(c.ctx.User), nil
 	case "Deployment":
 		if c.ctx.Deployment == nil {
 			return Null(), nil
 		}
-		return Object(&deploymentHost{serviceName: c.ctx.Deployment.ServiceName, region: c.ctx.Deployment.Region}), nil
+		return Object(&deploymentHost{ctx: c.ctx.Deployment}), nil
+	case "Timestamp":
+		return String(c.ctx.Timestamp.UTC().Format(time.RFC3339)), nil
+	case "Elapsed":
+		if c.ctx.Elapsed == nil {
+			return String("00:00:00"), nil
+		}
+		return String(formatElapsed(c.ctx.Elapsed())), nil
+	case "RequestId":
+		return String(c.ctx.RequestId), nil
+	case "Tracing":
+		return Bool(c.ctx.Tracing), nil
 	case "GraphQL":
 		if c.ctx.GraphQL == nil {
 			return Null(), nil
@@ -154,19 +238,97 @@ func (h *namedHost) member(name string) (Value, error) {
 }
 
 type apiHost struct {
-	id   string
-	name string
-	path string
+	ctx *ApiContext
 }
 
 func (h *apiHost) member(name string) (Value, error) {
 	switch name {
 	case "Id":
-		return String(h.id), nil
+		return String(h.ctx.Id), nil
 	case "Name":
-		return String(h.name), nil
+		return String(h.ctx.Name), nil
 	case "Path":
-		return String(h.path), nil
+		return String(h.ctx.Path), nil
+	case "Revision":
+		return String(h.ctx.Revision), nil
+	case "Version":
+		return String(h.ctx.Version), nil
+	case "IsCurrentRevision":
+		return Bool(h.ctx.IsCurrentRevision), nil
+	case "ServiceUrl":
+		return String(h.ctx.ServiceUrl), nil
+	default:
+		return Null(), fmt.Errorf("unknown member %s", name)
+	}
+}
+
+type productHost struct {
+	ctx *ProductContext
+}
+
+func (h *productHost) member(name string) (Value, error) {
+	switch name {
+	case "Id":
+		return String(h.ctx.Id), nil
+	case "Name":
+		return String(h.ctx.Name), nil
+	case "State":
+		return String(h.ctx.State), nil
+	case "ApprovalRequired":
+		return Bool(h.ctx.ApprovalRequired), nil
+	case "SubscriptionRequired":
+		return Bool(h.ctx.SubscriptionRequired), nil
+	case "SubscriptionsLimit":
+		// Null rather than zero when the product sets no limit: Azure types this
+		// as a nullable int, and reporting 0 would read as "no subscriptions
+		// allowed", which is the opposite of "unlimited".
+		return h.ctx.SubscriptionsLimit, nil
+	default:
+		return Null(), fmt.Errorf("unknown member %s", name)
+	}
+}
+
+type subscriptionHost struct {
+	ctx *SubscriptionContext
+}
+
+func (h *subscriptionHost) member(name string) (Value, error) {
+	switch name {
+	case "Id":
+		return String(h.ctx.Id), nil
+	case "Name":
+		return String(h.ctx.Name), nil
+	case "Key":
+		return String(h.ctx.Key), nil
+	case "PrimaryKey":
+		return String(h.ctx.PrimaryKey), nil
+	case "SecondaryKey":
+		return String(h.ctx.SecondaryKey), nil
+	case "CreatedDate":
+		return String(h.ctx.CreatedDate), nil
+	case "StartDate":
+		return String(h.ctx.StartDate), nil
+	case "EndDate":
+		return String(h.ctx.EndDate), nil
+	default:
+		return Null(), fmt.Errorf("unknown member %s", name)
+	}
+}
+
+type gatewayHost struct {
+	ctx *GatewayContext
+}
+
+func (h *gatewayHost) member(name string) (Value, error) {
+	switch name {
+	case "Id":
+		return String(h.ctx.Id), nil
+	case "InstanceId":
+		return String(h.ctx.InstanceId), nil
+	case "IsManaged":
+		return Bool(h.ctx.IsManaged), nil
+	case "RegionName":
+		return String(h.ctx.RegionName), nil
 	default:
 		return Null(), fmt.Errorf("unknown member %s", name)
 	}
@@ -195,19 +357,40 @@ func (h *operationHost) member(name string) (Value, error) {
 }
 
 type deploymentHost struct {
-	serviceName string
-	region      string
+	ctx *DeploymentContext
 }
 
 func (h *deploymentHost) member(name string) (Value, error) {
 	switch name {
 	case "ServiceName":
-		return String(h.serviceName), nil
+		return String(h.ctx.ServiceName), nil
 	case "Region":
-		return String(h.region), nil
+		return String(h.ctx.Region), nil
+	case "ServiceId":
+		return String(h.ctx.ServiceId), nil
+	case "GatewayId":
+		return String(h.ctx.GatewayId), nil
+	case "Gateway":
+		if h.ctx.Gateway == nil {
+			return Null(), nil
+		}
+		return Object(&gatewayHost{ctx: h.ctx.Gateway}), nil
 	default:
 		return Null(), fmt.Errorf("unknown member %s", name)
 	}
+}
+
+// formatElapsed renders a duration the way .NET renders a TimeSpan, which is
+// what a policy comparing against a literal will have been written for.
+func formatElapsed(d time.Duration) string {
+	if d < 0 {
+		d = 0
+	}
+	hours := int(d / time.Hour)
+	minutes := int(d/time.Minute) % 60
+	seconds := int(d/time.Second) % 60
+	milliseconds := int(d/time.Millisecond) % 1000
+	return fmt.Sprintf("%02d:%02d:%02d.%03d", hours, minutes, seconds, milliseconds)
 }
 
 type requestHost struct {

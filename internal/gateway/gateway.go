@@ -54,8 +54,11 @@ func (r *Runtime) SnapshotSummary() map[string]any {
 
 // Service is compiled runtime state for one APIM service.
 type Service struct {
-	Name                  string
-	Location              string
+	Name     string
+	Location string
+	// ID is the service's ARM resource id, which `context.Deployment.ServiceId`
+	// reports to a policy.
+	ID                    string
 	Hostnames             map[string]bool
 	PublicNetworkDisabled bool
 	Routes                []*Route
@@ -498,7 +501,7 @@ func (r *Runtime) Activate(st *store.Store, strict bool) error {
 	}
 	snapshot := &Snapshot{Services: map[string]*Service{}}
 	for _, item := range services {
-		snapshot.Services[strings.ToLower(item.Name)] = &Service{Name: item.Name, Location: item.Location, Hostnames: customHostnames(item.Document), ClientCertificateHosts: clientCertificateHosts(item.Document), PublicNetworkDisabled: !publicNetworkAccess(item.Document), Backends: backends[strings.ToLower(item.ID())], Certificates: certificates[strings.ToLower(item.ID())], Diagnostics: diagnostics[strings.ToLower(item.ID())], Products: map[string]model.Product{}, Subscriptions: map[string]model.Subscription{}}
+		snapshot.Services[strings.ToLower(item.Name)] = &Service{Name: item.Name, Location: item.Location, ID: item.ID(), Hostnames: customHostnames(item.Document), ClientCertificateHosts: clientCertificateHosts(item.Document), PublicNetworkDisabled: !publicNetworkAccess(item.Document), Backends: backends[strings.ToLower(item.ID())], Certificates: certificates[strings.ToLower(item.ID())], Diagnostics: diagnostics[strings.ToLower(item.ID())], Products: map[string]model.Product{}, Subscriptions: map[string]model.Subscription{}}
 	}
 	indexServiceIdentities(snapshot.Services, products, subscriptions)
 	for _, api := range apis {
@@ -732,28 +735,84 @@ func displayName(display, name string) string {
 	return name
 }
 
-func bindRequestContext(service *Service, route *Route, operation model.Operation, req *http.Request) (*expression.ApiContext, *expression.OperationContext, *expression.NamedContext, *expression.NamedContext, *expression.NamedContext, *expression.DeploymentContext) {
+func bindRequestContext(service *Service, route *Route, operation model.Operation, req *http.Request, selfHosted *SelfHostedGateway) (*expression.ApiContext, *expression.OperationContext, *expression.ProductContext, *expression.SubscriptionContext, *expression.NamedContext, *expression.DeploymentContext) {
 	var api *expression.ApiContext
 	if route != nil {
-		api = &expression.ApiContext{Id: route.API.Name, Name: displayName(route.API.DisplayName, route.API.Name), Path: strings.Trim(route.API.Path, "/")}
+		api = &expression.ApiContext{
+			Id: route.API.Name, Name: displayName(route.API.DisplayName, route.API.Name),
+			Path: strings.Trim(route.API.Path, "/"), Revision: route.API.Revision,
+			Version: route.API.Version, IsCurrentRevision: route.API.IsCurrent,
+			ServiceUrl: route.API.ServiceURL,
+		}
 	}
 	operationCtx := &expression.OperationContext{Id: operation.Name, Name: displayName(operation.DisplayName, operation.Name), Method: operation.Method, UrlTemplate: operation.URLTemplate}
-	var product, subscription, user *expression.NamedContext
+	var product *expression.ProductContext
+	var subscription *expression.SubscriptionContext
+	var user *expression.NamedContext
 	var deployment *expression.DeploymentContext
 	if service != nil {
-		deployment = &expression.DeploymentContext{ServiceName: service.Name, Region: service.Location}
+		// The gateway serving the request: the built-in one unless a self-hosted
+		// gateway's hostname matched. `IsManaged` is what a policy tests to
+		// behave differently on an edge deployment.
+		gateway := &expression.GatewayContext{Id: "managed", InstanceId: service.Name, IsManaged: true, RegionName: service.Location}
+		if selfHosted != nil {
+			gateway = &expression.GatewayContext{Id: selfHosted.Name, InstanceId: selfHosted.Name, IsManaged: false, RegionName: service.Location}
+		}
+		deployment = &expression.DeploymentContext{
+			ServiceName: service.Name, Region: service.Location,
+			ServiceId: service.ID, GatewayId: gateway.Id, Gateway: gateway,
+		}
 		if req != nil && service.Subscriptions != nil {
 			if matched, ok := service.Subscriptions[strings.ToLower(subscriptionKey(req))]; ok {
-				subscription = &expression.NamedContext{Id: matched.Name, Name: displayName(matched.DisplayName, matched.Name)}
+				subscription = subscriptionContext(matched, subscriptionKey(req))
 				if service.Products != nil {
 					if linked, ok := service.Products[strings.ToLower(matched.Scope)]; ok {
-						product = &expression.NamedContext{Id: linked.Name, Name: displayName(linked.DisplayName, linked.Name)}
+						product = productContext(linked)
 					}
 				}
 			}
 		}
 	}
 	return api, operationCtx, product, subscription, user, deployment
+}
+
+// subscriptionContext projects the documented subscription members.
+//
+// The dates and the presented key come from the lossless ARM document and the
+// request respectively, rather than from columns: they are read here and stored
+// nowhere, so a subscription's shape does not have to change to expose them.
+func subscriptionContext(value model.Subscription, presented string) *expression.SubscriptionContext {
+	properties, _ := value.Document["properties"].(map[string]any)
+	text := func(key string) string {
+		result, _ := properties[key].(string)
+		return result
+	}
+	return &expression.SubscriptionContext{
+		Id: value.Name, Name: displayName(value.DisplayName, value.Name),
+		// Key is the key THIS caller presented, which is the one a policy keys a
+		// limit by. Reporting the primary regardless would make two callers
+		// sharing a subscription indistinguishable.
+		Key: presented, PrimaryKey: value.PrimaryKey, SecondaryKey: value.SecondaryKey,
+		CreatedDate: text("createdDate"), StartDate: text("startDate"), EndDate: text("endDate"),
+	}
+}
+
+// productContext projects the documented product members.
+func productContext(value model.Product) *expression.ProductContext {
+	properties, _ := value.Document["properties"].(map[string]any)
+	flag := func(key string) bool {
+		result, _ := properties[key].(bool)
+		return result
+	}
+	limit := expression.Null()
+	if raw, ok := properties["subscriptionsLimit"].(float64); ok {
+		limit = expression.Double(raw)
+	}
+	return &expression.ProductContext{
+		Id: value.Name, Name: displayName(value.DisplayName, value.Name),
+		State: value.State, ApprovalRequired: value.ApprovalRequired,
+		SubscriptionRequired: flag("subscriptionRequired"), SubscriptionsLimit: limit,
+	}
 }
 
 func logicalAPIID(id string) string {
@@ -851,7 +910,7 @@ func (r *Runtime) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		activePlan = mergeProductPlan(productPlan, activePlan)
 	}
 	cacheKey := service.Name + ":" + route.API.ID() + ":" + req.Method + ":" + req.URL.RequestURI()
-	apiCtx, operationCtx, productCtx, subscriptionCtx, userCtx, deploymentCtx := bindRequestContext(service, route, operation, req)
+	apiCtx, operationCtx, productCtx, subscriptionCtx, userCtx, deploymentCtx := bindRequestContext(service, route, operation, req, selfHosted)
 	state := &policy.State{Request: req, BackendURL: route.API.ServiceURL, Path: relative, Headers: make(http.Header), ValidateToken: r.policyTokenValidator, SendRequest: r.policySendRequest, FetchCredential: r.credentialFetcher(req, route.API.ServiceID), Trace: func(phase, detail string) { traceEvent(trace, phase, detail) }, RateLimit: r.rateLimit, BandwidthLimit: r.bandwidthLimit, AcquireConcurrency: r.acquireConcurrency, CacheGet: r.cacheGet, CacheSet: r.cacheSet, ValueCacheGet: r.valueCacheGet, ValueCacheSet: r.valueCacheSet, ValueCacheRemove: r.valueCacheRemove, CacheKey: cacheKey, TokenLimit: r.tokenLimit, Api: apiCtx, Operation: operationCtx, Product: productCtx, Subscription: subscriptionCtx, User: userCtx, Deployment: deploymentCtx}
 	defer func() {
 		for index := len(state.ConcurrencyReleases) - 1; index >= 0; index-- {
