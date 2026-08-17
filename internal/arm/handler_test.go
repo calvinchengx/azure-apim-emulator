@@ -719,7 +719,7 @@ func TestFilterGrammar(t *testing.T) {
 
 func TestServiceBranches(t *testing.T) {
 	handler, st := testHandler(t)
-	validService := `{"location":"local","sku":{},"tags":{"environment":"test"},"zones":["1"],"identity":{"type":"SystemAssigned"},"properties":{"publisherName":"Local","publisherEmail":"local@example.test","customProperties":{"one":"1","remove":"x"},"publicNetworkAccess":"Enabled","hostnameConfigurations":[{"type":"Proxy","hostName":"api.example.test"}]}}`
+	validService := `{"location":"local","sku":{"name":"Developer","capacity":1},"tags":{"environment":"test"},"zones":["1"],"identity":{"type":"SystemAssigned"},"properties":{"publisherName":"Local","publisherEmail":"local@example.test","customProperties":{"one":"1","remove":"x"},"publicNetworkAccess":"Enabled","hostnameConfigurations":[{"type":"Proxy","hostName":"api.example.test"}]}}`
 	assertStatus(t, handler, http.MethodGet, basePath+apiQuery, "", http.StatusNotFound)
 	assertStatus(t, handler, http.MethodPut, basePath+apiQuery, `{`, http.StatusBadRequest)
 	assertStatus(t, handler, http.MethodPut, basePath+apiQuery, `{"sku":{"name":"Developer"}}`, http.StatusBadRequest)
@@ -3065,7 +3065,7 @@ func TestClosedStoreWriteErrors(t *testing.T) {
 	if err := st.Close(); err != nil {
 		t.Fatal(err)
 	}
-	assertStatus(t, handler, http.MethodPut, basePath+apiQuery, `{"location":"local","properties":{"publisherName":"Local","publisherEmail":"local@example.test"}}`, http.StatusConflict)
+	assertStatus(t, handler, http.MethodPut, basePath+apiQuery, `{"location":"local","sku":{"name":"Developer","capacity":1},"properties":{"publisherName":"Local","publisherEmail":"local@example.test"}}`, http.StatusConflict)
 	assertStatus(t, handler, http.MethodPut, basePath+"/apis/a"+apiQuery, `{"properties":{"displayName":"A","serviceUrl":"https://backend"}}`, http.StatusConflict)
 	assertStatus(t, handler, http.MethodPut, basePath+"/apis/a/operations/get"+apiQuery, `{"properties":{"method":"GET","urlTemplate":"/"}}`, http.StatusConflict)
 	assertStatus(t, handler, http.MethodPut, basePath+"/apis/a/policies/policy"+apiQuery, `{"properties":{"value":"<policies/>"}}`, http.StatusConflict)
@@ -3177,7 +3177,7 @@ func TestServiceStoreWriteErrors(t *testing.T) {
 		t.Fatal(err)
 	}
 	handler := &Handler{Store: st, Auth: auth.AllowAll{}}
-	body := `{"location":"local","properties":{"publisherName":"Local","publisherEmail":"local@example.test"}}`
+	body := `{"location":"local","sku":{"name":"Developer","capacity":1},"properties":{"publisherName":"Local","publisherEmail":"local@example.test"}}`
 	assertStatus(t, handler, http.MethodPut, basePath+apiQuery, body, http.StatusConflict)
 	assertStatus(t, handler, http.MethodPatch, basePath+apiQuery, `{}`, http.StatusConflict)
 }

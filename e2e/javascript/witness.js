@@ -708,3 +708,94 @@ if (mtlsResponse.status !== 403) {
   throw new Error(`a request with no client certificate on an mTLS hostname = ${mtlsResponse.status}`);
 }
 console.log("javascript witness: an mTLS hostname refuses a request presenting no client certificate");
+
+// ---------------------------------------------------------------------------
+// Tiers and SKUs, driven by Microsoft's own SDK.
+//
+// Three separate operation groups answer three different questions, and the SDK
+// having all three is what says they are distinct surfaces rather than one:
+// what can THIS service become, what does Azure sell, and where is this service
+// deployed. This section runs last, because it changes the service's tier.
+const availableSkus = [];
+for await (const entry of client.apiManagementServiceSkus.listAvailableServiceSkus(resourceGroup, serviceName)) {
+  availableSkus.push(entry);
+}
+const availableNames = availableSkus.map((entry) => entry.sku?.name);
+if (!availableNames.includes("Premium")) {
+  throw new Error(`available skus = ${JSON.stringify(availableNames)}`);
+}
+// A dedicated service is not offered Consumption: that move always fails, so
+// listing it would be an offer that cannot be taken.
+if (availableNames.includes("Consumption")) {
+  throw new Error(`a dedicated service was offered Consumption: ${JSON.stringify(availableNames)}`);
+}
+const developerEntry = availableSkus.find((entry) => entry.sku?.name === "Developer");
+if (developerEntry?.capacity?.scaleType !== "None" || developerEntry?.capacity?.maximum !== 1) {
+  throw new Error(`Developer capacity = ${JSON.stringify(developerEntry?.capacity)}`);
+}
+
+const catalogue = [];
+for await (const entry of client.apiManagementSkus.list()) {
+  catalogue.push(entry);
+}
+// The subscription-wide catalogue lists everything, Consumption included, and
+// says what each tier can do.
+const premiumSku = catalogue.find((entry) => entry.name === "Premium");
+const premiumCapabilities = (premiumSku?.capabilities ?? []).map((entry) => entry.name);
+if (!premiumCapabilities.includes("workspaces")) {
+  throw new Error(`Premium capabilities = ${JSON.stringify(premiumCapabilities)}`);
+}
+const consumptionSku = catalogue.find((entry) => entry.name === "Consumption");
+if (!consumptionSku) {
+  throw new Error(`catalogue = ${JSON.stringify(catalogue.map((entry) => entry.name))}`);
+}
+if ((consumptionSku.capabilities ?? []).length !== 0) {
+  throw new Error(`Consumption claimed capabilities: ${JSON.stringify(consumptionSku.capabilities)}`);
+}
+console.log("javascript witness: SKU catalogues answer per-service and per-subscription separately");
+
+// A tier bounds how far a service scales, and the SDK's own error surfaces it.
+let capacityRefusal = null;
+try {
+  await client.apiManagementService.beginCreateOrUpdateAndWait(resourceGroup, serviceName, {
+    location: "local",
+    sku: { name: "Developer", capacity: 4 },
+    publisherName: "JavaScript SDK",
+    publisherEmail: "javascript@example.test",
+  });
+} catch (error) {
+  capacityRefusal = error;
+}
+if (!capacityRefusal || capacityRefusal.statusCode !== 400) {
+  throw new Error(`a scaled Developer service was accepted: ${capacityRefusal?.statusCode ?? "created"}`);
+}
+
+// Multi-region is Premium only, and each extra region carries its own SKU.
+await client.apiManagementService.beginCreateOrUpdateAndWait(resourceGroup, serviceName, {
+  location: "local",
+  sku: { name: "Premium", capacity: 2 },
+  publisherName: "JavaScript SDK",
+  publisherEmail: "javascript@example.test",
+  additionalLocations: [{ location: "westeurope", sku: { name: "Premium", capacity: 1 } }],
+});
+
+const regions = [];
+for await (const entry of client.region.listByService(resourceGroup, serviceName)) {
+  regions.push(entry);
+}
+const master = regions.filter((entry) => entry.isMasterRegion);
+if (regions.length !== 2 || master.length !== 1) {
+  throw new Error(`regions = ${JSON.stringify(regions)}`);
+}
+if (!regions.some((entry) => entry.name === "westeurope" && entry.isMasterRegion === false)) {
+  throw new Error(`the additional region is not listed as secondary: ${JSON.stringify(regions)}`);
+}
+
+const multiRegion = await client.apiManagementService.get(resourceGroup, serviceName);
+const extra = (multiRegion.additionalLocations ?? [])[0];
+// Each region reports where it is reachable, which is what a caller uses to
+// address it directly.
+if (!extra?.gatewayRegionalUrl?.includes("westeurope")) {
+  throw new Error(`additional location = ${JSON.stringify(extra)}`);
+}
+console.log("javascript witness: multi-region is Premium-only, and each region reports its own gateway URL");

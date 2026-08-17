@@ -239,6 +239,14 @@
       "go:TestCustomDomainCertificateIsParsedAndTheSecretDropped",
       "go:TestExpiredCustomDomainCertificateIsReportedFailed",
       "go:TestNegotiateClientCertificateRefusesAnUnauthenticatedRequest"
+    ],
+    "tiers/SKUs/regions/deployment": [
+      "ci:sdk-witnesses",
+      "go:TestSKUCapacityRules",
+      "go:TestAdditionalLocations",
+      "go:TestSKUCatalogues",
+      "go:TestTierEnforcementIsOptIn",
+      "go:TestTierEnforcementRefusesGatewaysOnALesserTier"
     ]
   }
 }

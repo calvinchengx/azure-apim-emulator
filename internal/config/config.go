@@ -21,6 +21,13 @@ type Config struct {
 	// a valid ARM token gets full access, which is what every existing caller
 	// and witness assumes. Turning it on is opting IN to being refused.
 	EnforceRBAC bool
+	// EnforceTiers refuses capabilities the service's SKU does not have.
+	// Default off, for the same reason as EnforceRBAC: every existing caller,
+	// test and witness builds a Developer service and then creates workspaces,
+	// which Azure allows only on Premium. Leaving it off is the emulator being
+	// MORE PERMISSIVE than a tenant, which is a real divergence rather than a
+	// neutral default, and `docs/parity.md` says so.
+	EnforceTiers bool
 	// RBACOwner is the principal treated as Owner at subscription scope while
 	// enforcement is on.
 	//
@@ -46,6 +53,7 @@ func FromEnvPartial() *Config {
 		DisableAuth:      boolEnv("APIM_DISABLE_AUTH"),
 		StrictPolicies:   boolEnv("APIM_STRICT_POLICIES"),
 		EnforceRBAC:      boolEnv("APIM_ENFORCE_RBAC"),
+		EnforceTiers:     boolEnv("APIM_ENFORCE_TIERS"),
 		RBACOwner:        os.Getenv("APIM_RBAC_OWNER"),
 		EntraIssuer:      os.Getenv("APIM_ENTRA_ISSUER"),
 		EntraJWKSURL:     os.Getenv("APIM_ENTRA_JWKS_URL"),
