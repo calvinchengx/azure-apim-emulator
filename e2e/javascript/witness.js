@@ -576,8 +576,13 @@ if (!(linkResources.value ?? []).some((entry) => entry.groupId === "Gateway")) {
   throw new Error(`private link resources = ${JSON.stringify(linkResources.value)}`);
 }
 const gatewayLink = await client.privateEndpointConnectionOperations.getPrivateLinkResource(resourceGroup, serviceName, "Gateway");
-if (!gatewayLink.requiredZoneNames?.includes("privatelink.azure-api.net")) {
-  throw new Error(`gateway link resource = ${JSON.stringify(gatewayLink)}`);
+// Compared exactly, and the count checked, rather than asking whether the zone
+// appears somewhere in the list. A containment check would pass on a list that
+// also carried zones nobody should be told to create, and the idiom reads as
+// URL validation to a scanner besides.
+const requiredZones = gatewayLink.requiredZoneNames ?? [];
+if (requiredZones.length !== 1 || requiredZones[0] !== "privatelink.azure-api.net") {
+  throw new Error(`gateway link resource zones = ${JSON.stringify(requiredZones)}`);
 }
 
 await client.privateEndpointConnectionOperations.beginDeleteAndWait(resourceGroup, serviceName, connectionName);
