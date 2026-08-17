@@ -15,6 +15,7 @@
     "groupId",
     "loggerId",
     "namedValueId",
+    "operationId",
     "productId",
     "sid",
     "tagId",
@@ -27,9 +28,9 @@
   ],
   "summary": {
     "total": 611,
-    "routed": 294,
-    "absent": 166,
-    "unmeasured": 151
+    "routed": 367,
+    "absent": 124,
+    "unmeasured": 120
   },
   "byGroup": {
     "AllPolicies": {
@@ -113,9 +114,9 @@
       "unmeasured": 0
     },
     "ApiOperationPolicy": {
-      "routed": 0,
+      "routed": 4,
       "absent": 0,
-      "unmeasured": 5
+      "unmeasured": 1
     },
     "ApiPolicy": {
       "routed": 4,
@@ -408,9 +409,9 @@
       "unmeasured": 0
     },
     "ProductApiLink": {
-      "routed": 0,
-      "absent": 3,
-      "unmeasured": 1
+      "routed": 4,
+      "absent": 0,
+      "unmeasured": 0
     },
     "ProductGroup": {
       "routed": 4,
@@ -418,9 +419,9 @@
       "unmeasured": 0
     },
     "ProductGroupLink": {
-      "routed": 0,
-      "absent": 3,
-      "unmeasured": 1
+      "routed": 4,
+      "absent": 0,
+      "unmeasured": 0
     },
     "ProductPolicy": {
       "routed": 4,
@@ -478,24 +479,24 @@
       "unmeasured": 0
     },
     "Tag": {
-      "routed": 16,
+      "routed": 21,
       "absent": 0,
-      "unmeasured": 5
+      "unmeasured": 0
     },
     "TagApiLink": {
-      "routed": 0,
-      "absent": 3,
-      "unmeasured": 1
+      "routed": 4,
+      "absent": 0,
+      "unmeasured": 0
     },
     "TagOperationLink": {
-      "routed": 0,
-      "absent": 3,
-      "unmeasured": 1
+      "routed": 4,
+      "absent": 0,
+      "unmeasured": 0
     },
     "TagProductLink": {
-      "routed": 0,
-      "absent": 3,
-      "unmeasured": 1
+      "routed": 4,
+      "absent": 0,
+      "unmeasured": 0
     },
     "TagResource": {
       "routed": 0,
@@ -558,19 +559,19 @@
       "unmeasured": 0
     },
     "WorkspaceApiDiagnostic": {
-      "routed": 0,
-      "absent": 5,
-      "unmeasured": 1
+      "routed": 3,
+      "absent": 0,
+      "unmeasured": 3
     },
     "WorkspaceApiOperation": {
-      "routed": 4,
+      "routed": 6,
       "absent": 0,
-      "unmeasured": 2
+      "unmeasured": 0
     },
     "WorkspaceApiOperationPolicy": {
-      "routed": 0,
+      "routed": 4,
       "absent": 0,
-      "unmeasured": 5
+      "unmeasured": 1
     },
     "WorkspaceApiPolicy": {
       "routed": 4,
@@ -588,9 +589,9 @@
       "unmeasured": 0
     },
     "WorkspaceApiSchema": {
-      "routed": 3,
+      "routed": 5,
       "absent": 0,
-      "unmeasured": 2
+      "unmeasured": 0
     },
     "WorkspaceApiVersionSet": {
       "routed": 6,
@@ -623,9 +624,9 @@
       "unmeasured": 0
     },
     "WorkspaceGroupUser": {
-      "routed": 0,
-      "absent": 3,
-      "unmeasured": 1
+      "routed": 4,
+      "absent": 0,
+      "unmeasured": 0
     },
     "WorkspaceLogger": {
       "routed": 6,
@@ -633,9 +634,9 @@
       "unmeasured": 0
     },
     "WorkspaceNamedValue": {
-      "routed": 6,
+      "routed": 8,
       "absent": 0,
-      "unmeasured": 2
+      "unmeasured": 0
     },
     "WorkspaceNotification": {
       "routed": 0,
@@ -668,24 +669,24 @@
       "unmeasured": 0
     },
     "WorkspaceProductApiLink": {
-      "routed": 0,
-      "absent": 3,
-      "unmeasured": 1
+      "routed": 4,
+      "absent": 0,
+      "unmeasured": 0
     },
     "WorkspaceProductGroupLink": {
-      "routed": 0,
-      "absent": 3,
-      "unmeasured": 1
+      "routed": 4,
+      "absent": 0,
+      "unmeasured": 0
     },
     "WorkspaceProductPolicy": {
-      "routed": 0,
-      "absent": 4,
+      "routed": 4,
+      "absent": 0,
       "unmeasured": 1
     },
     "WorkspaceSubscription": {
-      "routed": 6,
+      "routed": 9,
       "absent": 0,
-      "unmeasured": 3
+      "unmeasured": 0
     },
     "WorkspaceTag": {
       "routed": 6,
@@ -693,19 +694,19 @@
       "unmeasured": 0
     },
     "WorkspaceTagApiLink": {
-      "routed": 0,
-      "absent": 3,
-      "unmeasured": 1
+      "routed": 4,
+      "absent": 0,
+      "unmeasured": 0
     },
     "WorkspaceTagOperationLink": {
-      "routed": 0,
-      "absent": 3,
-      "unmeasured": 1
+      "routed": 4,
+      "absent": 0,
+      "unmeasured": 0
     },
     "WorkspaceTagProductLink": {
-      "routed": 0,
-      "absent": 3,
-      "unmeasured": 1
+      "routed": 4,
+      "absent": 0,
+      "unmeasured": 0
     }
   },
   "operations": [
@@ -1069,29 +1070,29 @@
     {
       "operationId": "ApiOperationPolicy_CreateOrUpdate",
       "method": "PUT",
-      "verdict": "unmeasured",
-      "status": 404
+      "verdict": "routed",
+      "status": 201
     },
     {
       "operationId": "ApiOperationPolicy_Delete",
       "method": "DELETE",
-      "verdict": "unmeasured",
-      "status": 404,
-      "setupStatus": 404
+      "verdict": "routed",
+      "status": 405,
+      "setupStatus": 201
     },
     {
       "operationId": "ApiOperationPolicy_Get",
       "method": "GET",
-      "verdict": "unmeasured",
-      "status": 404,
-      "setupStatus": 404
+      "verdict": "routed",
+      "status": 200,
+      "setupStatus": 201
     },
     {
       "operationId": "ApiOperationPolicy_GetEntityTag",
       "method": "HEAD",
-      "verdict": "unmeasured",
-      "status": 404,
-      "setupStatus": 404
+      "verdict": "routed",
+      "status": 405,
+      "setupStatus": 201
     },
     {
       "operationId": "ApiOperationPolicy_ListByOperation",
@@ -1104,28 +1105,28 @@
       "operationId": "ApiOperation_CreateOrUpdate",
       "method": "PUT",
       "verdict": "routed",
-      "status": 201
+      "status": 200
     },
     {
       "operationId": "ApiOperation_Delete",
       "method": "DELETE",
       "verdict": "routed",
       "status": 400,
-      "setupStatus": 201
+      "setupStatus": 200
     },
     {
       "operationId": "ApiOperation_Get",
       "method": "GET",
       "verdict": "routed",
       "status": 200,
-      "setupStatus": 201
+      "setupStatus": 200
     },
     {
       "operationId": "ApiOperation_GetEntityTag",
       "method": "HEAD",
       "verdict": "routed",
       "status": 405,
-      "setupStatus": 201
+      "setupStatus": 200
     },
     {
       "operationId": "ApiOperation_ListByApi",
@@ -1139,7 +1140,7 @@
       "method": "PATCH",
       "verdict": "routed",
       "status": 400,
-      "setupStatus": 201
+      "setupStatus": 200
     },
     {
       "operationId": "ApiPolicy_CreateOrUpdate",
@@ -2873,29 +2874,29 @@
     {
       "operationId": "ProductApiLink_CreateOrUpdate",
       "method": "PUT",
-      "verdict": "absent",
-      "status": 404
+      "verdict": "routed",
+      "status": 201
     },
     {
       "operationId": "ProductApiLink_Delete",
       "method": "DELETE",
-      "verdict": "absent",
-      "status": 404,
-      "setupStatus": 404
+      "verdict": "routed",
+      "status": 204,
+      "setupStatus": 201
     },
     {
       "operationId": "ProductApiLink_Get",
       "method": "GET",
-      "verdict": "absent",
-      "status": 404,
-      "setupStatus": 404
+      "verdict": "routed",
+      "status": 200,
+      "setupStatus": 201
     },
     {
       "operationId": "ProductApiLink_ListByProduct",
       "method": "GET",
-      "verdict": "unmeasured",
-      "status": 404,
-      "setupStatus": 404
+      "verdict": "routed",
+      "status": 200,
+      "setupStatus": 405
     },
     {
       "operationId": "ProductApi_CheckEntityExists",
@@ -2927,29 +2928,29 @@
     {
       "operationId": "ProductGroupLink_CreateOrUpdate",
       "method": "PUT",
-      "verdict": "absent",
-      "status": 404
+      "verdict": "routed",
+      "status": 201
     },
     {
       "operationId": "ProductGroupLink_Delete",
       "method": "DELETE",
-      "verdict": "absent",
-      "status": 404,
-      "setupStatus": 404
+      "verdict": "routed",
+      "status": 204,
+      "setupStatus": 201
     },
     {
       "operationId": "ProductGroupLink_Get",
       "method": "GET",
-      "verdict": "absent",
-      "status": 404,
-      "setupStatus": 404
+      "verdict": "routed",
+      "status": 200,
+      "setupStatus": 201
     },
     {
       "operationId": "ProductGroupLink_ListByProduct",
       "method": "GET",
-      "verdict": "unmeasured",
-      "status": 404,
-      "setupStatus": 404
+      "verdict": "routed",
+      "status": 200,
+      "setupStatus": 405
     },
     {
       "operationId": "ProductGroup_CheckEntityExists",
@@ -3318,83 +3319,83 @@
     {
       "operationId": "TagApiLink_CreateOrUpdate",
       "method": "PUT",
-      "verdict": "absent",
-      "status": 404
+      "verdict": "routed",
+      "status": 201
     },
     {
       "operationId": "TagApiLink_Delete",
       "method": "DELETE",
-      "verdict": "absent",
-      "status": 404,
-      "setupStatus": 404
+      "verdict": "routed",
+      "status": 204,
+      "setupStatus": 201
     },
     {
       "operationId": "TagApiLink_Get",
       "method": "GET",
-      "verdict": "absent",
-      "status": 404,
-      "setupStatus": 404
+      "verdict": "routed",
+      "status": 200,
+      "setupStatus": 201
     },
     {
       "operationId": "TagApiLink_ListByProduct",
       "method": "GET",
-      "verdict": "unmeasured",
-      "status": 404,
-      "setupStatus": 404
+      "verdict": "routed",
+      "status": 200,
+      "setupStatus": 405
     },
     {
       "operationId": "TagOperationLink_CreateOrUpdate",
       "method": "PUT",
-      "verdict": "absent",
-      "status": 404
+      "verdict": "routed",
+      "status": 201
     },
     {
       "operationId": "TagOperationLink_Delete",
       "method": "DELETE",
-      "verdict": "absent",
-      "status": 404,
-      "setupStatus": 404
+      "verdict": "routed",
+      "status": 204,
+      "setupStatus": 201
     },
     {
       "operationId": "TagOperationLink_Get",
       "method": "GET",
-      "verdict": "absent",
-      "status": 404,
-      "setupStatus": 404
+      "verdict": "routed",
+      "status": 200,
+      "setupStatus": 201
     },
     {
       "operationId": "TagOperationLink_ListByProduct",
       "method": "GET",
-      "verdict": "unmeasured",
-      "status": 404,
-      "setupStatus": 404
+      "verdict": "routed",
+      "status": 200,
+      "setupStatus": 405
     },
     {
       "operationId": "TagProductLink_CreateOrUpdate",
       "method": "PUT",
-      "verdict": "absent",
-      "status": 404
+      "verdict": "routed",
+      "status": 201
     },
     {
       "operationId": "TagProductLink_Delete",
       "method": "DELETE",
-      "verdict": "absent",
-      "status": 404,
-      "setupStatus": 404
+      "verdict": "routed",
+      "status": 204,
+      "setupStatus": 201
     },
     {
       "operationId": "TagProductLink_Get",
       "method": "GET",
-      "verdict": "absent",
-      "status": 404,
-      "setupStatus": 404
+      "verdict": "routed",
+      "status": 200,
+      "setupStatus": 201
     },
     {
       "operationId": "TagProductLink_ListByProduct",
       "method": "GET",
-      "verdict": "unmeasured",
-      "status": 404,
-      "setupStatus": 404
+      "verdict": "routed",
+      "status": 200,
+      "setupStatus": 405
     },
     {
       "operationId": "TagResource_ListByService",
@@ -3412,8 +3413,8 @@
     {
       "operationId": "Tag_AssignToOperation",
       "method": "PUT",
-      "verdict": "unmeasured",
-      "status": 404
+      "verdict": "routed",
+      "status": 201
     },
     {
       "operationId": "Tag_AssignToProduct",
@@ -3444,9 +3445,9 @@
     {
       "operationId": "Tag_DetachFromOperation",
       "method": "DELETE",
-      "verdict": "unmeasured",
-      "status": 404,
-      "setupStatus": 404
+      "verdict": "routed",
+      "status": 204,
+      "setupStatus": 201
     },
     {
       "operationId": "Tag_DetachFromProduct",
@@ -3472,9 +3473,9 @@
     {
       "operationId": "Tag_GetByOperation",
       "method": "GET",
-      "verdict": "unmeasured",
-      "status": 404,
-      "setupStatus": 404
+      "verdict": "routed",
+      "status": 200,
+      "setupStatus": 201
     },
     {
       "operationId": "Tag_GetByProduct",
@@ -3500,9 +3501,9 @@
     {
       "operationId": "Tag_GetEntityStateByOperation",
       "method": "HEAD",
-      "verdict": "unmeasured",
-      "status": 404,
-      "setupStatus": 404
+      "verdict": "routed",
+      "status": 200,
+      "setupStatus": 201
     },
     {
       "operationId": "Tag_GetEntityStateByProduct",
@@ -3521,9 +3522,9 @@
     {
       "operationId": "Tag_ListByOperation",
       "method": "GET",
-      "verdict": "unmeasured",
-      "status": 404,
-      "setupStatus": 404
+      "verdict": "routed",
+      "status": 200,
+      "setupStatus": 405
     },
     {
       "operationId": "Tag_ListByProduct",
@@ -3750,70 +3751,70 @@
     {
       "operationId": "WorkspaceApiDiagnostic_CreateOrUpdate",
       "method": "PUT",
-      "verdict": "absent",
-      "status": 404
+      "verdict": "routed",
+      "status": 400
     },
     {
       "operationId": "WorkspaceApiDiagnostic_Delete",
       "method": "DELETE",
-      "verdict": "absent",
-      "status": 404,
-      "setupStatus": 404
+      "verdict": "routed",
+      "status": 204,
+      "setupStatus": 400
     },
     {
       "operationId": "WorkspaceApiDiagnostic_Get",
       "method": "GET",
-      "verdict": "absent",
+      "verdict": "unmeasured",
       "status": 404,
-      "setupStatus": 404
+      "setupStatus": 400
     },
     {
       "operationId": "WorkspaceApiDiagnostic_GetEntityTag",
       "method": "HEAD",
-      "verdict": "absent",
+      "verdict": "unmeasured",
       "status": 404,
-      "setupStatus": 404
+      "setupStatus": 400
     },
     {
       "operationId": "WorkspaceApiDiagnostic_ListByWorkspace",
       "method": "GET",
-      "verdict": "unmeasured",
-      "status": 404,
-      "setupStatus": 404
+      "verdict": "routed",
+      "status": 200,
+      "setupStatus": 405
     },
     {
       "operationId": "WorkspaceApiDiagnostic_Update",
       "method": "PATCH",
-      "verdict": "absent",
+      "verdict": "unmeasured",
       "status": 404,
-      "setupStatus": 404
+      "setupStatus": 400
     },
     {
       "operationId": "WorkspaceApiOperationPolicy_CreateOrUpdate",
       "method": "PUT",
-      "verdict": "unmeasured",
-      "status": 404
+      "verdict": "routed",
+      "status": 201
     },
     {
       "operationId": "WorkspaceApiOperationPolicy_Delete",
       "method": "DELETE",
-      "verdict": "unmeasured",
-      "status": 404,
-      "setupStatus": 404
+      "verdict": "routed",
+      "status": 405,
+      "setupStatus": 201
     },
     {
       "operationId": "WorkspaceApiOperationPolicy_Get",
       "method": "GET",
-      "verdict": "unmeasured",
-      "status": 404,
-      "setupStatus": 404
+      "verdict": "routed",
+      "status": 200,
+      "setupStatus": 201
     },
     {
       "operationId": "WorkspaceApiOperationPolicy_GetEntityTag",
       "method": "HEAD",
-      "verdict": "unmeasured",
-      "status": 404,
-      "setupStatus": 404
+      "verdict": "routed",
+      "status": 405,
+      "setupStatus": 201
     },
     {
       "operationId": "WorkspaceApiOperationPolicy_ListByOperation",
@@ -3826,28 +3827,28 @@
       "operationId": "WorkspaceApiOperation_CreateOrUpdate",
       "method": "PUT",
       "verdict": "routed",
-      "status": 409
+      "status": 200
     },
     {
       "operationId": "WorkspaceApiOperation_Delete",
       "method": "DELETE",
       "verdict": "routed",
       "status": 204,
-      "setupStatus": 409
+      "setupStatus": 200
     },
     {
       "operationId": "WorkspaceApiOperation_Get",
       "method": "GET",
-      "verdict": "unmeasured",
-      "status": 404,
-      "setupStatus": 409
+      "verdict": "routed",
+      "status": 200,
+      "setupStatus": 200
     },
     {
       "operationId": "WorkspaceApiOperation_GetEntityTag",
       "method": "HEAD",
       "verdict": "routed",
       "status": 405,
-      "setupStatus": 409
+      "setupStatus": 200
     },
     {
       "operationId": "WorkspaceApiOperation_ListByApi",
@@ -3859,9 +3860,9 @@
     {
       "operationId": "WorkspaceApiOperation_Update",
       "method": "PATCH",
-      "verdict": "unmeasured",
-      "status": 404,
-      "setupStatus": 409
+      "verdict": "routed",
+      "status": 200,
+      "setupStatus": 200
     },
     {
       "operationId": "WorkspaceApiPolicy_CreateOrUpdate",
@@ -3949,28 +3950,28 @@
       "operationId": "WorkspaceApiSchema_CreateOrUpdate",
       "method": "PUT",
       "verdict": "routed",
-      "status": 409
+      "status": 201
     },
     {
       "operationId": "WorkspaceApiSchema_Delete",
       "method": "DELETE",
       "verdict": "routed",
       "status": 204,
-      "setupStatus": 409
+      "setupStatus": 201
     },
     {
       "operationId": "WorkspaceApiSchema_Get",
       "method": "GET",
-      "verdict": "unmeasured",
-      "status": 404,
-      "setupStatus": 409
+      "verdict": "routed",
+      "status": 200,
+      "setupStatus": 201
     },
     {
       "operationId": "WorkspaceApiSchema_GetEntityTag",
       "method": "HEAD",
-      "verdict": "unmeasured",
-      "status": 404,
-      "setupStatus": 409
+      "verdict": "routed",
+      "status": 200,
+      "setupStatus": 201
     },
     {
       "operationId": "WorkspaceApiSchema_ListByApi",
@@ -3983,28 +3984,28 @@
       "operationId": "WorkspaceApiVersionSet_CreateOrUpdate",
       "method": "PUT",
       "verdict": "routed",
-      "status": 201
+      "status": 200
     },
     {
       "operationId": "WorkspaceApiVersionSet_Delete",
       "method": "DELETE",
       "verdict": "routed",
       "status": 204,
-      "setupStatus": 201
+      "setupStatus": 200
     },
     {
       "operationId": "WorkspaceApiVersionSet_Get",
       "method": "GET",
       "verdict": "routed",
       "status": 200,
-      "setupStatus": 201
+      "setupStatus": 200
     },
     {
       "operationId": "WorkspaceApiVersionSet_GetEntityTag",
       "method": "HEAD",
       "verdict": "routed",
       "status": 200,
-      "setupStatus": 201
+      "setupStatus": 200
     },
     {
       "operationId": "WorkspaceApiVersionSet_ListByService",
@@ -4018,34 +4019,34 @@
       "method": "PATCH",
       "verdict": "routed",
       "status": 200,
-      "setupStatus": 201
+      "setupStatus": 200
     },
     {
       "operationId": "WorkspaceApi_CreateOrUpdate",
       "method": "PUT",
       "verdict": "routed",
-      "status": 201
+      "status": 200
     },
     {
       "operationId": "WorkspaceApi_Delete",
       "method": "DELETE",
       "verdict": "routed",
       "status": 204,
-      "setupStatus": 201
+      "setupStatus": 200
     },
     {
       "operationId": "WorkspaceApi_Get",
       "method": "GET",
       "verdict": "routed",
       "status": 200,
-      "setupStatus": 201
+      "setupStatus": 200
     },
     {
       "operationId": "WorkspaceApi_GetEntityTag",
       "method": "HEAD",
       "verdict": "routed",
       "status": 405,
-      "setupStatus": 201
+      "setupStatus": 200
     },
     {
       "operationId": "WorkspaceApi_ListByService",
@@ -4059,34 +4060,34 @@
       "method": "PATCH",
       "verdict": "routed",
       "status": 200,
-      "setupStatus": 201
+      "setupStatus": 200
     },
     {
       "operationId": "WorkspaceBackend_CreateOrUpdate",
       "method": "PUT",
       "verdict": "routed",
-      "status": 201
+      "status": 200
     },
     {
       "operationId": "WorkspaceBackend_Delete",
       "method": "DELETE",
       "verdict": "routed",
       "status": 204,
-      "setupStatus": 201
+      "setupStatus": 200
     },
     {
       "operationId": "WorkspaceBackend_Get",
       "method": "GET",
       "verdict": "routed",
       "status": 200,
-      "setupStatus": 201
+      "setupStatus": 200
     },
     {
       "operationId": "WorkspaceBackend_GetEntityTag",
       "method": "HEAD",
       "verdict": "routed",
       "status": 200,
-      "setupStatus": 201
+      "setupStatus": 200
     },
     {
       "operationId": "WorkspaceBackend_ListByWorkspace",
@@ -4100,7 +4101,7 @@
       "method": "PATCH",
       "verdict": "routed",
       "status": 200,
-      "setupStatus": 201
+      "setupStatus": 200
     },
     {
       "operationId": "WorkspaceCertificate_CreateOrUpdate",
@@ -4221,56 +4222,56 @@
     {
       "operationId": "WorkspaceGroupUser_CheckEntityExists",
       "method": "HEAD",
-      "verdict": "absent",
-      "status": 404,
-      "setupStatus": 404
+      "verdict": "routed",
+      "status": 204,
+      "setupStatus": 201
     },
     {
       "operationId": "WorkspaceGroupUser_Create",
-      "method": "PUT",
-      "verdict": "absent",
-      "status": 404
-    },
-    {
-      "operationId": "WorkspaceGroupUser_Delete",
-      "method": "DELETE",
-      "verdict": "absent",
-      "status": 404,
-      "setupStatus": 404
-    },
-    {
-      "operationId": "WorkspaceGroupUser_List",
-      "method": "GET",
-      "verdict": "unmeasured",
-      "status": 404,
-      "setupStatus": 404
-    },
-    {
-      "operationId": "WorkspaceGroup_CreateOrUpdate",
       "method": "PUT",
       "verdict": "routed",
       "status": 201
     },
     {
-      "operationId": "WorkspaceGroup_Delete",
+      "operationId": "WorkspaceGroupUser_Delete",
       "method": "DELETE",
       "verdict": "routed",
       "status": 204,
       "setupStatus": 201
     },
     {
+      "operationId": "WorkspaceGroupUser_List",
+      "method": "GET",
+      "verdict": "routed",
+      "status": 200,
+      "setupStatus": 405
+    },
+    {
+      "operationId": "WorkspaceGroup_CreateOrUpdate",
+      "method": "PUT",
+      "verdict": "routed",
+      "status": 200
+    },
+    {
+      "operationId": "WorkspaceGroup_Delete",
+      "method": "DELETE",
+      "verdict": "routed",
+      "status": 204,
+      "setupStatus": 200
+    },
+    {
       "operationId": "WorkspaceGroup_Get",
       "method": "GET",
       "verdict": "routed",
       "status": 200,
-      "setupStatus": 201
+      "setupStatus": 200
     },
     {
       "operationId": "WorkspaceGroup_GetEntityTag",
       "method": "HEAD",
       "verdict": "routed",
       "status": 200,
-      "setupStatus": 201
+      "setupStatus": 200
     },
     {
       "operationId": "WorkspaceGroup_ListByService",
@@ -4284,34 +4285,34 @@
       "method": "PATCH",
       "verdict": "routed",
       "status": 200,
-      "setupStatus": 201
+      "setupStatus": 200
     },
     {
       "operationId": "WorkspaceLogger_CreateOrUpdate",
       "method": "PUT",
       "verdict": "routed",
-      "status": 201
+      "status": 200
     },
     {
       "operationId": "WorkspaceLogger_Delete",
       "method": "DELETE",
       "verdict": "routed",
       "status": 204,
-      "setupStatus": 201
+      "setupStatus": 200
     },
     {
       "operationId": "WorkspaceLogger_Get",
       "method": "GET",
       "verdict": "routed",
       "status": 200,
-      "setupStatus": 201
+      "setupStatus": 200
     },
     {
       "operationId": "WorkspaceLogger_GetEntityTag",
       "method": "HEAD",
       "verdict": "routed",
       "status": 200,
-      "setupStatus": 201
+      "setupStatus": 200
     },
     {
       "operationId": "WorkspaceLogger_ListByWorkspace",
@@ -4325,34 +4326,34 @@
       "method": "PATCH",
       "verdict": "routed",
       "status": 200,
-      "setupStatus": 201
+      "setupStatus": 200
     },
     {
       "operationId": "WorkspaceNamedValue_CreateOrUpdate",
       "method": "PUT",
       "verdict": "routed",
-      "status": 201
+      "status": 200
     },
     {
       "operationId": "WorkspaceNamedValue_Delete",
       "method": "DELETE",
       "verdict": "routed",
       "status": 204,
-      "setupStatus": 201
+      "setupStatus": 200
     },
     {
       "operationId": "WorkspaceNamedValue_Get",
       "method": "GET",
       "verdict": "routed",
       "status": 200,
-      "setupStatus": 201
+      "setupStatus": 200
     },
     {
       "operationId": "WorkspaceNamedValue_GetEntityTag",
       "method": "HEAD",
       "verdict": "routed",
       "status": 200,
-      "setupStatus": 201
+      "setupStatus": 200
     },
     {
       "operationId": "WorkspaceNamedValue_ListByService",
@@ -4364,15 +4365,15 @@
     {
       "operationId": "WorkspaceNamedValue_ListValue",
       "method": "POST",
-      "verdict": "unmeasured",
-      "status": 404,
+      "verdict": "routed",
+      "status": 200,
       "setupStatus": 405
     },
     {
       "operationId": "WorkspaceNamedValue_RefreshSecret",
       "method": "POST",
-      "verdict": "unmeasured",
-      "status": 404,
+      "verdict": "routed",
+      "status": 400,
       "setupStatus": 405
     },
     {
@@ -4380,7 +4381,7 @@
       "method": "PATCH",
       "verdict": "routed",
       "status": 200,
-      "setupStatus": 201
+      "setupStatus": 200
     },
     {
       "operationId": "WorkspaceNotificationRecipientEmail_CheckEntityExists",
@@ -4534,83 +4535,83 @@
     {
       "operationId": "WorkspaceProductApiLink_CreateOrUpdate",
       "method": "PUT",
-      "verdict": "absent",
-      "status": 404
+      "verdict": "routed",
+      "status": 201
     },
     {
       "operationId": "WorkspaceProductApiLink_Delete",
       "method": "DELETE",
-      "verdict": "absent",
-      "status": 404,
-      "setupStatus": 404
+      "verdict": "routed",
+      "status": 204,
+      "setupStatus": 201
     },
     {
       "operationId": "WorkspaceProductApiLink_Get",
       "method": "GET",
-      "verdict": "absent",
-      "status": 404,
-      "setupStatus": 404
+      "verdict": "routed",
+      "status": 200,
+      "setupStatus": 201
     },
     {
       "operationId": "WorkspaceProductApiLink_ListByProduct",
       "method": "GET",
-      "verdict": "unmeasured",
-      "status": 404,
-      "setupStatus": 404
+      "verdict": "routed",
+      "status": 200,
+      "setupStatus": 405
     },
     {
       "operationId": "WorkspaceProductGroupLink_CreateOrUpdate",
       "method": "PUT",
-      "verdict": "absent",
-      "status": 404
+      "verdict": "routed",
+      "status": 201
     },
     {
       "operationId": "WorkspaceProductGroupLink_Delete",
       "method": "DELETE",
-      "verdict": "absent",
-      "status": 404,
-      "setupStatus": 404
+      "verdict": "routed",
+      "status": 204,
+      "setupStatus": 201
     },
     {
       "operationId": "WorkspaceProductGroupLink_Get",
       "method": "GET",
-      "verdict": "absent",
-      "status": 404,
-      "setupStatus": 404
+      "verdict": "routed",
+      "status": 200,
+      "setupStatus": 201
     },
     {
       "operationId": "WorkspaceProductGroupLink_ListByProduct",
       "method": "GET",
-      "verdict": "unmeasured",
-      "status": 404,
-      "setupStatus": 404
+      "verdict": "routed",
+      "status": 200,
+      "setupStatus": 405
     },
     {
       "operationId": "WorkspaceProductPolicy_CreateOrUpdate",
       "method": "PUT",
-      "verdict": "absent",
-      "status": 404
+      "verdict": "routed",
+      "status": 201
     },
     {
       "operationId": "WorkspaceProductPolicy_Delete",
       "method": "DELETE",
-      "verdict": "absent",
-      "status": 404,
-      "setupStatus": 404
+      "verdict": "routed",
+      "status": 405,
+      "setupStatus": 201
     },
     {
       "operationId": "WorkspaceProductPolicy_Get",
       "method": "GET",
-      "verdict": "absent",
-      "status": 404,
-      "setupStatus": 404
+      "verdict": "routed",
+      "status": 200,
+      "setupStatus": 201
     },
     {
       "operationId": "WorkspaceProductPolicy_GetEntityTag",
       "method": "HEAD",
-      "verdict": "absent",
-      "status": 404,
-      "setupStatus": 404
+      "verdict": "routed",
+      "status": 405,
+      "setupStatus": 201
     },
     {
       "operationId": "WorkspaceProductPolicy_ListByProduct",
@@ -4623,28 +4624,28 @@
       "operationId": "WorkspaceProduct_CreateOrUpdate",
       "method": "PUT",
       "verdict": "routed",
-      "status": 201
+      "status": 200
     },
     {
       "operationId": "WorkspaceProduct_Delete",
       "method": "DELETE",
       "verdict": "routed",
       "status": 204,
-      "setupStatus": 201
+      "setupStatus": 200
     },
     {
       "operationId": "WorkspaceProduct_Get",
       "method": "GET",
       "verdict": "routed",
       "status": 200,
-      "setupStatus": 201
+      "setupStatus": 200
     },
     {
       "operationId": "WorkspaceProduct_GetEntityTag",
       "method": "HEAD",
       "verdict": "routed",
       "status": 405,
-      "setupStatus": 201
+      "setupStatus": 200
     },
     {
       "operationId": "WorkspaceProduct_ListByService",
@@ -4658,34 +4659,34 @@
       "method": "PATCH",
       "verdict": "routed",
       "status": 200,
-      "setupStatus": 201
+      "setupStatus": 200
     },
     {
       "operationId": "WorkspaceSubscription_CreateOrUpdate",
       "method": "PUT",
       "verdict": "routed",
-      "status": 201
+      "status": 200
     },
     {
       "operationId": "WorkspaceSubscription_Delete",
       "method": "DELETE",
       "verdict": "routed",
       "status": 204,
-      "setupStatus": 201
+      "setupStatus": 200
     },
     {
       "operationId": "WorkspaceSubscription_Get",
       "method": "GET",
       "verdict": "routed",
       "status": 200,
-      "setupStatus": 201
+      "setupStatus": 200
     },
     {
       "operationId": "WorkspaceSubscription_GetEntityTag",
       "method": "HEAD",
       "verdict": "routed",
       "status": 405,
-      "setupStatus": 201
+      "setupStatus": 200
     },
     {
       "operationId": "WorkspaceSubscription_List",
@@ -4697,22 +4698,22 @@
     {
       "operationId": "WorkspaceSubscription_ListSecrets",
       "method": "POST",
-      "verdict": "unmeasured",
-      "status": 404,
+      "verdict": "routed",
+      "status": 200,
       "setupStatus": 404
     },
     {
       "operationId": "WorkspaceSubscription_RegeneratePrimaryKey",
       "method": "POST",
-      "verdict": "unmeasured",
-      "status": 404,
+      "verdict": "routed",
+      "status": 204,
       "setupStatus": 404
     },
     {
       "operationId": "WorkspaceSubscription_RegenerateSecondaryKey",
       "method": "POST",
-      "verdict": "unmeasured",
-      "status": 404,
+      "verdict": "routed",
+      "status": 204,
       "setupStatus": 404
     },
     {
@@ -4720,115 +4721,115 @@
       "method": "PATCH",
       "verdict": "routed",
       "status": 200,
-      "setupStatus": 201
+      "setupStatus": 200
     },
     {
       "operationId": "WorkspaceTagApiLink_CreateOrUpdate",
-      "method": "PUT",
-      "verdict": "absent",
-      "status": 404
-    },
-    {
-      "operationId": "WorkspaceTagApiLink_Delete",
-      "method": "DELETE",
-      "verdict": "absent",
-      "status": 404,
-      "setupStatus": 404
-    },
-    {
-      "operationId": "WorkspaceTagApiLink_Get",
-      "method": "GET",
-      "verdict": "absent",
-      "status": 404,
-      "setupStatus": 404
-    },
-    {
-      "operationId": "WorkspaceTagApiLink_ListByProduct",
-      "method": "GET",
-      "verdict": "unmeasured",
-      "status": 404,
-      "setupStatus": 404
-    },
-    {
-      "operationId": "WorkspaceTagOperationLink_CreateOrUpdate",
-      "method": "PUT",
-      "verdict": "absent",
-      "status": 404
-    },
-    {
-      "operationId": "WorkspaceTagOperationLink_Delete",
-      "method": "DELETE",
-      "verdict": "absent",
-      "status": 404,
-      "setupStatus": 404
-    },
-    {
-      "operationId": "WorkspaceTagOperationLink_Get",
-      "method": "GET",
-      "verdict": "absent",
-      "status": 404,
-      "setupStatus": 404
-    },
-    {
-      "operationId": "WorkspaceTagOperationLink_ListByProduct",
-      "method": "GET",
-      "verdict": "unmeasured",
-      "status": 404,
-      "setupStatus": 404
-    },
-    {
-      "operationId": "WorkspaceTagProductLink_CreateOrUpdate",
-      "method": "PUT",
-      "verdict": "absent",
-      "status": 404
-    },
-    {
-      "operationId": "WorkspaceTagProductLink_Delete",
-      "method": "DELETE",
-      "verdict": "absent",
-      "status": 404,
-      "setupStatus": 404
-    },
-    {
-      "operationId": "WorkspaceTagProductLink_Get",
-      "method": "GET",
-      "verdict": "absent",
-      "status": 404,
-      "setupStatus": 404
-    },
-    {
-      "operationId": "WorkspaceTagProductLink_ListByProduct",
-      "method": "GET",
-      "verdict": "unmeasured",
-      "status": 404,
-      "setupStatus": 404
-    },
-    {
-      "operationId": "WorkspaceTag_CreateOrUpdate",
       "method": "PUT",
       "verdict": "routed",
       "status": 201
     },
     {
-      "operationId": "WorkspaceTag_Delete",
+      "operationId": "WorkspaceTagApiLink_Delete",
       "method": "DELETE",
       "verdict": "routed",
       "status": 204,
       "setupStatus": 201
     },
     {
-      "operationId": "WorkspaceTag_Get",
+      "operationId": "WorkspaceTagApiLink_Get",
       "method": "GET",
       "verdict": "routed",
       "status": 200,
       "setupStatus": 201
     },
     {
+      "operationId": "WorkspaceTagApiLink_ListByProduct",
+      "method": "GET",
+      "verdict": "routed",
+      "status": 200,
+      "setupStatus": 405
+    },
+    {
+      "operationId": "WorkspaceTagOperationLink_CreateOrUpdate",
+      "method": "PUT",
+      "verdict": "routed",
+      "status": 201
+    },
+    {
+      "operationId": "WorkspaceTagOperationLink_Delete",
+      "method": "DELETE",
+      "verdict": "routed",
+      "status": 204,
+      "setupStatus": 201
+    },
+    {
+      "operationId": "WorkspaceTagOperationLink_Get",
+      "method": "GET",
+      "verdict": "routed",
+      "status": 200,
+      "setupStatus": 201
+    },
+    {
+      "operationId": "WorkspaceTagOperationLink_ListByProduct",
+      "method": "GET",
+      "verdict": "routed",
+      "status": 200,
+      "setupStatus": 405
+    },
+    {
+      "operationId": "WorkspaceTagProductLink_CreateOrUpdate",
+      "method": "PUT",
+      "verdict": "routed",
+      "status": 201
+    },
+    {
+      "operationId": "WorkspaceTagProductLink_Delete",
+      "method": "DELETE",
+      "verdict": "routed",
+      "status": 204,
+      "setupStatus": 201
+    },
+    {
+      "operationId": "WorkspaceTagProductLink_Get",
+      "method": "GET",
+      "verdict": "routed",
+      "status": 200,
+      "setupStatus": 201
+    },
+    {
+      "operationId": "WorkspaceTagProductLink_ListByProduct",
+      "method": "GET",
+      "verdict": "routed",
+      "status": 200,
+      "setupStatus": 405
+    },
+    {
+      "operationId": "WorkspaceTag_CreateOrUpdate",
+      "method": "PUT",
+      "verdict": "routed",
+      "status": 200
+    },
+    {
+      "operationId": "WorkspaceTag_Delete",
+      "method": "DELETE",
+      "verdict": "routed",
+      "status": 204,
+      "setupStatus": 200
+    },
+    {
+      "operationId": "WorkspaceTag_Get",
+      "method": "GET",
+      "verdict": "routed",
+      "status": 200,
+      "setupStatus": 200
+    },
+    {
       "operationId": "WorkspaceTag_GetEntityState",
       "method": "HEAD",
       "verdict": "routed",
       "status": 200,
-      "setupStatus": 201
+      "setupStatus": 200
     },
     {
       "operationId": "WorkspaceTag_ListByService",
@@ -4842,7 +4843,7 @@
       "method": "PATCH",
       "verdict": "routed",
       "status": 200,
-      "setupStatus": 201
+      "setupStatus": 200
     },
     {
       "operationId": "Workspace_CreateOrUpdate",

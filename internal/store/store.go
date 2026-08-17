@@ -389,6 +389,14 @@ CREATE TABLE IF NOT EXISTS policies (
 	_, _ = s.db.Exec(`ALTER TABLE certificates ADD COLUMN key_vault_status_code TEXT NOT NULL DEFAULT ''`)
 	_, _ = s.db.Exec(`ALTER TABLE certificates ADD COLUMN key_vault_status_message TEXT NOT NULL DEFAULT ''`)
 	_, _ = s.db.Exec(`ALTER TABLE certificates ADD COLUMN key_vault_status_time INTEGER NOT NULL DEFAULT 0`)
+	// Link resources are a second PROJECTION of these associations, not a
+	// second store, so the name Azure lets a client give a link lives on the
+	// association itself. A separate links table would let
+	// `products/{id}/apis/{apiId}` and `products/{id}/apiLinks/{name}` disagree
+	// about whether the same API is in the same product.
+	_, _ = s.db.Exec(`ALTER TABLE product_apis ADD COLUMN link_name TEXT NOT NULL DEFAULT ''`)
+	_, _ = s.db.Exec(`ALTER TABLE product_groups ADD COLUMN link_name TEXT NOT NULL DEFAULT ''`)
+	_, _ = s.db.Exec(`ALTER TABLE resource_tags ADD COLUMN link_name TEXT NOT NULL DEFAULT ''`)
 	return nil
 }
 
@@ -3368,4 +3376,94 @@ func (s *Store) ListRoleAssignments() ([]rbac.Assignment, error) {
 // DeleteRoleAssignment removes a role assignment.
 func (s *Store) DeleteRoleAssignment(id string) error {
 	return deleteScopedResource(s.db, "role_assignments", id)
+}
+
+// LinkKind names an association that Azure also exposes as a link resource.
+//
+// Links are not their own store. Each kind below points at an association the
+// emulator already keeps, and the link surface reads and writes THAT. The only
+// thing a link adds is a name, because Azure lets a client choose one, so the
+// name is a column on the association rather than a row somewhere else.
+type LinkKind int
+
+const (
+	// LinkProductAPIKind is the product-to-API association.
+	LinkProductAPIKind LinkKind = iota
+	// LinkProductGroupKind is the product-to-group association.
+	LinkProductGroupKind
+	// LinkResourceTagKind is the tag-to-resource association. Its owner is the
+	// TAG and its target is the tagged resource, which is the reverse of how
+	// the table reads, because that is the direction the link surface asks in.
+	LinkResourceTagKind
+)
+
+// linkTable describes where one kind of association lives.
+func (k LinkKind) linkTable() (table, owner, target string) {
+	switch k {
+	case LinkProductAPIKind:
+		return "product_apis", "product_id", "api_id"
+	case LinkProductGroupKind:
+		return "product_groups", "product_id", "group_id"
+	default:
+		return "resource_tags", "tag_id", "resource_id"
+	}
+}
+
+// SetLinkName records the name a client gave an association's link resource.
+func (s *Store) SetLinkName(kind LinkKind, ownerID, targetID, name string) error {
+	table, owner, target := kind.linkTable()
+	result, err := s.db.Exec(
+		`UPDATE `+table+` SET link_name=? WHERE lower(`+owner+`)=lower(?) AND lower(`+target+`)=lower(?)`,
+		name, ownerID, targetID)
+	if err != nil {
+		return err
+	}
+	if count, _ := result.RowsAffected(); count == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// LinkNames returns each associated target and the link name it carries.
+//
+// A target whose association was made through the older path (`PUT
+// /products/{id}/apis/{apiId}`) has no stored name, and comes back with an
+// empty one. Naming it is the caller's job, because the rule for doing so is a
+// presentation decision the store should not be making.
+func (s *Store) LinkNames(kind LinkKind, ownerID string) (map[string]string, error) {
+	table, owner, target := kind.linkTable()
+	rows, err := s.db.Query(
+		`SELECT `+target+`, link_name FROM `+table+` WHERE lower(`+owner+`)=lower(?) ORDER BY `+target, ownerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	values := map[string]string{}
+	for rows.Next() {
+		var targetID, name string
+		if err := rows.Scan(&targetID, &name); err != nil {
+			return nil, err
+		}
+		values[targetID] = name
+	}
+	return values, rows.Err()
+}
+
+// ListTaggedResources returns the resource IDs a tag is attached to.
+func (s *Store) ListTaggedResources(tagID string) ([]string, error) {
+	rows, err := s.db.Query(
+		`SELECT resource_id FROM resource_tags WHERE lower(tag_id)=lower(?) ORDER BY resource_id`, tagID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	values := []string{}
+	for rows.Next() {
+		var resourceID string
+		if err := rows.Scan(&resourceID); err != nil {
+			return nil, err
+		}
+		values = append(values, resourceID)
+	}
+	return values, rows.Err()
 }

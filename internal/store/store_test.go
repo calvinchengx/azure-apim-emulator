@@ -426,6 +426,21 @@ func TestClosedStoreErrors(t *testing.T) {
 			return err
 		},
 		"delete named value": func() error { return st.DeleteNamedValue("named") },
+		"set link name": func() error {
+			return st.SetLinkName(LinkProductAPIKind, "product", "api", "link")
+		},
+		"link names": func() error {
+			_, err := st.LinkNames(LinkProductGroupKind, "product")
+			return err
+		},
+		"tag link names": func() error {
+			_, err := st.LinkNames(LinkResourceTagKind, "tag")
+			return err
+		},
+		"list tagged resources": func() error {
+			_, err := st.ListTaggedResources("tag")
+			return err
+		},
 		"upsert backend":     func() error { _, err := st.UpsertBackend(model.Backend{}); return err },
 		"get backend":        func() error { _, err := st.GetBackend("backend"); return err },
 		"list backends":      func() error { _, err := st.ListBackends("service"); return err },
@@ -918,6 +933,24 @@ func TestScanFunctionsRejectMalformedRows(t *testing.T) {
 			`CREATE TABLE policies (scope_id, format, value, etag)`,
 			`INSERT INTO policies VALUES (NULL, '', '', '')`,
 			func(db *sql.DB) error { _, err := scanPolicies(db); return err },
+		},
+		{
+			"link names",
+			`CREATE TABLE product_apis (product_id, api_id, link_name)`,
+			`INSERT INTO product_apis VALUES ('p', 'a', NULL)`,
+			func(db *sql.DB) error {
+				_, err := (&Store{db: db}).LinkNames(LinkProductAPIKind, "p")
+				return err
+			},
+		},
+		{
+			"tagged resources",
+			`CREATE TABLE resource_tags (resource_id, tag_id, link_name)`,
+			`INSERT INTO resource_tags VALUES (NULL, 't', '')`,
+			func(db *sql.DB) error {
+				_, err := (&Store{db: db}).ListTaggedResources("t")
+				return err
+			},
 		},
 	}
 	for _, test := range tests {
