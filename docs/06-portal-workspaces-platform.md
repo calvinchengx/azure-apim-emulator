@@ -87,6 +87,15 @@ unchanged, so every family the emulator implements at service scope is available
 inside a workspace with no per-family work. That is the whole mechanism: the
 only thing that differs is the parent ID the resources hang off.
 
+**The credential manager is the exception, and it refuses the scope
+explicitly.** Azure has no `WorkspaceAuthorizationProvider` — the SDK exposes
+two dozen other `Workspace*` operation groups but not that one — so
+`authorizationProviders` under a workspace answers 404 rather than falling
+through to the service. Falling through is the dangerous direction: a PUT would
+create a service-level provider in a scope the caller never named, and a GET
+would report service-level providers as the workspace's, with no local symptom
+until the same call is made against real Azure.
+
 **The store was rebuilt to allow it.** Every resource table previously declared
 `REFERENCES services(id)`, which made "a resource's parent is a service" a
 database-level invariant, and workspaces make that false. There is now a
