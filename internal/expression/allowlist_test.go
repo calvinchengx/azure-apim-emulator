@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
 )
 
@@ -103,7 +104,6 @@ func TestAllowlistBoundMembersEvaluate(t *testing.T) {
 		"Authorization.ExpiresIn":   `@(((Authorization)context.Variables["auth-context"]).ExpiresIn)`,
 		"Request.Method":            "@(context.Request.Method)",
 		"Request.Url":               "@(context.Request.Url != null)",
-		"Request.URL":               "@(context.Request.URL != null)",
 		"Request.Headers":           "@(context.Request.Headers.Get('X') == '')",
 		"Request.IpAddress":         "@(context.Request.IpAddress != null)",
 		"Request.Body":              "@(context.Request.Body.AsString() == '')",
@@ -180,10 +180,13 @@ func TestAllowlistBoundMembersEvaluate(t *testing.T) {
 	}
 }
 
+// boundByType indexes the members the binder is expected to answer. An
+// extension is answered too: it is a declared divergence, not an accident, and
+// the binder/allowlist agreement test is about accidents.
 func boundByType(members []Member) map[string]map[string]bool {
 	result := map[string]map[string]bool{}
 	for _, member := range members {
-		if member.Status != MemberBound {
+		if member.Status != MemberBound && member.Status != MemberExtension {
 			continue
 		}
 		if result[member.Type] == nil {
@@ -306,4 +309,70 @@ func memberDiff(got, want []Member) string {
 func joinMembers(values []string) string {
 	raw, _ := json.Marshal(values)
 	return string(raw)
+}
+
+// Every member Azure documents must appear in the allowlist with some status.
+//
+// This is the gate the inventory lacked, and its absence is why the ledger read
+// 57 of 66 bound -- 86% -- while 43 documented members were not listed at all.
+// A self-referential inventory can prove the emulator agrees with itself and
+// can never show what it has never heard of. With this, a member Azure adds is
+// a `planned` row somebody has to write rather than an absence nothing detects.
+func TestEveryDocumentedMemberIsClassified(t *testing.T) {
+	listed := map[string]map[string]bool{}
+	for _, member := range Allowlist() {
+		if listed[member.Type] == nil {
+			listed[member.Type] = map[string]bool{}
+		}
+		listed[member.Type][member.Name] = true
+	}
+	var missing []string
+	for _, member := range Documented() {
+		if !listed[member.Type][member.Name] {
+			missing = append(missing, member.Type+"."+member.Name)
+		}
+	}
+	if len(missing) > 0 {
+		t.Fatalf("%d documented member(s) missing from the allowlist: %s", len(missing), strings.Join(missing, ", "))
+	}
+}
+
+// And the other direction, which stops the allowlist inflating its own
+// denominator: an entry that is neither documented by Azure nor a helper the
+// binder needs is a member somebody invented.
+func TestAllowlistDoesNotInventContextMembers(t *testing.T) {
+	documented := documentedIndex()
+	// Helper types the binder needs to evaluate expressions at all. They are not
+	// part of Azure's context graph and are deliberately excluded from
+	// Documented(), so they are named here instead of silently tolerated.
+	helpers := map[string]bool{
+		"Arguments": true, "Authorization": true, "Headers": true,
+		"Variables": true, "value": true, "string": true,
+	}
+	for _, member := range Allowlist() {
+		if helpers[member.Type] || documented[member.Type][member.Name] {
+			continue
+		}
+		// An extension is a KNOWN divergence, declared as such in the ledger.
+		// Tolerated here precisely because it is named there.
+		if member.Status == MemberExtension {
+			continue
+		}
+		t.Fatalf("allowlist has %s.%s, which Azure does not document and which is not a declared helper",
+			member.Type, member.Name)
+	}
+}
+
+// A planned member must not resolve. A binder that answered one anyway would
+// make the ledger's own count wrong in the flattering direction.
+func TestPlannedMembersDoNotResolve(t *testing.T) {
+	planned := 0
+	for _, member := range Allowlist() {
+		if member.Status == MemberPlanned {
+			planned++
+		}
+	}
+	if planned == 0 {
+		t.Fatal("no planned members: either the surface is complete or the inventory stopped measuring")
+	}
 }

@@ -218,7 +218,11 @@ func (r *requestHost) member(name string) (Value, error) {
 	switch name {
 	case "Method":
 		return String(r.request.Method), nil
-	case "Url", "URL":
+	// `Url`, and not `URL`. APIM expressions are C#, where member access is
+	// case-sensitive, so `context.Request.URL` does not compile in Azure.
+	// Accepting it here would let a policy be written locally that a tenant
+	// refuses -- the leniency direction, which has no local symptom.
+	case "Url":
 		return Object(&urlHost{request: r.request}), nil
 	case "Headers":
 		return Object(&headerHost{header: r.request.Header}), nil
