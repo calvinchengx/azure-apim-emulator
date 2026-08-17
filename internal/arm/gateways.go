@@ -38,16 +38,9 @@ const maxTokenLifetime = 30 * 24 * time.Hour
 
 // gatewayRoute dispatches the self-hosted gateway resource tree.
 func (h *Handler) gatewayRoute(w http.ResponseWriter, r *http.Request, rt route) {
-	// Azure has no `service/{svc}/workspaces/{ws}/gateways`. A workspace is
-	// given a gateway through the separate top-level
-	// Microsoft.ApiManagement/gateways resource, so serving this path at
-	// service scope would accept a URL Azure answers 404 to, and silently put
-	// the resource in a scope the caller did not name.
-	if rt.Workspace != "" {
-		writeError(w, http.StatusNotFound, "ResourceNotFound",
-			"Self-hosted gateways are not a workspace-scoped resource; they belong to the service.", rt.scopeID()+"/gateways")
-		return
-	}
+	// The workspace scope is refused centrally, by serviceOnlyFamilies in
+	// handler.go: a workspace gets a gateway through the separate top-level
+	// Microsoft.ApiManagement/gateways resource, never through this path.
 	serviceID := rt.service().ID()
 	switch len(rt.Tail) {
 	case 1:
