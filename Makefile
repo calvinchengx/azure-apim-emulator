@@ -12,7 +12,7 @@ endif
 COMPOSE = docker compose -f compose.yaml
 
 .PHONY: build docs test test-coverage test-differential test-sdks setup-sdks \
-        setup-graphql test-graphql setup-grpc test-grpc setup-soap test-soap setup-credential test-credential setup-openai test-openai setup-mcp test-mcp verify \
+        test-operation-inventory setup-graphql test-graphql setup-grpc test-grpc setup-soap test-soap setup-credential test-credential setup-openai test-openai setup-mcp test-mcp verify \
         check-inventory up down clean status doctor ps logs
 
 build:
@@ -83,6 +83,9 @@ test-mcp:
 
 docs:
 	pnpm --filter azure-apim-emulator-docs build
+
+test-operation-inventory:
+	APIM_RUN_OPERATION_INVENTORY=1 go test -count=1 -timeout 20m ./e2e/inventory/...
 
 check-inventory:
 	python3 scripts/check_policy_inventory.py --strict

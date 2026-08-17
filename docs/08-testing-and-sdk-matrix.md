@@ -146,6 +146,11 @@ conclusions:
   rounded into either column, because a 404 from an unimplemented route and a
   404 from a resource that was never there are the same bytes.
 
+The probe is gated behind `APIM_RUN_OPERATION_INVENTORY=1` (`make
+test-operation-inventory`) and runs in its own CI job. A fresh service per
+operation means 611 emulator starts, which is well past Go's ten-minute default
+test timeout under CI contention, so `make verify` does not pay for it.
+
 Two properties of the harness matter more than its numbers:
 
 **Every operation is probed against a FRESH service.** The first version shared

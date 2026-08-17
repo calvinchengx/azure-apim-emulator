@@ -52,7 +52,7 @@ jobs:
       # serves. Implementing an operation is SUPPOSED to fail this until the
       # report is regenerated: that diff is how the surface changing stays
       # visible instead of being absorbed into a number nobody rechecks.
-      - run: go test ./e2e/inventory/... -count=1
+      - run: APIM_RUN_OPERATION_INVENTORY=1 go test ./e2e/inventory/... -count=1 -timeout 20m
       - run: ./scripts/check_operation_inventory.py --strict
 
   sdk-witnesses:

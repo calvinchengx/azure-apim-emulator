@@ -153,6 +153,14 @@ func seeds() []seed {
 // precise and was an artefact of its own side effects. Probing is inherently
 // destructive, so isolation is not a nicety here.
 func TestOperationInventoryCoverage(t *testing.T) {
+	// Gated like the other heavy witnesses. A fresh service per operation is
+	// 611 emulator starts: about half a minute on a developer machine and past
+	// Go's ten-minute default under CI contention, which is how it first
+	// failed. It runs in its own job, with its own timeout, rather than making
+	// `make verify` pay for it on every run.
+	if os.Getenv("APIM_RUN_OPERATION_INVENTORY") != "1" {
+		t.Skip("set APIM_RUN_OPERATION_INVENTORY=1 to probe the published operation surface")
+	}
 	document := loadInventory(t)
 
 	// Paths for which Microsoft declares a PUT. This is what lets a 404 on the
