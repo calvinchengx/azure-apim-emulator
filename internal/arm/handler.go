@@ -836,6 +836,14 @@ func (h *Handler) group(w http.ResponseWriter, r *http.Request, rt route) {
 			// has WorkspaceGroupUser but no WorkspaceUser. Resolving the user at
 			// the workspace scope instead would make a workspace group
 			// unfillable, because no user exists at that scope to name.
+			//
+			// This is the only cross-family link of that shape in the emulator
+			// today, and the shape is worth recognising before writing the next
+			// one: a workspace-scoped PARENT resolving a child from a family in
+			// serviceOnlyFamilies must resolve it at the SERVICE. Notifications
+			// are where it recurs — the SDK has WorkspaceNotification and
+			// WorkspaceNotificationRecipientUser — so if that family is ever
+			// implemented, its recipientUsers is this line again.
 			h.groupUser(w, r, group, model.User{ServiceID: rt.service().ID(), Name: rt.Tail[3]})
 			return
 		}
