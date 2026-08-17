@@ -902,3 +902,43 @@ func TestServerWiresTheConsentHandshake(t *testing.T) {
 		t.Fatalf("redeeming against an unreachable provider must fail, got %d", confirm.StatusCode)
 	}
 }
+
+// An SDK that appends an absolute ARM scope to its endpoint produces a doubled
+// slash. Azure accepts it; ServeMux would redirect, and a 301 reaches the
+// caller as a transport failure carrying no error code.
+func TestDoubledSlashesAreServedNotRedirected(t *testing.T) {
+	srv := newTestServer(t, false, nil)
+	front := httptest.NewServer(srv.Handler())
+	defer front.Close()
+
+	base := "/subscriptions/" + testSubscription + "/resourceGroups/test-rg/providers/Microsoft.ApiManagement/service/emulator"
+	service := management(t, front.Client(), http.MethodPut, front.URL+base+"?api-version=2024-05-01",
+		`{"location":"local","sku":{"name":"Developer","capacity":1},"properties":{"publisherName":"Local","publisherEmail":"local@example.test"}}`)
+	service.Body.Close()
+
+	// The client must NOT follow redirects, or a 301 would be invisible here.
+	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	response := management(t, client, http.MethodGet, front.URL+"/"+base+"?api-version=2024-05-01", "")
+	defer response.Body.Close()
+	if response.StatusCode == http.StatusMovedPermanently {
+		t.Fatal("a doubled slash must be served, not redirected")
+	}
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("doubled-slash request = %d", response.StatusCode)
+	}
+}
+
+func TestCollapseSlashes(t *testing.T) {
+	for input, want := range map[string]string{
+		"/a/b":            "/a/b",
+		"//a/b":           "/a/b",
+		"/a//b///c":       "/a/b/c",
+		"//":              "/",
+		"":                "",
+		"/subscriptions/": "/subscriptions/",
+	} {
+		if got := collapseSlashes(input); got != want {
+			t.Errorf("collapseSlashes(%q) = %q, want %q", input, got, want)
+		}
+	}
+}

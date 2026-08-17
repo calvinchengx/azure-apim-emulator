@@ -11,6 +11,7 @@ import (
 
 	"github.com/calvinchengx/azure-apim-emulator/internal/clock"
 	"github.com/calvinchengx/azure-apim-emulator/internal/model"
+	"github.com/calvinchengx/azure-apim-emulator/internal/rbac"
 )
 
 func TestStoreResourceLifecycle(t *testing.T) {
@@ -453,19 +454,23 @@ func TestClosedStoreErrors(t *testing.T) {
 			_, err := st.UpsertAuthorizationAccessPolicy(model.AuthorizationAccessPolicy{})
 			return err
 		},
-		"get access policy":    func() error { _, err := st.GetAuthorizationAccessPolicy("ap"); return err },
-		"list access policies": func() error { _, err := st.ListAuthorizationAccessPolicies("a"); return err },
-		"delete access policy": func() error { return st.DeleteAuthorizationAccessPolicy("ap") },
-		"upsert API resolver":  func() error { _, err := st.UpsertAPIResolver(model.APIResolver{}); return err },
-		"get API resolver":     func() error { _, err := st.GetAPIResolver("resolver"); return err },
-		"list API resolvers":   func() error { _, err := st.ListAPIResolvers("api"); return err },
-		"delete API resolver":  func() error { return st.DeleteAPIResolver("resolver") },
-		"upsert tag":           func() error { _, err := st.UpsertTag(model.Tag{}); return err },
-		"get tag":              func() error { _, err := st.GetTag("tag"); return err },
-		"list tags":            func() error { _, err := st.ListTags("service"); return err },
-		"delete tag":           func() error { return st.DeleteTag("tag") },
-		"assign tag":           func() error { return st.AssignTag("resource", "tag") },
-		"detach tag":           func() error { return st.DetachTag("resource", "tag") },
+		"get access policy":      func() error { _, err := st.GetAuthorizationAccessPolicy("ap"); return err },
+		"list access policies":   func() error { _, err := st.ListAuthorizationAccessPolicies("a"); return err },
+		"delete access policy":   func() error { return st.DeleteAuthorizationAccessPolicy("ap") },
+		"upsert API resolver":    func() error { _, err := st.UpsertAPIResolver(model.APIResolver{}); return err },
+		"get API resolver":       func() error { _, err := st.GetAPIResolver("resolver"); return err },
+		"list API resolvers":     func() error { _, err := st.ListAPIResolvers("api"); return err },
+		"delete API resolver":    func() error { return st.DeleteAPIResolver("resolver") },
+		"upsert tag":             func() error { _, err := st.UpsertTag(model.Tag{}); return err },
+		"get tag":                func() error { _, err := st.GetTag("tag"); return err },
+		"list tags":              func() error { _, err := st.ListTags("service"); return err },
+		"delete tag":             func() error { return st.DeleteTag("tag") },
+		"assign tag":             func() error { return st.AssignTag("resource", "tag") },
+		"detach tag":             func() error { return st.DetachTag("resource", "tag") },
+		"upsert role assignment": func() error { _, err := st.UpsertRoleAssignment(rbac.Assignment{}); return err },
+		"get role assignment":    func() error { _, err := st.GetRoleAssignment("r"); return err },
+		"list role assignments":  func() error { _, err := st.ListRoleAssignments(); return err },
+		"delete role assignment": func() error { return st.DeleteRoleAssignment("r") },
 		"get resource tag": func() error {
 			_, err := st.GetResourceTag("resource", "tag")
 			return err
@@ -652,6 +657,12 @@ func TestScanFunctionsRejectMalformedRows(t *testing.T) {
 			 CREATE TABLE api_schema_documents (schema_id, document_json)`,
 			`INSERT INTO api_schemas VALUES ('id', 'api', NULL, '', '{}', '')`,
 			func(db *sql.DB) error { _, err := (&Store{db: db}).ListAPISchemas("api"); return err },
+		},
+		{
+			"role assignments",
+			`CREATE TABLE role_assignments (id, scope, name, principal_id, principal_type, role_definition_id, document_json, etag)`,
+			`INSERT INTO role_assignments VALUES ('id', 'scope', NULL, '', '', '', '{}', '')`,
+			func(db *sql.DB) error { _, err := (&Store{db: db}).ListRoleAssignments(); return err },
 		},
 		{
 			"workspaces",

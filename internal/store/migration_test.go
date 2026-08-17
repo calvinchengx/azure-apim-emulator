@@ -9,6 +9,7 @@ import (
 
 	"github.com/calvinchengx/azure-apim-emulator/internal/clock"
 	"github.com/calvinchengx/azure-apim-emulator/internal/model"
+	"github.com/calvinchengx/azure-apim-emulator/internal/rbac"
 )
 
 // A database created before workspaces existed must come forward without losing
@@ -260,5 +261,20 @@ func TestScopeRegistrationRollsBack(t *testing.T) {
 	}
 	if orphans != 0 {
 		t.Fatalf("a failed workspace write left %d orphaned scopes", orphans)
+	}
+}
+
+// A role assignment document that cannot be encoded is reported rather than
+// stored as something else.
+func TestUpsertRoleAssignmentRejectsUnencodableDocuments(t *testing.T) {
+	st, err := Open("", clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if _, err := st.UpsertRoleAssignment(rbac.Assignment{
+		Scope: "/s", Name: "r", Document: map[string]any{"bad": make(chan int)},
+	}); err == nil {
+		t.Fatal("an unencodable document must be reported")
 	}
 }

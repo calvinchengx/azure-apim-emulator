@@ -64,3 +64,16 @@ func TestEnvHelpers(t *testing.T) {
 		t.Fatal("boolEnv mismatch")
 	}
 }
+
+// Enforcement with no owner would refuse every request including the one that
+// grants the first role, so it is a startup error rather than a silent trap.
+func TestEnforceRBACRequiresAnOwner(t *testing.T) {
+	cfg := &Config{Addr: ":0", DefaultService: "emulator", DisableAuth: true, EnforceRBAC: true}
+	if err := cfg.Finish(); err == nil {
+		t.Fatal("APIM_ENFORCE_RBAC without APIM_RBAC_OWNER must fail fast")
+	}
+	cfg.RBACOwner = "root"
+	if err := cfg.Finish(); err != nil {
+		t.Fatalf("a named owner must satisfy it: %v", err)
+	}
+}

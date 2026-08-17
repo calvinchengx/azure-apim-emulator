@@ -63,6 +63,8 @@ func New(cfg *config.Config, validator auth.RequestValidator, backendClient, jwk
 	s.ARM = &arm.Handler{
 		Store: st, Auth: validator,
 		Activate:               func() error { return runtime.Activate(st, cfg.StrictPolicies) },
+		EnforceRBAC:            cfg.EnforceRBAC,
+		RBACOwner:              cfg.RBACOwner,
 		ValidatePolicy:         func(value string) error { _, err := policy.Compile(value, cfg.StrictPolicies); return err },
 		ValidateResolverPolicy: func(value string) error { _, err := policy.CompileHTTPDataSource(value); return err },
 		LoginLink: func(providerID, authorizationID, redirect string) (string, error) {
@@ -93,7 +95,28 @@ func New(cfg *config.Config, validator auth.RequestValidator, backendClient, jwk
 }
 
 // Handler returns the root HTTP handler.
-func (s *Server) Handler() http.Handler { return s.mux }
+// Handler serves the emulator.
+//
+// The path is normalised BEFORE the mux sees it, because ServeMux redirects a
+// path needing cleaning rather than dispatching it. An SDK that appends an
+// absolute ARM scope to its endpoint produces a doubled slash
+// (`{endpoint}` + `/subscriptions/...`), which Azure accepts and the
+// Microsoft.Authorization client emits as a matter of course. A 301 is worse
+// than it sounds: the SDK surfaces it as a transport failure carrying no error
+// code, so the caller cannot tell what was wrong.
+func (s *Server) Handler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if collapsed := collapseSlashes(r.URL.Path); collapsed != r.URL.Path {
+			r = r.Clone(r.Context())
+			r.URL.Path = collapsed
+			r.RequestURI = collapsed
+			if r.URL.RawQuery != "" {
+				r.RequestURI += "?" + r.URL.RawQuery
+			}
+		}
+		s.mux.ServeHTTP(w, r)
+	})
+}
 
 // Close releases the database.
 func (s *Server) Close() error { return s.Store.Close() }
@@ -849,4 +872,26 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(value)
+}
+
+// collapseSlashes reduces runs of `/` to one. Only the path is touched; a
+// doubled slash inside a query value is the caller's data, not routing.
+func collapseSlashes(path string) string {
+	if !strings.Contains(path, "//") {
+		return path
+	}
+	var builder strings.Builder
+	previousSlash := false
+	for _, r := range path {
+		if r == '/' {
+			if previousSlash {
+				continue
+			}
+			previousSlash = true
+		} else {
+			previousSlash = false
+		}
+		builder.WriteRune(r)
+	}
+	return builder.String()
 }

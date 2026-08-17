@@ -14,6 +14,7 @@ import (
 
 	"github.com/calvinchengx/azure-apim-emulator/internal/clock"
 	"github.com/calvinchengx/azure-apim-emulator/internal/model"
+	"github.com/calvinchengx/azure-apim-emulator/internal/rbac"
 	_ "modernc.org/sqlite"
 )
 
@@ -172,6 +173,14 @@ CREATE TABLE IF NOT EXISTS api_schemas (
 CREATE TABLE IF NOT EXISTS api_schema_documents (
   schema_id TEXT PRIMARY KEY REFERENCES api_schemas(id) ON DELETE CASCADE,
   document_json TEXT NOT NULL
+);
+-- Role assignments are NOT scoped to a service: one can be made at a
+-- subscription or resource group, above any APIM resource. So this table has no
+-- foreign key to scopes, and cleanup is by scope prefix rather than cascade.
+CREATE TABLE IF NOT EXISTS role_assignments (
+  id TEXT PRIMARY KEY, scope TEXT NOT NULL, name TEXT NOT NULL,
+  principal_id TEXT NOT NULL, principal_type TEXT NOT NULL,
+  role_definition_id TEXT NOT NULL, document_json TEXT NOT NULL, etag TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS workspaces (
   id TEXT PRIMARY KEY REFERENCES scopes(id) ON DELETE CASCADE,
@@ -3261,4 +3270,65 @@ func (s *Store) ListAuthorizationAccessPolicies(authorizationID string) ([]model
 // DeleteAuthorizationAccessPolicy removes an access policy.
 func (s *Store) DeleteAuthorizationAccessPolicy(id string) error {
 	return deleteScopedResource(s.db, "authorization_access_policies", id)
+}
+
+// UpsertRoleAssignment creates or replaces a role assignment.
+func (s *Store) UpsertRoleAssignment(v rbac.Assignment) (rbac.Assignment, error) {
+	document, err := json.Marshal(v.Document)
+	if err != nil {
+		return v, err
+	}
+	v.ETag = newETag()
+	_, err = s.db.Exec(`INSERT INTO role_assignments (id, scope, name, principal_id, principal_type, role_definition_id, document_json, etag)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET principal_id=excluded.principal_id,
+          principal_type=excluded.principal_type, role_definition_id=excluded.role_definition_id,
+          document_json=excluded.document_json, etag=excluded.etag`,
+		v.ID(), v.Scope, v.Name, v.PrincipalID, v.PrincipalType, v.RoleDefinitionID, string(document), v.ETag)
+	return v, err
+}
+
+// GetRoleAssignment finds one role assignment.
+func (s *Store) GetRoleAssignment(id string) (rbac.Assignment, error) {
+	var v rbac.Assignment
+	var document string
+	err := s.db.QueryRow(`SELECT scope, name, principal_id, principal_type, role_definition_id, document_json, etag
+	        FROM role_assignments WHERE lower(id)=lower(?)`, id).
+		Scan(&v.Scope, &v.Name, &v.PrincipalID, &v.PrincipalType, &v.RoleDefinitionID, &document, &v.ETag)
+	if errors.Is(err, sql.ErrNoRows) {
+		return rbac.Assignment{}, ErrNotFound
+	}
+	if err == nil {
+		_ = json.Unmarshal([]byte(document), &v.Document)
+	}
+	return v, err
+}
+
+// ListRoleAssignments returns every assignment, in stable ID order.
+//
+// Every assignment, not just those at one scope: authorization has to consider
+// assignments made ABOVE the resource being touched, and filtering here would
+// hide exactly the ones that grant access by inheritance.
+func (s *Store) ListRoleAssignments() ([]rbac.Assignment, error) {
+	rows, err := s.db.Query(`SELECT scope, name, principal_id, principal_type, role_definition_id, document_json, etag
+        FROM role_assignments ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	values := make([]rbac.Assignment, 0)
+	for rows.Next() {
+		var v rbac.Assignment
+		var document string
+		if err := rows.Scan(&v.Scope, &v.Name, &v.PrincipalID, &v.PrincipalType, &v.RoleDefinitionID, &document, &v.ETag); err != nil {
+			return nil, err
+		}
+		_ = json.Unmarshal([]byte(document), &v.Document)
+		values = append(values, v)
+	}
+	return values, rows.Err()
+}
+
+// DeleteRoleAssignment removes a role assignment.
+func (s *Store) DeleteRoleAssignment(id string) error {
+	return deleteScopedResource(s.db, "role_assignments", id)
 }

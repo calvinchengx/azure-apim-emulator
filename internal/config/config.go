@@ -17,6 +17,18 @@ type Config struct {
 	DisableTLS     bool
 	DisableAuth    bool
 	StrictPolicies bool
+	// EnforceRBAC turns role assignments into an access decision. Default off:
+	// a valid ARM token gets full access, which is what every existing caller
+	// and witness assumes. Turning it on is opting IN to being refused.
+	EnforceRBAC bool
+	// RBACOwner is the principal treated as Owner at subscription scope while
+	// enforcement is on.
+	//
+	// Without it enforcement is unusable: a role assignment is itself an ARM
+	// resource whose creation needs a role, so nobody could ever grant the
+	// first one. Azure resolves the same circularity with the subscription
+	// owner, whose access does not come from an assignment either.
+	RBACOwner string
 
 	EntraIssuer      string
 	EntraJWKSURL     string
@@ -33,6 +45,8 @@ func FromEnvPartial() *Config {
 		DisableTLS:       boolEnv("APIM_DISABLE_TLS"),
 		DisableAuth:      boolEnv("APIM_DISABLE_AUTH"),
 		StrictPolicies:   boolEnv("APIM_STRICT_POLICIES"),
+		EnforceRBAC:      boolEnv("APIM_ENFORCE_RBAC"),
+		RBACOwner:        os.Getenv("APIM_RBAC_OWNER"),
 		EntraIssuer:      os.Getenv("APIM_ENTRA_ISSUER"),
 		EntraJWKSURL:     os.Getenv("APIM_ENTRA_JWKS_URL"),
 		EntraTLSInsecure: boolEnv("APIM_ENTRA_TLS_INSECURE"),
@@ -52,6 +66,11 @@ func (c *Config) Finish() error {
 	}
 	if strings.TrimSpace(c.DefaultService) == "" {
 		return fmt.Errorf("APIM_DEFAULT_SERVICE must not be empty")
+	}
+	// Fail fast rather than start an emulator that refuses every request
+	// including the one that would fix it.
+	if c.EnforceRBAC && strings.TrimSpace(c.RBACOwner) == "" {
+		return fmt.Errorf("APIM_RBAC_OWNER is required when APIM_ENFORCE_RBAC=true: with no owner, no role assignment can ever be created")
 	}
 	if c.DisableAuth {
 		return nil

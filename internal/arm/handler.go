@@ -32,14 +32,29 @@ import (
 )
 
 var supportedVersions = map[string]bool{"2021-08-01": true, "2022-08-01": true, "2024-05-01": true}
+
+// authorizationVersions are Microsoft.Authorization's own API versions, which
+// are NOT APIM's. A client managing role assignments sends the version its own
+// provider publishes, so validating it against the APIM list rejects every such
+// request before it is even routed.
+var authorizationVersions = map[string]bool{
+	"2015-07-01": true, "2018-01-01-preview": true, "2020-04-01-preview": true,
+	"2020-08-01-preview": true, "2020-10-01-preview": true, "2022-04-01": true,
+}
 var namedValueDisplayName = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 var documentationName = regexp.MustCompile(`^[^*#&+:<>?]+$`)
 
 // Handler serves the P0 APIM ARM resources.
 type Handler struct {
-	Store          *store.Store
-	Auth           auth.RequestValidator
-	Activate       func() error
+	Store    *store.Store
+	Auth     auth.RequestValidator
+	Activate func() error
+	// EnforceRBAC evaluates role assignments before each request. Off by
+	// default, which is what every existing caller assumes.
+	EnforceRBAC bool
+	// RBACOwner holds Owner at subscription scope while enforcement is on, so
+	// the first assignment can be created at all.
+	RBACOwner      string
 	ValidatePolicy func(string) error
 	// ValidateResolverPolicy validates a GraphQL resolver's <http-data-source>.
 	ValidateResolverPolicy func(string) error
@@ -64,11 +79,23 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.apiExportDownload(w, r)
 		return
 	}
-	if _, err := h.Auth.ValidateRequest(r); err != nil {
+	principal, err := h.Auth.ValidateRequest(r)
+	if err != nil {
 		writeError(w, http.StatusUnauthorized, "AuthenticationFailed", err.Error(), "")
 		return
 	}
 	version := r.URL.Query().Get("api-version")
+	if authorization, ok := parseAuthorization(r.URL.Path); ok {
+		if !authorizationVersions[version] {
+			writeError(w, http.StatusBadRequest, "InvalidApiVersionParameter", "The api-version query parameter is invalid or unsupported.", "api-version")
+			return
+		}
+		if !h.authorize(w, r, principal, authorization.Scope) {
+			return
+		}
+		h.authorization(w, r, authorization)
+		return
+	}
 	if !supportedVersions[version] {
 		writeError(w, http.StatusBadRequest, "InvalidApiVersionParameter", "The api-version query parameter is invalid or unsupported.", "api-version")
 		return
@@ -76,6 +103,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	parsed, ok := parse(split(r.URL.Path))
 	if !ok {
 		writeError(w, http.StatusNotFound, "ResourceNotFound", "The requested resource was not found.", r.URL.Path)
+		return
+	}
+	if !h.authorize(w, r, principal, r.URL.Path) {
 		return
 	}
 	if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions {
