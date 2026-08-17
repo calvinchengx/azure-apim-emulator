@@ -1,0 +1,275 @@
+package policy
+
+import (
+	"net/http"
+	"strings"
+	"testing"
+
+	expr "github.com/calvinchengx/azure-apim-emulator/internal/expression"
+)
+
+// tokenCounter is a scripted stand-in for the gateway's sliding window, so the
+// policy's behaviour can be tested apart from the window's arithmetic.
+type tokenCounter struct {
+	remaining, retryAfter int
+	allowed               bool
+	keys                  []string
+	estimates             []int
+}
+
+func (c *tokenCounter) limit(key string, _ int, estimate int) (int, int, bool) {
+	c.keys = append(c.keys, key)
+	c.estimates = append(c.estimates, estimate)
+	return c.remaining, c.retryAfter, c.allowed
+}
+
+func llmState(counter *tokenCounter, body string) *State {
+	request, _ := http.NewRequest(http.MethodPost, "https://gateway.test/openai/deployments/gpt/chat/completions", strings.NewReader(body))
+	request.RemoteAddr = "10.0.0.8:52344"
+	return &State{
+		Request: request, Headers: make(http.Header), Variables: map[string]string{},
+		TokenLimit: counter.limit,
+		Api:        &expr.ApiContext{Id: "openai-api", Name: "OpenAI", Path: "openai"},
+	}
+}
+
+func TestLLMTokenLimitAllowsAndReports(t *testing.T) {
+	plan, err := Compile(`<policies><inbound><llm-token-limit counter-key="@(context.Request.IpAddress)" tokens-per-minute="500" remaining-tokens-header-name="x-remaining" remaining-tokens-variable-name="left"/></inbound></policies>`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	counter := &tokenCounter{remaining: 420, allowed: true}
+	state := llmState(counter, `{"messages":[{"role":"user","content":"hello"}]}`)
+	if err := Execute(plan.Inbound, state); err != nil {
+		t.Fatal(err)
+	}
+	if state.Returned {
+		t.Fatal("an allowed request was refused")
+	}
+	if state.Headers.Get("x-remaining") != "420" || state.Variables["left"] != "420" {
+		t.Fatalf("remaining not reported: %v %v", state.Headers, state.Variables)
+	}
+	// With estimate-prompt-tokens absent, nothing is charged up front: every
+	// number comes from the provider afterwards.
+	if len(counter.estimates) != 1 || counter.estimates[0] != 0 {
+		t.Fatalf("estimates = %v", counter.estimates)
+	}
+	if state.LLM == nil || state.LLM.TokensPerMinute != 500 {
+		t.Fatalf("governance not left for the gateway: %#v", state.LLM)
+	}
+}
+
+func TestLLMTokenLimitRefusesWhenSpent(t *testing.T) {
+	plan, err := Compile(`<policies><inbound><llm-token-limit counter-key="tenant" tokens-per-minute="100" retry-after-header-name="x-wait" retry-after-variable-name="wait"/></inbound></policies>`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	counter := &tokenCounter{retryAfter: 37, allowed: false}
+	state := llmState(counter, `{}`)
+	if err := Execute(plan.Inbound, state); err != nil {
+		t.Fatal(err)
+	}
+	if !state.Returned || state.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("refusal = %v %d", state.Returned, state.StatusCode)
+	}
+	if state.Headers.Get("x-wait") != "37" || state.Variables["wait"] != "37" {
+		t.Fatalf("retry-after not reported: %v", state.Headers)
+	}
+	// The standard header goes out whether or not the policy named a custom
+	// one: a 429 without it tells the client to guess.
+	if state.Headers.Get("Retry-After") != "37" {
+		t.Fatalf("standard Retry-After missing: %v", state.Headers)
+	}
+}
+
+// An estimate is charged before the model answers, and reading the body to
+// produce it must leave the body intact for the backend.
+func TestLLMTokenLimitEstimatePreservesTheBody(t *testing.T) {
+	plan, err := Compile(`<policies><inbound><llm-token-limit counter-key="tenant" tokens-per-minute="100" estimate-prompt-tokens="true"/></inbound></policies>`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	counter := &tokenCounter{remaining: 90, allowed: true}
+	body := `{"messages":[{"role":"user","content":"the quick brown fox"}]}`
+	state := llmState(counter, body)
+	if err := Execute(plan.Inbound, state); err != nil {
+		t.Fatal(err)
+	}
+	if len(counter.estimates) != 1 || counter.estimates[0] <= 0 {
+		t.Fatalf("no estimate was charged: %v", counter.estimates)
+	}
+	forwarded := make([]byte, len(body))
+	read, _ := state.Request.Body.Read(forwarded)
+	if string(forwarded[:read]) != body {
+		t.Fatalf("the prompt was consumed by estimation: %q", string(forwarded[:read]))
+	}
+	if state.Request.ContentLength != int64(len(body)) {
+		t.Fatalf("content length = %d", state.Request.ContentLength)
+	}
+}
+
+func TestLLMEmitTokenMetricRecordsDimensions(t *testing.T) {
+	plan, err := Compile(`<policies><inbound><llm-emit-token-metric namespace="contoso"><dimension name="API ID" value="@(context.Api.Id)"/><dimension name="Client"/></llm-emit-token-metric></inbound></policies>`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	counter := &tokenCounter{allowed: true}
+	state := llmState(counter, `{}`)
+	if err := Execute(plan.Inbound, state); err != nil {
+		t.Fatal(err)
+	}
+	if state.LLM == nil || !state.LLM.Emit || state.LLM.Namespace != "contoso" {
+		t.Fatalf("metric intent not recorded: %#v", state.LLM)
+	}
+	// A dimension with no value defaults to its own name, which is what Azure
+	// does and what makes `<dimension name="Client"/>` meaningful.
+	if state.LLM.Dimensions["API ID"] != "openai-api" {
+		t.Fatalf("expression dimension = %v", state.LLM.Dimensions)
+	}
+	if state.LLM.Dimensions["Client"] != "Client" {
+		t.Fatalf("dimensions = %v", state.LLM.Dimensions)
+	}
+}
+
+// The two nodes compose in either order, because a policy author may write
+// them in either order and both leave state on the same governance record.
+func TestLLMNodesComposeInEitherOrder(t *testing.T) {
+	for _, source := range []string{
+		`<policies><inbound><llm-token-limit counter-key="k" tokens-per-minute="10"/><llm-emit-token-metric namespace="n"><dimension name="d"/></llm-emit-token-metric></inbound></policies>`,
+		`<policies><inbound><llm-emit-token-metric namespace="n"><dimension name="d"/></llm-emit-token-metric><llm-token-limit counter-key="k" tokens-per-minute="10"/></inbound></policies>`,
+	} {
+		plan, err := Compile(source, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		counter := &tokenCounter{remaining: 5, allowed: true}
+		state := llmState(counter, `{}`)
+		if err := Execute(plan.Inbound, state); err != nil {
+			t.Fatal(err)
+		}
+		if state.LLM == nil || !state.LLM.Emit || state.LLM.CounterKey != "k" || state.LLM.TokensPerMinute != 10 {
+			t.Fatalf("composition lost state for %s: %#v", source, state.LLM)
+		}
+	}
+}
+
+// Azure ships the same policy under a provider-specific name and a generic one.
+// A configuration written against either must work here.
+func TestAzureOpenAIAliasesCompileIdentically(t *testing.T) {
+	for _, name := range []string{"azure-openai-token-limit", "llm-token-limit"} {
+		plan, err := Compile(`<policies><inbound><`+name+` counter-key="k" tokens-per-minute="10"/></inbound></policies>`, true)
+		if err != nil || len(plan.Inbound) != 1 || plan.Inbound[0].Kind != ActionLLMTokenLimit {
+			t.Fatalf("%s did not compile to a token limit: %v", name, err)
+		}
+	}
+	for _, name := range []string{"azure-openai-emit-token-metric", "llm-emit-token-metric"} {
+		plan, err := Compile(`<policies><inbound><`+name+` namespace="n"><dimension name="d"/></`+name+`></inbound></policies>`, true)
+		if err != nil || len(plan.Inbound) != 1 || plan.Inbound[0].Kind != ActionLLMEmitTokenMetric {
+			t.Fatalf("%s did not compile to an emit-token-metric: %v", name, err)
+		}
+	}
+}
+
+func TestLLMCompileRefusals(t *testing.T) {
+	for _, test := range []struct{ name, source string }{
+		{"no tokens-per-minute", `<llm-token-limit counter-key="k"/>`},
+		{"zero tokens-per-minute", `<llm-token-limit counter-key="k" tokens-per-minute="0"/>`},
+		{"unparsable tokens-per-minute", `<llm-token-limit counter-key="k" tokens-per-minute="lots"/>`},
+		{"no counter-key", `<llm-token-limit tokens-per-minute="10"/>`},
+		{"metric with unparsable tokens-per-minute", `<llm-emit-token-metric tokens-per-minute="lots"><dimension name="d"/></llm-emit-token-metric>`},
+		{"dimension with no name", `<llm-emit-token-metric namespace="n"><dimension value="v"/></llm-emit-token-metric>`},
+	} {
+		if _, err := Compile(`<policies><inbound>`+test.source+`</inbound></policies>`, true); err == nil {
+			t.Fatalf("%s compiled", test.name)
+		}
+	}
+	// An unknown child is not a compile failure but an unsupported node, the
+	// same treatment every other policy family gets.
+	plan, err := Compile(`<policies><inbound><llm-emit-token-metric namespace="n"><nonsense/></llm-emit-token-metric></inbound></policies>`, false)
+	if err != nil || plan.Inbound[0].Kind != ActionUnsupported {
+		t.Fatalf("unknown child = %v %v", err, plan.Inbound[0].Kind)
+	}
+	// A namespace-less metric still emits, under a default namespace.
+	plan, err = Compile(`<policies><inbound><llm-emit-token-metric><dimension name="d"/></llm-emit-token-metric></inbound></policies>`, true)
+	if err != nil || plan.Inbound[0].LLM.Namespace != "llm" {
+		t.Fatalf("default namespace = %v %v", err, plan.Inbound[0].LLM)
+	}
+}
+
+func TestLLMExecutionRefusals(t *testing.T) {
+	plan, _ := Compile(`<policies><inbound><llm-token-limit counter-key="k" tokens-per-minute="10"/></inbound></policies>`, true)
+	// A gateway that supplied no counter must fail loudly rather than serve
+	// every request as though the budget were infinite.
+	state := &State{Headers: make(http.Header)}
+	if err := Execute(plan.Inbound, state); err == nil {
+		t.Fatal("a missing token counter was tolerated")
+	}
+	// A counter-key that evaluates to nothing would put every caller in one
+	// bucket, which is the opposite of a per-caller quota.
+	empty, _ := Compile(`<policies><inbound><llm-token-limit counter-key="@(context.Request.Headers.GetValueOrDefault(&quot;X-Absent&quot;,&quot;&quot;))" tokens-per-minute="10"/></inbound></policies>`, true)
+	counter := &tokenCounter{allowed: true}
+	if err := Execute(empty.Inbound, llmState(counter, `{}`)); err == nil {
+		t.Fatal("an empty counter-key was tolerated")
+	}
+	// A body-less request estimates nothing rather than panicking.
+	estimate, _ := Compile(`<policies><inbound><llm-token-limit counter-key="k" tokens-per-minute="10" estimate-prompt-tokens="true"/></inbound></policies>`, true)
+	bodyless := &State{Request: &http.Request{}, Headers: make(http.Header), TokenLimit: counter.limit}
+	if err := Execute(estimate.Inbound, bodyless); err != nil {
+		t.Fatalf("a body-less request failed: %v", err)
+	}
+}
+
+// failingBody is a request body that cannot be read, which is what a client
+// that disconnects mid-upload produces.
+type failingBody struct{}
+
+func (failingBody) Read([]byte) (int, error) { return 0, errUnreadable }
+func (failingBody) Close() error             { return nil }
+
+var errUnreadable = &unreadable{}
+
+type unreadable struct{}
+
+func (*unreadable) Error() string { return "connection reset" }
+
+func TestLLMSurfacesEvaluationAndBodyFailures(t *testing.T) {
+	counter := &tokenCounter{remaining: 1, allowed: true}
+
+	// An expression that compiles but cannot evaluate must fail the request
+	// rather than silently bucket it under the empty key.
+	keyPlan, _ := Compile(`<policies><inbound><llm-token-limit counter-key="@(context.Api.Id)" tokens-per-minute="10"/></inbound></policies>`, true)
+	noAPI := llmState(counter, `{}`)
+	noAPI.Api = nil
+	if err := Execute(keyPlan.Inbound, noAPI); err == nil {
+		t.Fatal("an unevaluable counter-key was tolerated")
+	}
+
+	// Same for a dimension: a metric emitted under a dimension nobody could
+	// compute would be worse than no metric.
+	metricPlan, _ := Compile(`<policies><inbound><llm-emit-token-metric namespace="n"><dimension name="d" value="@(context.Api.Id)"/></llm-emit-token-metric></inbound></policies>`, true)
+	noAPIMetric := llmState(counter, `{}`)
+	noAPIMetric.Api = nil
+	if err := Execute(metricPlan.Inbound, noAPIMetric); err == nil {
+		t.Fatal("an unevaluable dimension was tolerated")
+	}
+
+	// A state that never had a variable map still receives the reported values.
+	varPlan, _ := Compile(`<policies><inbound><llm-token-limit counter-key="k" tokens-per-minute="10" remaining-tokens-variable-name="left"/></inbound></policies>`, true)
+	noVars := llmState(counter, `{}`)
+	noVars.Variables = nil
+	if err := Execute(varPlan.Inbound, noVars); err != nil {
+		t.Fatal(err)
+	}
+	if noVars.Variables["left"] != "1" {
+		t.Fatalf("variables = %v", noVars.Variables)
+	}
+
+	// An unreadable body estimates nothing rather than failing the request:
+	// the read failure will surface at the backend, where it belongs.
+	estimatePlan, _ := Compile(`<policies><inbound><llm-token-limit counter-key="k" tokens-per-minute="10" estimate-prompt-tokens="true"/></inbound></policies>`, true)
+	broken := llmState(counter, `{}`)
+	broken.Request.Body = failingBody{}
+	if err := Execute(estimatePlan.Inbound, broken); err != nil {
+		t.Fatalf("an unreadable body failed the policy: %v", err)
+	}
+}

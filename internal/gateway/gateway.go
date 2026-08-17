@@ -126,6 +126,9 @@ type Runtime struct {
 	faults               map[string]Fault
 	rateMu               sync.Mutex
 	rateWindows          map[string][]time.Time
+	tokenWindows         map[string][]tokenStamp
+	metricMu             sync.Mutex
+	tokenMetrics         []TokenMetric
 	bandwidthWindows     map[string][]bandwidthStamp
 	cacheMu              sync.Mutex
 	cache                map[string]cacheEntry
@@ -195,7 +198,7 @@ func New(defaultService string, client *http.Client) *Runtime {
 	if client == nil {
 		client = http.DefaultClient
 	}
-	r := &Runtime{defaultService: defaultService, client: client, policySendRequest: client.Do, traces: map[string]Trace{}, breakers: map[string]circuitState{}, faults: map[string]Fault{}, rateWindows: map[string][]time.Time{}, bandwidthWindows: map[string][]bandwidthStamp{}, cache: map[string]cacheEntry{}, valueCache: map[string]valueCacheEntry{}, concurrency: map[string]chan struct{}{}, credentials: newCredentialCache()}
+	r := &Runtime{defaultService: defaultService, client: client, policySendRequest: client.Do, traces: map[string]Trace{}, breakers: map[string]circuitState{}, faults: map[string]Fault{}, rateWindows: map[string][]time.Time{}, tokenWindows: map[string][]tokenStamp{}, bandwidthWindows: map[string][]bandwidthStamp{}, cache: map[string]cacheEntry{}, valueCache: map[string]valueCacheEntry{}, concurrency: map[string]chan struct{}{}, credentials: newCredentialCache()}
 	r.current.Store(&Snapshot{Services: map[string]*Service{}})
 	return r
 }
@@ -822,7 +825,7 @@ func (r *Runtime) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 	cacheKey := service.Name + ":" + route.API.ID() + ":" + req.Method + ":" + req.URL.RequestURI()
 	apiCtx, operationCtx, productCtx, subscriptionCtx, userCtx, deploymentCtx := bindRequestContext(service, route, operation, req)
-	state := &policy.State{Request: req, BackendURL: route.API.ServiceURL, Path: relative, Headers: make(http.Header), ValidateToken: r.policyTokenValidator, SendRequest: r.policySendRequest, FetchCredential: r.credentialFetcher(req, route.API.ServiceID), Trace: func(phase, detail string) { traceEvent(trace, phase, detail) }, RateLimit: r.rateLimit, BandwidthLimit: r.bandwidthLimit, AcquireConcurrency: r.acquireConcurrency, CacheGet: r.cacheGet, CacheSet: r.cacheSet, ValueCacheGet: r.valueCacheGet, ValueCacheSet: r.valueCacheSet, ValueCacheRemove: r.valueCacheRemove, CacheKey: cacheKey, Api: apiCtx, Operation: operationCtx, Product: productCtx, Subscription: subscriptionCtx, User: userCtx, Deployment: deploymentCtx}
+	state := &policy.State{Request: req, BackendURL: route.API.ServiceURL, Path: relative, Headers: make(http.Header), ValidateToken: r.policyTokenValidator, SendRequest: r.policySendRequest, FetchCredential: r.credentialFetcher(req, route.API.ServiceID), Trace: func(phase, detail string) { traceEvent(trace, phase, detail) }, RateLimit: r.rateLimit, BandwidthLimit: r.bandwidthLimit, AcquireConcurrency: r.acquireConcurrency, CacheGet: r.cacheGet, CacheSet: r.cacheSet, ValueCacheGet: r.valueCacheGet, ValueCacheSet: r.valueCacheSet, ValueCacheRemove: r.valueCacheRemove, CacheKey: cacheKey, TokenLimit: r.tokenLimit, Api: apiCtx, Operation: operationCtx, Product: productCtx, Subscription: subscriptionCtx, User: userCtx, Deployment: deploymentCtx}
 	defer func() {
 		for index := len(state.ConcurrencyReleases) - 1; index >= 0; index-- {
 			state.ConcurrencyReleases[index]()
@@ -892,7 +895,11 @@ func (r *Runtime) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		writePolicyResponse(w, state)
 		return
 	}
-	writeForwardedResponse(w, response, state)
+	// After the outbound policies, so an emit-token-metric node in that section
+	// has already recorded its dimensions, and before the body is written, so a
+	// non-streamed answer's counts can still become headers on it.
+	finished := r.governLLMResponse(response, state)
+	writeForwardedResponseAfter(w, response, state, finished)
 }
 
 func (r *Runtime) serveInjectedFault(w http.ResponseWriter, req *http.Request, plan policy.Plan, state *policy.State, fault Fault) {
@@ -1826,6 +1833,14 @@ func hopByHop(name string) bool {
 }
 
 func writeForwardedResponse(w http.ResponseWriter, response *http.Response, state *policy.State) {
+	writeForwardedResponseAfter(w, response, state, func() {})
+}
+
+// writeForwardedResponseAfter writes the backend's response and then runs a
+// completion hook. The hook exists for streamed bodies, whose token accounting
+// is only knowable once the last chunk has gone past.
+func writeForwardedResponseAfter(w http.ResponseWriter, response *http.Response, state *policy.State, finished func()) {
+	defer finished()
 	copyHeaders(w.Header(), response.Header)
 	copyHeaders(w.Header(), state.Headers)
 	status := response.StatusCode

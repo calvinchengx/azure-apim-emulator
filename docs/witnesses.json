@@ -220,6 +220,13 @@
       "go:TestSelfHostedGatewayServesOnlyAssociatedAPIs",
       "go:TestGatewayKeysAndToken",
       "go:TestGatewayIsNotWorkspaceScoped"
+    ],
+    "AI gateway and MCP": [
+      "ci:openai-witness",
+      "go:TestLLMTokenLimitCountsStreamedAnswers",
+      "go:TestLLMTokenLimitRefusesTheRequestAfterTheBudgetIsSpent",
+      "go:TestLLMTokenBudgetsAreIndependentPerCounterKey",
+      "go:TestEstimateIsAnApproximation"
     ]
   }
 }

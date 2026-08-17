@@ -1,0 +1,13 @@
+{
+  "name": "azure-apim-emulator-openai-witness",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "preinstall": "npx only-allow pnpm",
+    "test": "node witness.js"
+  },
+  "dependencies": {
+    "@azure/arm-apimanagement": "10.0.0",
+    "openai": "4.77.0"
+  }
+}

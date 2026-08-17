@@ -69,6 +69,8 @@ const (
 	ActionSetStatus
 	ActionSendOneWay
 	ActionRedirectContentURLs
+	ActionLLMTokenLimit
+	ActionLLMEmitTokenMetric
 	ActionUnsupported
 )
 
@@ -106,6 +108,11 @@ type Action struct {
 	ContentMax              int64
 	ContentAction           string
 	ContentTypes            []string
+	// LLM carries the token-governance configuration of an `llm-token-limit`
+	// or `llm-emit-token-metric` node. Kept as one struct rather than a dozen
+	// more fields on Action, because these attributes are only meaningful
+	// together.
+	LLM LLMConfig
 	HeaderRules             []HeaderRule
 	SpecifiedHeaderAction   string
 	UnspecifiedHeaderAction string
@@ -231,6 +238,14 @@ type State struct {
 	User                    *expr.NamedContext
 	Deployment              *expr.DeploymentContext
 	GraphQL                 *expr.GraphQLContext
+	// TokenLimit reports the tokens still available to a counter key and
+	// whether this request may proceed. Supplied by the gateway, which owns
+	// the windows. The estimate is what an `estimate-prompt-tokens="true"`
+	// policy wants charged up front, and is 0 otherwise.
+	TokenLimit func(key string, tokensPerMinute, estimate int) (remaining, retryAfter int, allowed bool)
+	// LLM is left by a token-governance action for the gateway to complete
+	// once the model has answered. Nil when no such policy ran.
+	LLM *LLMGovernance
 }
 
 type node struct {
@@ -515,6 +530,14 @@ func compileNode(item node, strict bool) (Action, bool, error) {
 		return compileSendRequest(item)
 	case "rate-limit-by-key", "quota-by-key", "rate-limit", "quota":
 		return compileLimit(item)
+	case "llm-token-limit", "azure-openai-token-limit":
+		// Azure ships the same policy twice: the provider-specific
+		// azure-openai-* name came first and the generic llm-* name
+		// generalised it. Same attributes, same behaviour, so a config written
+		// against either must work here.
+		return compileLLMTokenLimit(item)
+	case "llm-emit-token-metric", "azure-openai-emit-token-metric":
+		return compileLLMEmitTokenMetric(item)
 	case "limit-concurrency":
 		count, err := strconv.Atoi(item.Attrs["max-count"])
 		if err != nil || count <= 0 {
@@ -1903,6 +1926,17 @@ func Execute(actions []Action, state *State) error {
 			}
 			if state.Returned {
 				return nil
+			}
+		case ActionLLMTokenLimit:
+			if err := executeLLMTokenLimit(action, state); err != nil {
+				return err
+			}
+			if state.Returned {
+				return nil
+			}
+		case ActionLLMEmitTokenMetric:
+			if err := executeLLMEmitTokenMetric(action, state); err != nil {
+				return err
 			}
 		case ActionLimitConcurrency:
 			if state.AcquireConcurrency == nil {

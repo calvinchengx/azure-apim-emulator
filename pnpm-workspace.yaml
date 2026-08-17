@@ -5,6 +5,7 @@ packages:
   - e2e/grpc
   - e2e/soap
   - e2e/credential
+  - e2e/openai
 
 # pnpm 10 blocks dependency build scripts by default; allow the ones Astro
 # needs to compile native/optimized assets.
