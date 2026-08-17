@@ -1,8 +1,22 @@
 name: CI
 
+# A push to a PR branch used to fire BOTH events, running all 11 jobs twice for
+# the same commit: on PR #69 the rollup carried 31 checks of which only 20 were
+# distinct, and the 11 duplicates were exactly this file's job count. Filtering
+# push to main leaves branch commits covered by the pull_request run and main
+# commits covered by the push run, with nothing losing coverage.
 on:
   push:
+    branches: [main]
   pull_request:
+
+# Cancel superseded PR runs, never superseded main runs. A main commit needs its
+# own completed run because that is the record of what main was; a PR branch
+# does not, because only its newest commit is being reviewed. Same shape as
+# codeql.yml in this repo.
+concurrency:
+  group: ci-${{ github.event_name == 'pull_request' && format('pr-{0}', github.ref) || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
