@@ -1349,14 +1349,17 @@ func TestChoosePolicy(t *testing.T) {
 	if err := Execute(apiPlan.Inbound, state); err != nil || state.Variables["picked"] != "api" {
 		t.Fatalf("deployment context choose = %+v, %v", state, err)
 	}
-	if err := Execute([]Action{{Kind: ActionChoose, Branches: []ChooseBranch{{Condition: "@(context.Api.Revision == '1')"}}}}, state); err == nil {
+	// Api.Revision is bound now, so the refusal case moves to a member that is
+	// genuinely unknown. A test asserting a BOUND member is refused would fail
+	// the moment the ledger became true.
+	if err := Execute([]Action{{Kind: ActionChoose, Branches: []ChooseBranch{{Condition: "@(context.Api.Nonexistent == '1')"}}}}, state); err == nil {
 		t.Fatal("unknown API member accepted")
 	}
 	identPlan, err := Compile(`<policies><inbound><set-variable name="who"><value>@(context.User.Name + context.Subscription.Name + context.Deployment.Region)</value></set-variable></inbound></policies>`, true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	state = &State{User: &expr.NamedContext{Name: "Ada"}, Subscription: &expr.NamedContext{Name: "Dev"}, Deployment: &expr.DeploymentContext{Region: "local"}}
+	state = &State{User: &expr.NamedContext{Name: "Ada"}, Subscription: &expr.SubscriptionContext{Name: "Dev"}, Deployment: &expr.DeploymentContext{Region: "local"}}
 	if err := Execute(identPlan.Inbound, state); err != nil || state.Variables["who"] != "AdaDevlocal" {
 		t.Fatalf("identity variables = %+v %v", state, err)
 	}

@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestRequestEnvBindings(t *testing.T) {
@@ -126,7 +127,7 @@ func TestRequestEnvFallbacksAndErrors(t *testing.T) {
 
 	for _, source := range []string{
 		"@(context.Missing)",
-		"@(context.Api.Revision)",
+		"@(context.Api.Nonexistent)",
 		"@(context.Request.Missing)",
 		"@(context.Request.Body.AsJObject())",
 		"@(context.Response.Body.AsJObject())",
@@ -219,8 +220,8 @@ func TestDeploymentContextBindings(t *testing.T) {
 	env := Bind(Context{
 		Api:          &ApiContext{Id: "pets", Name: "Pets API", Path: "pets"},
 		Operation:    &OperationContext{Id: "get-pet", Name: "Get pet", Method: http.MethodGet, UrlTemplate: "/{id}"},
-		Product:      &NamedContext{Id: "starter", Name: "Starter"},
-		Subscription: &NamedContext{Id: "sub-1", Name: "Dev"},
+		Product:      &ProductContext{Id: "starter", Name: "Starter"},
+		Subscription: &SubscriptionContext{Id: "sub-1", Name: "Dev"},
 		User:         &NamedContext{Id: "ada", Name: "Ada"},
 		Deployment:   &DeploymentContext{ServiceName: "emulator", Region: "local"},
 	})
@@ -263,9 +264,7 @@ func TestDeploymentContextBindings(t *testing.T) {
 		"@(context.Api.Revision)",
 		"@(context.Operation.Url)",
 		"@(context.Product.Apis)",
-		"@(context.Subscription.Key)",
 		"@(context.User.Email)",
-		"@(context.Deployment.Gateway)",
 		"@(context.Api.Id)",
 		"@(context.Operation.Name)",
 		"@(context.Product.Name)",
@@ -275,13 +274,14 @@ func TestDeploymentContextBindings(t *testing.T) {
 			t.Fatalf("accepted %s on missing identity", source)
 		}
 	}
+	// Members that remain PLANNED. Api.Revision left this list when it was
+	// bound; keeping a bound member here would have asserted the opposite of
+	// what the ledger claims.
 	for _, source := range []string{
-		"@(context.Api.Revision)",
+		"@(context.Api.Nonexistent)",
 		"@(context.Operation.Url)",
 		"@(context.Product.Apis)",
-		"@(context.Subscription.Key)",
 		"@(context.User.Email)",
-		"@(context.Deployment.Gateway)",
 	} {
 		if _, err := EvalEnv(source, env); err == nil {
 			t.Fatalf("accepted %s", source)
@@ -405,5 +405,109 @@ func TestValueMembersIndexAndCall(t *testing.T) {
 	}
 	if _, err := Int(1).member("Missing"); err == nil {
 		t.Fatal("unknown primitive member accepted")
+	}
+}
+
+// The newly bound members, and the edges around them.
+func TestBoundScalarMembersAndTheirEdges(t *testing.T) {
+	env := Bind(Context{
+		Api: &ApiContext{Id: "pets", Name: "Pets", Path: "pets", Revision: "3",
+			Version: "v2", IsCurrentRevision: true, ServiceUrl: "https://backend.test"},
+		Product: &ProductContext{Id: "starter", Name: "Starter", State: "published",
+			ApprovalRequired: true, SubscriptionRequired: true, SubscriptionsLimit: Double(5)},
+		Subscription: &SubscriptionContext{Id: "dev", Name: "Dev", Key: "presented",
+			PrimaryKey: "primary", SecondaryKey: "secondary",
+			CreatedDate: "2026-01-01T00:00:00Z", StartDate: "2026-01-02T00:00:00Z", EndDate: "2026-12-31T00:00:00Z"},
+		Deployment: &DeploymentContext{ServiceName: "emulator", Region: "local",
+			ServiceId: "/subscriptions/s/service/emulator", GatewayId: "edge",
+			Gateway: &GatewayContext{Id: "edge", InstanceId: "edge-1", IsManaged: false, RegionName: "local"}},
+		Timestamp: time.Date(2026, 8, 18, 9, 30, 0, 0, time.UTC),
+		Elapsed:   func() time.Duration { return 1500 * time.Millisecond },
+		RequestId: "req-7",
+		Tracing:   true,
+	})
+	for _, test := range []struct{ source, want string }{
+		{"@(context.Api.Revision)", "3"},
+		{"@(context.Api.Version)", "v2"},
+		{"@(context.Api.ServiceUrl)", "https://backend.test"},
+		{"@(context.Product.State)", "published"},
+		// The key a policy keys a limit by is the one THIS caller presented,
+		// not the primary: two callers sharing a subscription must not collapse
+		// into one bucket.
+		{"@(context.Subscription.Key)", "presented"},
+		{"@(context.Subscription.PrimaryKey)", "primary"},
+		{"@(context.Subscription.CreatedDate)", "2026-01-01T00:00:00Z"},
+		{"@(context.Subscription.EndDate)", "2026-12-31T00:00:00Z"},
+		{"@(context.Deployment.ServiceId)", "/subscriptions/s/service/emulator"},
+		{"@(context.Deployment.Gateway.InstanceId)", "edge-1"},
+		{"@(context.Deployment.Gateway.RegionName)", "local"},
+		{"@(context.Timestamp)", "2026-08-18T09:30:00Z"},
+		// Rendered as .NET renders a TimeSpan, which is what a policy comparing
+		// against a literal was written for.
+		{"@(context.Elapsed)", "00:00:01.500"},
+		{"@(context.RequestId)", "req-7"},
+	} {
+		got, err := EvalEnv(test.source, env)
+		if err != nil || got.String() != test.want {
+			t.Fatalf("%s = %q, %v; want %q", test.source, got.String(), err, test.want)
+		}
+	}
+	for _, test := range []struct {
+		source string
+		want   bool
+	}{
+		{"@(context.Api.IsCurrentRevision)", true},
+		{"@(context.Product.ApprovalRequired)", true},
+		{"@(context.Product.SubscriptionRequired)", true},
+		{"@(context.Tracing)", true},
+		// A self-hosted gateway is not the managed one, which is the whole
+		// reason a policy would test this.
+		{"@(context.Deployment.Gateway.IsManaged)", false},
+	} {
+		got, err := EvalEnv(test.source, env)
+		if err != nil || got.Truthy() != test.want {
+			t.Fatalf("%s = %v, %v; want %v", test.source, got.Truthy(), err, test.want)
+		}
+	}
+	// A product that sets a limit reports it as a number.
+	if got, err := EvalEnv("@(context.Product.SubscriptionsLimit)", env); err != nil || got.String() != "5" {
+		t.Fatalf("subscriptions limit = %q, %v", got.String(), err)
+	}
+	// Unknown members on the new hosts are refused rather than answered empty.
+	for _, source := range []string{
+		"@(context.Product.Nonexistent)",
+		"@(context.Subscription.Nonexistent)",
+		"@(context.Deployment.Gateway.Nonexistent)",
+	} {
+		if _, err := EvalEnv(source, env); err == nil {
+			t.Fatalf("accepted %s", source)
+		}
+	}
+}
+
+// Outside a request there is no clock and no gateway, and `context` still binds
+// so a literal expression can be evaluated. Those paths must answer rather than
+// panic.
+func TestScalarMembersOutsideARequest(t *testing.T) {
+	env := Bind(Context{Deployment: &DeploymentContext{ServiceName: "emulator"}})
+	// No Elapsed function: zero, not a nil dereference.
+	if got, err := EvalEnv("@(context.Elapsed)", env); err != nil || got.String() != "00:00:00" {
+		t.Fatalf("elapsed with no clock = %q, %v", got.String(), err)
+	}
+	// A deployment with no gateway reports null rather than an empty object,
+	// so `context.Deployment.Gateway != null` reads correctly.
+	if got, err := EvalEnv("@(context.Deployment.Gateway == null)", env); err != nil || !got.Truthy() {
+		t.Fatalf("absent gateway = %v, %v", got.Truthy(), err)
+	}
+}
+
+// A clock that has gone backwards renders as zero rather than a negative
+// TimeSpan, which no policy comparison would handle.
+func TestElapsedNeverRendersNegative(t *testing.T) {
+	if got := formatElapsed(-5 * time.Second); got != "00:00:00.000" {
+		t.Fatalf("negative elapsed = %q", got)
+	}
+	if got := formatElapsed(3*time.Hour + 4*time.Minute + 5*time.Second + 6*time.Millisecond); got != "03:04:05.006" {
+		t.Fatalf("elapsed = %q", got)
 	}
 }

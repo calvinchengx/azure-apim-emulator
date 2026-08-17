@@ -15,7 +15,7 @@
     {
       "type": "context",
       "name": "Elapsed",
-      "status": "planned"
+      "status": "bound"
     },
     {
       "type": "context",
@@ -45,7 +45,7 @@
     {
       "type": "context",
       "name": "RequestId",
-      "status": "planned"
+      "status": "bound"
     },
     {
       "type": "context",
@@ -60,12 +60,12 @@
     {
       "type": "context",
       "name": "Timestamp",
-      "status": "planned"
+      "status": "bound"
     },
     {
       "type": "context",
       "name": "Tracing",
-      "status": "planned"
+      "status": "bound"
     },
     {
       "type": "context",
@@ -85,7 +85,7 @@
     {
       "type": "Api",
       "name": "IsCurrentRevision",
-      "status": "planned"
+      "status": "bound"
     },
     {
       "type": "Api",
@@ -100,17 +100,17 @@
     {
       "type": "Api",
       "name": "Revision",
-      "status": "planned"
+      "status": "bound"
     },
     {
       "type": "Api",
       "name": "ServiceUrl",
-      "status": "planned"
+      "status": "bound"
     },
     {
       "type": "Api",
       "name": "Version",
-      "status": "planned"
+      "status": "bound"
     },
     {
       "type": "Deployment",
@@ -120,12 +120,12 @@
     {
       "type": "Deployment",
       "name": "Gateway",
-      "status": "planned"
+      "status": "bound"
     },
     {
       "type": "Deployment",
       "name": "GatewayId",
-      "status": "planned"
+      "status": "bound"
     },
     {
       "type": "Deployment",
@@ -135,7 +135,7 @@
     {
       "type": "Deployment",
       "name": "ServiceId",
-      "status": "planned"
+      "status": "bound"
     },
     {
       "type": "Deployment",
@@ -145,22 +145,22 @@
     {
       "type": "Gateway",
       "name": "Id",
-      "status": "planned"
+      "status": "bound"
     },
     {
       "type": "Gateway",
       "name": "InstanceId",
-      "status": "planned"
+      "status": "bound"
     },
     {
       "type": "Gateway",
       "name": "IsManaged",
-      "status": "planned"
+      "status": "bound"
     },
     {
       "type": "Gateway",
       "name": "RegionName",
-      "status": "planned"
+      "status": "bound"
     },
     {
       "type": "LastError",
@@ -225,7 +225,7 @@
     {
       "type": "Product",
       "name": "ApprovalRequired",
-      "status": "planned"
+      "status": "bound"
     },
     {
       "type": "Product",
@@ -245,17 +245,17 @@
     {
       "type": "Product",
       "name": "State",
-      "status": "planned"
+      "status": "bound"
     },
     {
       "type": "Product",
       "name": "SubscriptionRequired",
-      "status": "planned"
+      "status": "bound"
     },
     {
       "type": "Product",
       "name": "SubscriptionsLimit",
-      "status": "planned"
+      "status": "bound"
     },
     {
       "type": "Request",
@@ -320,12 +320,12 @@
     {
       "type": "Subscription",
       "name": "CreatedDate",
-      "status": "planned"
+      "status": "bound"
     },
     {
       "type": "Subscription",
       "name": "EndDate",
-      "status": "planned"
+      "status": "bound"
     },
     {
       "type": "Subscription",
@@ -335,7 +335,7 @@
     {
       "type": "Subscription",
       "name": "Key",
-      "status": "planned"
+      "status": "bound"
     },
     {
       "type": "Subscription",
@@ -345,17 +345,17 @@
     {
       "type": "Subscription",
       "name": "PrimaryKey",
-      "status": "planned"
+      "status": "bound"
     },
     {
       "type": "Subscription",
       "name": "SecondaryKey",
-      "status": "planned"
+      "status": "bound"
     },
     {
       "type": "Subscription",
       "name": "StartDate",
-      "status": "planned"
+      "status": "bound"
     },
     {
       "type": "User",
