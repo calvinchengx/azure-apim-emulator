@@ -5195,8 +5195,24 @@ func (h *Handler) requireScope(rt route) error {
 // authorizationProviderRoute dispatches the credential-manager resource tree:
 // providers, the credentials under them, and each credential's access policies.
 func (h *Handler) authorizationProviderRoute(w http.ResponseWriter, r *http.Request, rt route) {
-	service := model.Service{SubscriptionID: rt.SubscriptionID, ResourceGroup: rt.ResourceGroup, Name: rt.ServiceName}
-	serviceID := service.ID()
+	// The credential manager is one of the few families Azure does NOT expose
+	// inside a workspace: the SDK has WorkspaceBackend, WorkspaceNamedValue and
+	// two dozen other Workspace* operation groups, but no
+	// WorkspaceAuthorizationProvider. The store says the same thing — a provider
+	// hangs off a SERVICE, not off a scope.
+	//
+	// So this family must refuse the workspace scope the router peeled off,
+	// rather than serve it from the service. Serving it would be the dangerous
+	// direction of wrong: a PUT under a workspace would create a SERVICE-level
+	// provider the caller never named, and a GET would report service-level
+	// providers as the workspace's, with no local symptom until the same call
+	// reaches real Azure and 404s there.
+	if rt.Workspace != "" {
+		writeError(w, http.StatusNotFound, "ResourceNotFound",
+			"The credential manager is not available at workspace scope.", rt.scopeID()+"/authorizationProviders")
+		return
+	}
+	serviceID := rt.service().ID()
 	switch len(rt.Tail) {
 	case 1:
 		h.authorizationProviderCollection(w, r, serviceID)

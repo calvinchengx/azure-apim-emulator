@@ -567,3 +567,41 @@ func TestConsentSuccessRecordFailsWhenTheProviderDisappears(t *testing.T) {
 		t.Fatalf("a credential that was not stored must not be reported Connected: %s", got.Body.String())
 	}
 }
+
+// A workspace is a scope for most families, but NOT for the credential
+// manager: Azure has no WorkspaceAuthorizationProvider, so the emulator must
+// 404 where Azure 404s. The failure this guards against is silent — the router
+// peels the workspace segment off and the request would otherwise resolve
+// against the SERVICE, creating or listing providers in a scope the caller
+// never named, with nothing wrong to see until the same call is made for real.
+func TestAuthorizationProvidersAreRefusedAtWorkspaceScope(t *testing.T) {
+	handler, st := testHandler(t)
+	seedService(t, st)
+	assertStatus(t, handler, http.MethodPut, basePath+"/workspaces/team-a"+apiQuery,
+		`{"properties":{"displayName":"Team A"}}`, http.StatusCreated)
+	workspace := basePath + "/workspaces/team-a/authorizationProviders"
+
+	// The workspace exists, so nothing but this family's own refusal stands
+	// between the caller and a service-level resource.
+	for _, path := range []string{
+		workspace + apiQuery,
+		workspace + "/github" + apiQuery,
+		workspace + "/github/authorizations" + apiQuery,
+		workspace + "/github/authorizations/user" + apiQuery,
+		workspace + "/github/authorizations/user/accessPolicies/p" + apiQuery,
+	} {
+		assertStatus(t, handler, http.MethodGet, path, "", http.StatusNotFound)
+		assertStatus(t, handler, http.MethodPut, path, providerBody, http.StatusNotFound)
+	}
+
+	// The refusal must come BEFORE the store, or the PUTs above would have
+	// left a service-level provider behind.
+	list := request(t, handler, http.MethodGet, basePath+"/authorizationProviders"+apiQuery, "")
+	if !strings.Contains(list.Body.String(), `"count":0`) {
+		t.Fatalf("a workspace-scoped write reached service scope: %s", list.Body.String())
+	}
+	got := request(t, handler, http.MethodGet, workspace+apiQuery, "")
+	if !strings.Contains(got.Body.String(), "workspaces/team-a/authorizationProviders") {
+		t.Fatalf("the 404 must name the scope that was refused: %s", got.Body.String())
+	}
+}
