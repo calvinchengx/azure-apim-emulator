@@ -65,8 +65,14 @@ func New(cfg *config.Config, validator auth.RequestValidator, backendClient, jwk
 		Activate:               func() error { return runtime.Activate(st, cfg.StrictPolicies) },
 		ValidatePolicy:         func(value string) error { _, err := policy.Compile(value, cfg.StrictPolicies); return err },
 		ValidateResolverPolicy: func(value string) error { _, err := policy.CompileHTTPDataSource(value); return err },
-		ImportClient:           backendClient,
-		ExportKey:              []byte(store.NewOpaqueID()),
+		LoginLink: func(providerID, authorizationID, redirect string) (string, error) {
+			return runtime.CredentialLoginLink(st, providerID, authorizationID, redirect)
+		},
+		ConfirmConsent: func(providerID, authorizationID, code string) error {
+			return runtime.CredentialConfirmConsent(st, providerID, authorizationID, code)
+		},
+		ImportClient: backendClient,
+		ExportKey:    []byte(store.NewOpaqueID()),
 	}
 	seed := model.Service{SubscriptionID: defaultSubscription, ResourceGroup: defaultResourceGroup, Name: cfg.DefaultService, Location: cfg.Location, SKUName: "Developer", SKUCapacity: 1, PublisherName: "Local Emulator", PublisherEmail: "local@azure-apim-emulator.test"}
 	if _, err := st.GetService(seed.ID()); errors.Is(err, store.ErrNotFound) {

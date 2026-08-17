@@ -201,6 +201,13 @@
       "go:TestWorkspaceScopesEveryResourceFamily",
       "go:TestLegacyDatabaseAdoptsScopes",
       "go:TestAdoptScopesIsAllOrNothing"
+    ],
+    "authorization providers/integrations": [
+      "ci:credential-witness",
+      "go:TestFetchCredentialObtainsAndCachesAToken",
+      "go:TestAuthorizationContextWithholdsTheRefreshToken",
+      "go:TestAuthorizationLifecycleAndConsentState",
+      "go:TestServerWiresTheConsentHandshake"
     ]
   }
 }

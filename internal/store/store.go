@@ -184,6 +184,21 @@ CREATE TABLE IF NOT EXISTS api_resolvers (
   name TEXT NOT NULL, display_name TEXT NOT NULL, description TEXT NOT NULL,
   type TEXT NOT NULL, field TEXT NOT NULL, document_json TEXT NOT NULL, etag TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS authorization_providers (
+  id TEXT PRIMARY KEY, service_id TEXT NOT NULL REFERENCES services(id) ON DELETE CASCADE,
+  name TEXT NOT NULL, display_name TEXT NOT NULL, identity_provider TEXT NOT NULL,
+  document_json TEXT NOT NULL, etag TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS authorizations (
+  id TEXT PRIMARY KEY, provider_id TEXT NOT NULL REFERENCES authorization_providers(id) ON DELETE CASCADE,
+  name TEXT NOT NULL, authorization_type TEXT NOT NULL, oauth2_grant_type TEXT NOT NULL,
+  status TEXT NOT NULL, error_message TEXT NOT NULL, document_json TEXT NOT NULL, etag TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS authorization_access_policies (
+  id TEXT PRIMARY KEY, authorization_id TEXT NOT NULL REFERENCES authorizations(id) ON DELETE CASCADE,
+  name TEXT NOT NULL, tenant_id TEXT NOT NULL, object_id TEXT NOT NULL,
+  document_json TEXT NOT NULL, etag TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS tags (
   id TEXT PRIMARY KEY, service_id TEXT NOT NULL REFERENCES scopes(id) ON DELETE CASCADE,
   name TEXT NOT NULL, display_name TEXT NOT NULL, etag TEXT NOT NULL
@@ -3075,4 +3090,175 @@ func (s *Store) scopeRebuildScript() (string, error) {
 			rebuilt, name, name, name, name, name)
 	}
 	return script.String(), nil
+}
+
+// UpsertAuthorizationProvider creates or replaces a credential-manager provider.
+func (s *Store) UpsertAuthorizationProvider(v model.AuthorizationProvider) (model.AuthorizationProvider, error) {
+	document, err := json.Marshal(v.Document)
+	if err != nil {
+		return v, err
+	}
+	v.ETag = newETag()
+	_, err = s.db.Exec(`INSERT INTO authorization_providers (id, service_id, name, display_name, identity_provider, document_json, etag)
+        VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET display_name=excluded.display_name,
+          identity_provider=excluded.identity_provider, document_json=excluded.document_json, etag=excluded.etag`,
+		v.ID(), v.ServiceID, v.Name, v.DisplayName, v.IdentityProvider, string(document), v.ETag)
+	return v, err
+}
+
+// GetAuthorizationProvider finds one provider.
+func (s *Store) GetAuthorizationProvider(id string) (model.AuthorizationProvider, error) {
+	var v model.AuthorizationProvider
+	var document string
+	err := s.db.QueryRow(`SELECT service_id, name, display_name, identity_provider, document_json, etag
+	        FROM authorization_providers WHERE lower(id)=lower(?)`, id).
+		Scan(&v.ServiceID, &v.Name, &v.DisplayName, &v.IdentityProvider, &document, &v.ETag)
+	if errors.Is(err, sql.ErrNoRows) {
+		return model.AuthorizationProvider{}, ErrNotFound
+	}
+	if err == nil {
+		_ = json.Unmarshal([]byte(document), &v.Document)
+	}
+	return v, err
+}
+
+// ListAuthorizationProviders returns a service's providers in stable ID order.
+func (s *Store) ListAuthorizationProviders(serviceID string) ([]model.AuthorizationProvider, error) {
+	rows, err := s.db.Query(`SELECT service_id, name, display_name, identity_provider, document_json, etag
+        FROM authorization_providers WHERE lower(service_id)=lower(?) ORDER BY id`, serviceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	values := make([]model.AuthorizationProvider, 0)
+	for rows.Next() {
+		var v model.AuthorizationProvider
+		var document string
+		if err := rows.Scan(&v.ServiceID, &v.Name, &v.DisplayName, &v.IdentityProvider, &document, &v.ETag); err != nil {
+			return nil, err
+		}
+		_ = json.Unmarshal([]byte(document), &v.Document)
+		values = append(values, v)
+	}
+	return values, rows.Err()
+}
+
+// DeleteAuthorizationProvider removes a provider and, by cascade, its stored
+// credentials. Deleting a provider revokes every credential under it, which is
+// the behaviour an operator expects when withdrawing an integration.
+func (s *Store) DeleteAuthorizationProvider(id string) error {
+	return deleteScopedResource(s.db, "authorization_providers", id)
+}
+
+// UpsertAuthorization creates or replaces one stored credential.
+func (s *Store) UpsertAuthorization(v model.Authorization) (model.Authorization, error) {
+	document, err := json.Marshal(v.Document)
+	if err != nil {
+		return v, err
+	}
+	v.ETag = newETag()
+	_, err = s.db.Exec(`INSERT INTO authorizations (id, provider_id, name, authorization_type, oauth2_grant_type, status, error_message, document_json, etag)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET authorization_type=excluded.authorization_type,
+          oauth2_grant_type=excluded.oauth2_grant_type, status=excluded.status, error_message=excluded.error_message,
+          document_json=excluded.document_json, etag=excluded.etag`,
+		v.ID(), v.ProviderID, v.Name, v.AuthorizationType, v.OAuth2GrantType, v.Status, v.ErrorMsg, string(document), v.ETag)
+	return v, err
+}
+
+// GetAuthorization finds one stored credential.
+func (s *Store) GetAuthorization(id string) (model.Authorization, error) {
+	var v model.Authorization
+	var document string
+	err := s.db.QueryRow(`SELECT provider_id, name, authorization_type, oauth2_grant_type, status, error_message, document_json, etag
+	        FROM authorizations WHERE lower(id)=lower(?)`, id).
+		Scan(&v.ProviderID, &v.Name, &v.AuthorizationType, &v.OAuth2GrantType, &v.Status, &v.ErrorMsg, &document, &v.ETag)
+	if errors.Is(err, sql.ErrNoRows) {
+		return model.Authorization{}, ErrNotFound
+	}
+	if err == nil {
+		_ = json.Unmarshal([]byte(document), &v.Document)
+	}
+	return v, err
+}
+
+// ListAuthorizations returns a provider's credentials in stable ID order.
+func (s *Store) ListAuthorizations(providerID string) ([]model.Authorization, error) {
+	rows, err := s.db.Query(`SELECT provider_id, name, authorization_type, oauth2_grant_type, status, error_message, document_json, etag
+        FROM authorizations WHERE lower(provider_id)=lower(?) ORDER BY id`, providerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	values := make([]model.Authorization, 0)
+	for rows.Next() {
+		var v model.Authorization
+		var document string
+		if err := rows.Scan(&v.ProviderID, &v.Name, &v.AuthorizationType, &v.OAuth2GrantType, &v.Status, &v.ErrorMsg, &document, &v.ETag); err != nil {
+			return nil, err
+		}
+		_ = json.Unmarshal([]byte(document), &v.Document)
+		values = append(values, v)
+	}
+	return values, rows.Err()
+}
+
+// DeleteAuthorization removes one stored credential.
+func (s *Store) DeleteAuthorization(id string) error {
+	return deleteScopedResource(s.db, "authorizations", id)
+}
+
+// UpsertAuthorizationAccessPolicy creates or replaces an access policy.
+func (s *Store) UpsertAuthorizationAccessPolicy(v model.AuthorizationAccessPolicy) (model.AuthorizationAccessPolicy, error) {
+	document, err := json.Marshal(v.Document)
+	if err != nil {
+		return v, err
+	}
+	v.ETag = newETag()
+	_, err = s.db.Exec(`INSERT INTO authorization_access_policies (id, authorization_id, name, tenant_id, object_id, document_json, etag)
+        VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET tenant_id=excluded.tenant_id,
+          object_id=excluded.object_id, document_json=excluded.document_json, etag=excluded.etag`,
+		v.ID(), v.AuthorizationID, v.Name, v.TenantID, v.ObjectID, string(document), v.ETag)
+	return v, err
+}
+
+// GetAuthorizationAccessPolicy finds one access policy.
+func (s *Store) GetAuthorizationAccessPolicy(id string) (model.AuthorizationAccessPolicy, error) {
+	var v model.AuthorizationAccessPolicy
+	var document string
+	err := s.db.QueryRow(`SELECT authorization_id, name, tenant_id, object_id, document_json, etag
+	        FROM authorization_access_policies WHERE lower(id)=lower(?)`, id).
+		Scan(&v.AuthorizationID, &v.Name, &v.TenantID, &v.ObjectID, &document, &v.ETag)
+	if errors.Is(err, sql.ErrNoRows) {
+		return model.AuthorizationAccessPolicy{}, ErrNotFound
+	}
+	if err == nil {
+		_ = json.Unmarshal([]byte(document), &v.Document)
+	}
+	return v, err
+}
+
+// ListAuthorizationAccessPolicies returns a credential's access policies.
+func (s *Store) ListAuthorizationAccessPolicies(authorizationID string) ([]model.AuthorizationAccessPolicy, error) {
+	rows, err := s.db.Query(`SELECT authorization_id, name, tenant_id, object_id, document_json, etag
+        FROM authorization_access_policies WHERE lower(authorization_id)=lower(?) ORDER BY id`, authorizationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	values := make([]model.AuthorizationAccessPolicy, 0)
+	for rows.Next() {
+		var v model.AuthorizationAccessPolicy
+		var document string
+		if err := rows.Scan(&v.AuthorizationID, &v.Name, &v.TenantID, &v.ObjectID, &document, &v.ETag); err != nil {
+			return nil, err
+		}
+		_ = json.Unmarshal([]byte(document), &v.Document)
+		values = append(values, v)
+	}
+	return values, rows.Err()
+}
+
+// DeleteAuthorizationAccessPolicy removes an access policy.
+func (s *Store) DeleteAuthorizationAccessPolicy(id string) error {
+	return deleteScopedResource(s.db, "authorization_access_policies", id)
 }

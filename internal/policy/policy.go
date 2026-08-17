@@ -36,6 +36,7 @@ const (
 	ActionSetMethod
 	ActionCORS
 	ActionSendRequest
+	ActionGetAuthorizationContext
 	ActionRateLimit
 	ActionLimitConcurrency
 	ActionCacheLookup
@@ -185,18 +186,27 @@ type Plan struct {
 
 // State is mutable request state exposed to policy actions.
 type State struct {
-	Request                 *http.Request
-	Response                *http.Response
-	BackendURL              string
-	BackendID               string
-	Path                    string
-	Returned                bool
-	StatusCode              int
-	Reason                  string
-	Body                    string
-	BodySet                 bool
-	Headers                 http.Header
-	Variables               map[string]string
+	Request    *http.Request
+	Response   *http.Response
+	BackendURL string
+	BackendID  string
+	Path       string
+	Returned   bool
+	StatusCode int
+	Reason     string
+	Body       string
+	BodySet    bool
+	Headers    http.Header
+	Variables  map[string]string
+	// AuthorizationContexts holds credentials fetched by
+	// get-authorization-context, keyed by the variable name the policy chose.
+	// Separate from Variables because a credential is an object and Variables
+	// is text-only.
+	AuthorizationContexts map[string]expr.AuthorizationContext
+	// FetchCredential resolves a stored credential to a usable token. Supplied
+	// by the gateway, which owns the store and the OAuth2 client; the policy
+	// package must not reach for either.
+	FetchCredential         func(providerID, authorizationID string) (expr.AuthorizationContext, error)
 	ValidateToken           func(string) error
 	SendRequest             func(*http.Request) (*http.Response, error)
 	Trace                   func(string, string)
@@ -393,6 +403,19 @@ func compileNode(item node, strict bool) (Action, bool, error) {
 			return Action{}, false, err
 		}
 		return Action{Kind: ActionSetQueryParameter, Name: item.Attrs["name"], Value: value, Action: item.Attrs["exists-action"]}, true, nil
+	case "get-authorization-context":
+		// Credential manager. provider-id and authorization-id name the stored
+		// credential; context-variable-name is where the result lands for the
+		// rest of the pipeline to read.
+		variable := item.Attrs["context-variable-name"]
+		if item.Attrs["provider-id"] == "" || item.Attrs["authorization-id"] == "" || variable == "" {
+			return unsupported(item.Name), true, nil
+		}
+		ignore := strings.EqualFold(item.Attrs["ignore-error"], "true")
+		return Action{
+			Kind: ActionGetAuthorizationContext, Name: item.Attrs["provider-id"],
+			Value: item.Attrs["authorization-id"], Variable: variable, IgnoreCase: ignore,
+		}, true, nil
 	case "set-variable":
 		value, err := compileValue(childText(item, "value"))
 		if err != nil {
@@ -1618,6 +1641,27 @@ func Execute(actions []Action, state *State) error {
 				query.Set(action.Name, value)
 			}
 			state.Request.URL.RawQuery = query.Encode()
+		case ActionGetAuthorizationContext:
+			if state.FetchCredential == nil {
+				return fmt.Errorf("get-authorization-context requires a configured credential store")
+			}
+			credential, err := state.FetchCredential(action.Name, action.Value)
+			if err != nil {
+				// ignore-error="true" is the documented way to let a request
+				// proceed uncredentialed, so the policy can decide what an
+				// unauthenticated call should do. Without it the failure stops
+				// the pipeline, which is the safe default: a backend call that
+				// silently loses its credential looks like an authorization
+				// bug in the backend.
+				if action.IgnoreCase {
+					continue
+				}
+				return err
+			}
+			if state.AuthorizationContexts == nil {
+				state.AuthorizationContexts = map[string]expr.AuthorizationContext{}
+			}
+			state.AuthorizationContexts[action.Variable] = credential
 		case ActionSetVariable:
 			value, err := evalValue(action.Value, state)
 			if err != nil {
@@ -2454,17 +2498,18 @@ func executeWait(action Action, state *State) error {
 
 func stateEnv(state *State) *expr.Env {
 	return expr.Bind(expr.Context{
-		Request:      state.Request,
-		Response:     state.Response,
-		Variables:    state.Variables,
-		LastError:    state.LastError,
-		Api:          state.Api,
-		Operation:    state.Operation,
-		Product:      state.Product,
-		Subscription: state.Subscription,
-		User:         state.User,
-		Deployment:   state.Deployment,
-		GraphQL:      state.GraphQL,
+		Request:               state.Request,
+		Response:              state.Response,
+		Variables:             state.Variables,
+		LastError:             state.LastError,
+		Api:                   state.Api,
+		Operation:             state.Operation,
+		Product:               state.Product,
+		Subscription:          state.Subscription,
+		User:                  state.User,
+		Deployment:            state.Deployment,
+		GraphQL:               state.GraphQL,
+		AuthorizationContexts: state.AuthorizationContexts,
 	})
 }
 

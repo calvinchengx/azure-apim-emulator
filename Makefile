@@ -12,7 +12,7 @@ endif
 COMPOSE = docker compose -f compose.yaml
 
 .PHONY: build docs test test-coverage test-differential test-sdks setup-sdks \
-        setup-graphql test-graphql setup-grpc test-grpc setup-soap test-soap verify \
+        setup-graphql test-graphql setup-grpc test-grpc setup-soap test-soap setup-credential test-credential verify \
         check-inventory up down clean status doctor ps logs
 
 build:
@@ -62,6 +62,12 @@ setup-soap:
 
 test-soap:
 	APIM_RUN_EXTERNAL_SDK_TESTS=1 go test -count=1 -v -run 'TestOfficialManagementSDKs/soap' ./e2e/sdk
+
+setup-credential:
+	pnpm install --frozen-lockfile
+
+test-credential:
+	APIM_RUN_EXTERNAL_SDK_TESTS=1 go test -count=1 -v -run 'TestOfficialManagementSDKs/credential' ./e2e/sdk
 
 docs:
 	pnpm --filter azure-apim-emulator-docs build

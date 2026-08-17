@@ -43,11 +43,16 @@ type Handler struct {
 	ValidatePolicy func(string) error
 	// ValidateResolverPolicy validates a GraphQL resolver's <http-data-source>.
 	ValidateResolverPolicy func(string) error
-	ImportClient           *http.Client
-	ExportKey              []byte
-	Secrets                keyvault.Retriever
-	AcquireToken           func(context.Context, string, string) (string, error)
-	mutationMu             sync.Mutex
+	// LoginLink and ConfirmConsent are the credential-manager consent handshake.
+	// Supplied by the server, which owns the OAuth2 client; the ARM handler
+	// must not perform token exchanges itself.
+	LoginLink      func(providerID, authorizationID, redirectURI string) (string, error)
+	ConfirmConsent func(providerID, authorizationID, code string) error
+	ImportClient   *http.Client
+	ExportKey      []byte
+	Secrets        keyvault.Retriever
+	AcquireToken   func(context.Context, string, string) (string, error)
+	mutationMu     sync.Mutex
 }
 
 // ServeHTTP routes APIM provider requests.
@@ -136,6 +141,11 @@ func (h *Handler) dispatch(w http.ResponseWriter, r *http.Request, parsed route)
 		h.identityProvider(w, r, parsed)
 	case "openidConnectProviders":
 		h.openIDConnectProvider(w, r, parsed)
+	case "authorizationProviders":
+		// Credential manager. Note the neighbour below: authorizationServers is
+		// a DIFFERENT resource (the portal console's OAuth2 server), and the
+		// two are one word apart.
+		h.authorizationProviderRoute(w, r, parsed)
 	case "authorizationServers":
 		h.authorizationServer(w, r, parsed)
 	case "documentations":
@@ -5150,4 +5160,66 @@ func (h *Handler) requireScope(rt route) error {
 	}
 	_, err := h.Store.GetService(rt.service().ID())
 	return err
+}
+
+// authorizationProviderRoute dispatches the credential-manager resource tree:
+// providers, the credentials under them, and each credential's access policies.
+func (h *Handler) authorizationProviderRoute(w http.ResponseWriter, r *http.Request, rt route) {
+	service := model.Service{SubscriptionID: rt.SubscriptionID, ResourceGroup: rt.ResourceGroup, Name: rt.ServiceName}
+	serviceID := service.ID()
+	switch len(rt.Tail) {
+	case 1:
+		h.authorizationProviderCollection(w, r, serviceID)
+	case 2:
+		h.authorizationProviderResource(w, r, model.AuthorizationProvider{ServiceID: serviceID, Name: rt.Tail[1]})
+	case 3, 4, 5, 6:
+		providerID := serviceID + "/authorizationProviders/" + rt.Tail[1]
+		if !equal(rt.Tail[2], "authorizations") {
+			writeError(w, http.StatusNotFound, "ResourceNotFound", "The resource was not found.", providerID)
+			return
+		}
+		h.authorizationRoute(w, r, rt, providerID)
+	default:
+		writeError(w, http.StatusNotFound, "ResourceNotFound", "The resource was not found.", serviceID)
+	}
+}
+
+func (h *Handler) authorizationRoute(w http.ResponseWriter, r *http.Request, rt route, providerID string) {
+	// The provider must exist before anything beneath it is addressable,
+	// otherwise a typo in the provider name silently creates a credential under
+	// a provider nobody configured.
+	if _, err := h.Store.GetAuthorizationProvider(providerID); err != nil {
+		h.storeError(w, err, providerID)
+		return
+	}
+	switch len(rt.Tail) {
+	case 3:
+		h.authorizationCollection(w, r, providerID)
+		return
+	case 4:
+		h.authorizationResource(w, r, model.Authorization{ProviderID: providerID, Name: rt.Tail[3]})
+		return
+	}
+	authorizationID := providerID + "/authorizations/" + rt.Tail[3]
+	if len(rt.Tail) == 5 && !equal(rt.Tail[4], "accessPolicies") {
+		h.authorizationAction(w, r, model.Authorization{ProviderID: providerID, Name: rt.Tail[3]}, rt.Tail[4])
+		return
+	}
+	if len(rt.Tail) == 5 && equal(rt.Tail[4], "accessPolicies") {
+		if _, err := h.Store.GetAuthorization(authorizationID); err != nil {
+			h.storeError(w, err, authorizationID)
+			return
+		}
+		h.accessPolicyCollection(w, r, authorizationID)
+		return
+	}
+	if len(rt.Tail) == 6 && equal(rt.Tail[4], "accessPolicies") {
+		if _, err := h.Store.GetAuthorization(authorizationID); err != nil {
+			h.storeError(w, err, authorizationID)
+			return
+		}
+		h.accessPolicyResource(w, r, model.AuthorizationAccessPolicy{AuthorizationID: authorizationID, Name: rt.Tail[5]})
+		return
+	}
+	writeError(w, http.StatusNotFound, "ResourceNotFound", "The resource was not found.", authorizationID)
 }

@@ -129,3 +129,39 @@ func TestJSONValueRejectsUnrepresentableValues(t *testing.T) {
 		t.Fatal("a malformed json.Number must be reported")
 	}
 }
+
+// A credential exposes exactly four members. Anything else fails closed, so a
+// policy cannot probe for a refresh token that is deliberately not bound.
+func TestAuthorizationContextFailsClosed(t *testing.T) {
+	env := Bind(Context{AuthorizationContexts: map[string]AuthorizationContext{
+		"auth": {AccessToken: "at", ClientID: "cid", Scopes: "api.read", ExpiresIn: 60},
+	}})
+	for source, want := range map[string]string{
+		`@(((Authorization)context.Variables["auth"]).AccessToken)`: "at",
+		`@(((Authorization)context.Variables["auth"]).ClientId)`:    "cid",
+		`@(((Authorization)context.Variables["auth"]).Scopes)`:      "api.read",
+		`@(((Authorization)context.Variables["auth"]).ExpiresIn)`:   "60",
+	} {
+		got, err := EvalEnv(source, env)
+		if err != nil || got.String() != want {
+			t.Errorf("%s = %q %v, want %q", source, got.String(), err, want)
+		}
+	}
+	for _, source := range []string{
+		`@(((Authorization)context.Variables["auth"]).RefreshToken)`,
+		`@(((Authorization)context.Variables["auth"]).Nonsense)`,
+	} {
+		if _, err := EvalEnv(source, env); err == nil {
+			t.Errorf("%s must fail closed", source)
+		}
+	}
+	// A name with no credential falls through to the string variables rather
+	// than shadowing them.
+	mixed := Bind(Context{
+		Variables:             map[string]string{"plain": "text"},
+		AuthorizationContexts: map[string]AuthorizationContext{"auth": {AccessToken: "at"}},
+	})
+	if got, err := EvalEnv(`@(context.Variables["plain"])`, mixed); err != nil || got.String() != "text" {
+		t.Fatalf("a string variable must still resolve: %q %v", got.String(), err)
+	}
+}

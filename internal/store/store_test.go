@@ -424,33 +424,48 @@ func TestClosedStoreErrors(t *testing.T) {
 			_, err := st.ListNamedValues("service")
 			return err
 		},
-		"delete named value":  func() error { return st.DeleteNamedValue("named") },
-		"upsert backend":      func() error { _, err := st.UpsertBackend(model.Backend{}); return err },
-		"get backend":         func() error { _, err := st.GetBackend("backend"); return err },
-		"list backends":       func() error { _, err := st.ListBackends("service"); return err },
-		"delete backend":      func() error { return st.DeleteBackend("backend") },
-		"upsert certificate":  func() error { _, err := st.UpsertCertificate(model.Certificate{}); return err },
-		"get certificate":     func() error { _, err := st.GetCertificate("certificate"); return err },
-		"list certificates":   func() error { _, err := st.ListCertificates("service"); return err },
-		"delete certificate":  func() error { return st.DeleteCertificate("certificate") },
-		"upsert API schema":   func() error { _, err := st.UpsertAPISchema(model.APISchema{}); return err },
-		"get API schema":      func() error { _, err := st.GetAPISchema("schema"); return err },
-		"list API schemas":    func() error { _, err := st.ListAPISchemas("api"); return err },
-		"delete API schema":   func() error { return st.DeleteAPISchema("schema") },
-		"upsert workspace":    func() error { _, err := st.UpsertWorkspace(model.Workspace{}); return err },
-		"get workspace":       func() error { _, err := st.GetWorkspace("ws"); return err },
-		"list workspaces":     func() error { _, err := st.ListWorkspaces("service"); return err },
-		"delete workspace":    func() error { return st.DeleteWorkspace("ws") },
-		"upsert API resolver": func() error { _, err := st.UpsertAPIResolver(model.APIResolver{}); return err },
-		"get API resolver":    func() error { _, err := st.GetAPIResolver("resolver"); return err },
-		"list API resolvers":  func() error { _, err := st.ListAPIResolvers("api"); return err },
-		"delete API resolver": func() error { return st.DeleteAPIResolver("resolver") },
-		"upsert tag":          func() error { _, err := st.UpsertTag(model.Tag{}); return err },
-		"get tag":             func() error { _, err := st.GetTag("tag"); return err },
-		"list tags":           func() error { _, err := st.ListTags("service"); return err },
-		"delete tag":          func() error { return st.DeleteTag("tag") },
-		"assign tag":          func() error { return st.AssignTag("resource", "tag") },
-		"detach tag":          func() error { return st.DetachTag("resource", "tag") },
+		"delete named value":    func() error { return st.DeleteNamedValue("named") },
+		"upsert backend":        func() error { _, err := st.UpsertBackend(model.Backend{}); return err },
+		"get backend":           func() error { _, err := st.GetBackend("backend"); return err },
+		"list backends":         func() error { _, err := st.ListBackends("service"); return err },
+		"delete backend":        func() error { return st.DeleteBackend("backend") },
+		"upsert certificate":    func() error { _, err := st.UpsertCertificate(model.Certificate{}); return err },
+		"get certificate":       func() error { _, err := st.GetCertificate("certificate"); return err },
+		"list certificates":     func() error { _, err := st.ListCertificates("service"); return err },
+		"delete certificate":    func() error { return st.DeleteCertificate("certificate") },
+		"upsert API schema":     func() error { _, err := st.UpsertAPISchema(model.APISchema{}); return err },
+		"get API schema":        func() error { _, err := st.GetAPISchema("schema"); return err },
+		"list API schemas":      func() error { _, err := st.ListAPISchemas("api"); return err },
+		"delete API schema":     func() error { return st.DeleteAPISchema("schema") },
+		"upsert workspace":      func() error { _, err := st.UpsertWorkspace(model.Workspace{}); return err },
+		"get workspace":         func() error { _, err := st.GetWorkspace("ws"); return err },
+		"list workspaces":       func() error { _, err := st.ListWorkspaces("service"); return err },
+		"delete workspace":      func() error { return st.DeleteWorkspace("ws") },
+		"upsert authz provider": func() error { _, err := st.UpsertAuthorizationProvider(model.AuthorizationProvider{}); return err },
+		"get authz provider":    func() error { _, err := st.GetAuthorizationProvider("p"); return err },
+		"list authz providers":  func() error { _, err := st.ListAuthorizationProviders("s"); return err },
+		"delete authz provider": func() error { return st.DeleteAuthorizationProvider("p") },
+		"upsert authorization":  func() error { _, err := st.UpsertAuthorization(model.Authorization{}); return err },
+		"get authorization":     func() error { _, err := st.GetAuthorization("a"); return err },
+		"list authorizations":   func() error { _, err := st.ListAuthorizations("p"); return err },
+		"delete authorization":  func() error { return st.DeleteAuthorization("a") },
+		"upsert access policy": func() error {
+			_, err := st.UpsertAuthorizationAccessPolicy(model.AuthorizationAccessPolicy{})
+			return err
+		},
+		"get access policy":    func() error { _, err := st.GetAuthorizationAccessPolicy("ap"); return err },
+		"list access policies": func() error { _, err := st.ListAuthorizationAccessPolicies("a"); return err },
+		"delete access policy": func() error { return st.DeleteAuthorizationAccessPolicy("ap") },
+		"upsert API resolver":  func() error { _, err := st.UpsertAPIResolver(model.APIResolver{}); return err },
+		"get API resolver":     func() error { _, err := st.GetAPIResolver("resolver"); return err },
+		"list API resolvers":   func() error { _, err := st.ListAPIResolvers("api"); return err },
+		"delete API resolver":  func() error { return st.DeleteAPIResolver("resolver") },
+		"upsert tag":           func() error { _, err := st.UpsertTag(model.Tag{}); return err },
+		"get tag":              func() error { _, err := st.GetTag("tag"); return err },
+		"list tags":            func() error { _, err := st.ListTags("service"); return err },
+		"delete tag":           func() error { return st.DeleteTag("tag") },
+		"assign tag":           func() error { return st.AssignTag("resource", "tag") },
+		"detach tag":           func() error { return st.DetachTag("resource", "tag") },
 		"get resource tag": func() error {
 			_, err := st.GetResourceTag("resource", "tag")
 			return err
@@ -643,6 +658,24 @@ func TestScanFunctionsRejectMalformedRows(t *testing.T) {
 			`CREATE TABLE workspaces (id, service_id, name, display_name, description, document_json, etag)`,
 			`INSERT INTO workspaces VALUES ('id', 'svc', NULL, '', '', '{}', '')`,
 			func(db *sql.DB) error { _, err := (&Store{db: db}).ListWorkspaces("svc"); return err },
+		},
+		{
+			"authorization providers",
+			`CREATE TABLE authorization_providers (id, service_id, name, display_name, identity_provider, document_json, etag)`,
+			`INSERT INTO authorization_providers VALUES ('id', 'svc', NULL, '', '', '{}', '')`,
+			func(db *sql.DB) error { _, err := (&Store{db: db}).ListAuthorizationProviders("svc"); return err },
+		},
+		{
+			"authorizations",
+			`CREATE TABLE authorizations (id, provider_id, name, authorization_type, oauth2_grant_type, status, error_message, document_json, etag)`,
+			`INSERT INTO authorizations VALUES ('id', 'p', NULL, '', '', '', '', '{}', '')`,
+			func(db *sql.DB) error { _, err := (&Store{db: db}).ListAuthorizations("p"); return err },
+		},
+		{
+			"authorization access policies",
+			`CREATE TABLE authorization_access_policies (id, authorization_id, name, tenant_id, object_id, document_json, etag)`,
+			`INSERT INTO authorization_access_policies VALUES ('id', 'a', NULL, '', '', '{}', '')`,
+			func(db *sql.DB) error { _, err := (&Store{db: db}).ListAuthorizationAccessPolicies("a"); return err },
 		},
 		{
 			"API resolvers",
@@ -2732,5 +2765,25 @@ func TestUpsertAPIResolverRejectsUnencodableDocuments(t *testing.T) {
 		Document: map[string]any{"bad": make(chan int)},
 	}); err == nil {
 		t.Fatal("an unencodable document must be reported")
+	}
+}
+
+// A credential-manager document that cannot be encoded is reported rather than
+// stored as something else.
+func TestCredentialManagerRejectsUnencodableDocuments(t *testing.T) {
+	st, err := Open("", clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	bad := map[string]any{"bad": make(chan int)}
+	if _, err := st.UpsertAuthorizationProvider(model.AuthorizationProvider{ServiceID: "/s", Name: "p", Document: bad}); err == nil {
+		t.Error("an unencodable provider document must be reported")
+	}
+	if _, err := st.UpsertAuthorization(model.Authorization{ProviderID: "/s/authorizationProviders/p", Name: "a", Document: bad}); err == nil {
+		t.Error("an unencodable authorization document must be reported")
+	}
+	if _, err := st.UpsertAuthorizationAccessPolicy(model.AuthorizationAccessPolicy{AuthorizationID: "/s/x/authorizations/a", Name: "ap", Document: bad}); err == nil {
+		t.Error("an unencodable access policy document must be reported")
 	}
 }
