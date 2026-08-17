@@ -76,43 +76,43 @@ const (
 
 // Action is a compiled policy node.
 type Action struct {
-	Kind                    ActionKind
-	Name                    string
-	Value                   string
-	BackendID               string
-	Action                  string
-	StatusCode              int
-	Reason                  string
-	Body                    string
-	Headers                 []Header
-	Variable                string
-	Values                  []string
-	IgnoreCase              bool
-	FailedCode              int
-	FilterAction            string
-	Methods                 string
-	AllowOrigin             string
-	AllowHeaders            string
-	ExposeHeaders           string
-	MaxAge                  string
-	AllowCreds              bool
-	SendURL                 string
-	SendMethod              string
-	ResponseVar             string
-	LimitCalls              int
-	LimitBandwidth          int64
-	LimitPeriod             time.Duration
-	CacheDuration           time.Duration
-	StatusMin               int
-	StatusMax               int
-	ContentMax              int64
-	ContentAction           string
-	ContentTypes            []string
+	Kind           ActionKind
+	Name           string
+	Value          string
+	BackendID      string
+	Action         string
+	StatusCode     int
+	Reason         string
+	Body           string
+	Headers        []Header
+	Variable       string
+	Values         []string
+	IgnoreCase     bool
+	FailedCode     int
+	FilterAction   string
+	Methods        string
+	AllowOrigin    string
+	AllowHeaders   string
+	ExposeHeaders  string
+	MaxAge         string
+	AllowCreds     bool
+	SendURL        string
+	SendMethod     string
+	ResponseVar    string
+	LimitCalls     int
+	LimitBandwidth int64
+	LimitPeriod    time.Duration
+	CacheDuration  time.Duration
+	StatusMin      int
+	StatusMax      int
+	ContentMax     int64
+	ContentAction  string
+	ContentTypes   []string
 	// LLM carries the token-governance configuration of an `llm-token-limit`
 	// or `llm-emit-token-metric` node. Kept as one struct rather than a dozen
 	// more fields on Action, because these attributes are only meaningful
 	// together.
-	LLM LLMConfig
+	LLM                     LLMConfig
 	HeaderRules             []HeaderRule
 	SpecifiedHeaderAction   string
 	UnspecifiedHeaderAction string

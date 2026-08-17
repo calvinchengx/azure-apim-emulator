@@ -52,6 +52,10 @@ type Handler struct {
 	// EnforceRBAC evaluates role assignments before each request. Off by
 	// default, which is what every existing caller assumes.
 	EnforceRBAC bool
+	// EnforceTiers refuses capabilities the service's SKU does not have. Off
+	// by default: see internal/config for why, and for why that default is
+	// itself a divergence rather than a neutral choice.
+	EnforceTiers bool
 	// RBACOwner holds Owner at subscription scope while enforcement is on, so
 	// the first assignment can be created at all.
 	RBACOwner      string
@@ -100,6 +104,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "InvalidApiVersionParameter", "The api-version query parameter is invalid or unsupported.", "api-version")
 		return
 	}
+	// The subscription-wide SKU catalogue is a sibling of `service`, not a
+	// child of one, so it is answered before the service parser runs.
+	if location, ok := parseProviderSKUs(split(r.URL.Path)); ok {
+		h.providerSKURoute(w, r, location)
+		return
+	}
 	parsed, ok := parse(split(r.URL.Path))
 	if !ok {
 		writeError(w, http.StatusNotFound, "ResourceNotFound", "The requested resource was not found.", r.URL.Path)
@@ -136,12 +146,18 @@ func (h *Handler) dispatch(w http.ResponseWriter, r *http.Request, parsed route)
 	// workspaces exist, because the only thing that changed is the parent ID
 	// their resources hang off.
 	if equal(parsed.Tail[0], "workspaces") && parsed.Workspace == "" {
+		if !h.requireCapability(w, parsed.service().ID(), capabilityWorkspaces) {
+			return
+		}
 		if len(parsed.Tail) == 1 {
 			h.workspaceCollection(w, r, parsed)
 			return
 		}
 		if len(parsed.Tail) == 2 {
 			h.workspaceResource(w, r, parsed, model.Workspace{ServiceID: parsed.service().ID(), Name: parsed.Tail[1]})
+			return
+		}
+		if !h.requireCapability(w, parsed.service().ID(), capabilityWorkspaces) {
 			return
 		}
 		nested := parsed
@@ -186,6 +202,10 @@ func (h *Handler) dispatch(w http.ResponseWriter, r *http.Request, parsed route)
 		h.authorizationServer(w, r, parsed)
 	case "gateways":
 		h.gatewayRoute(w, r, parsed)
+	case "skus":
+		h.skuRoute(w, r, parsed)
+	case "regions":
+		h.regionRoute(w, r, parsed)
 	case "privateEndpointConnections":
 		h.privateEndpointConnectionRoute(w, r, parsed)
 	case "privateLinkResources":
@@ -285,6 +305,8 @@ var serviceOnlyFamilies = map[string]bool{
 	"networkstatus":                        true,
 	"outboundnetworkdependenciesendpoints": true,
 	"locations":                            true,
+	"skus":                                 true,
+	"regions":                              true,
 }
 
 type route struct {
@@ -323,6 +345,17 @@ type servicePayload struct {
 		PublisherName  string `json:"publisherName"`
 		PublisherEmail string `json:"publisherEmail"`
 	} `json:"properties"`
+}
+
+// parseProviderSKUs recognises the subscription-scoped SKU catalogue,
+// `/subscriptions/{id}/providers/Microsoft.ApiManagement/skus`, and reports the
+// location to advertise them in.
+func parseProviderSKUs(parts []string) (string, bool) {
+	if len(parts) == 5 && equal(parts[0], "subscriptions") && equal(parts[2], "providers") &&
+		equal(parts[3], "Microsoft.ApiManagement") && equal(parts[4], "skus") {
+		return "local", true
+	}
+	return "", false
 }
 
 func parse(parts []string) (route, bool) {
@@ -370,6 +403,19 @@ func (h *Handler) service(w http.ResponseWriter, r *http.Request, rt route) {
 			writeError(w, http.StatusBadRequest, "ValidationError", "location, properties.publisherName, and properties.publisherEmail are required.", "properties")
 			return
 		}
+		// A tier is not just a price: it decides how far the service scales and
+		// which capabilities exist at all. Validating here is what stops a
+		// caller building a topology locally that Azure refuses outright.
+		serviceTier, message := validateSKU(body.SKU.Name, body.SKU.Capacity)
+		if message != "" {
+			writeError(w, http.StatusBadRequest, "ValidationError", message, "sku")
+			return
+		}
+		if message := validateAdditionalLocations(document, serviceTier); message != "" {
+			writeError(w, http.StatusBadRequest, "ValidationError", message, "properties.additionalLocations")
+			return
+		}
+		projectAdditionalLocations(document, rt.ServiceName)
 		_, existingErr := h.Store.GetService(value.ID())
 		if existingErr != nil && !errors.Is(existingErr, store.ErrNotFound) {
 			h.storeError(w, existingErr, value.ID())
@@ -381,12 +427,10 @@ func (h *Handler) service(w http.ResponseWriter, r *http.Request, rt route) {
 		// about it in one object. Resolving here, on the way in, is what lets
 		// the secret be dropped before it is ever stored.
 		resolveHostnameCertificates(value.Document, time.Now().UTC())
-		if value.SKUName == "" {
-			value.SKUName = "Developer"
-		}
-		if value.SKUCapacity == 0 {
-			value.SKUCapacity = 1
-		}
+		// No defaulting: validateSKU above refuses an absent or unknown tier, so
+		// a service reaching this point named one. Defaulting here would have
+		// been dead code, and worse, would have disagreed with the validation
+		// about what an empty sku means.
 		got, err := h.Store.UpsertService(value)
 		if err != nil {
 			h.storeError(w, err, value.ID())

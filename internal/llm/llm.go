@@ -41,7 +41,9 @@ func (u Usage) Total() int {
 }
 
 // Empty reports whether nothing was accounted.
-func (u Usage) Empty() bool { return u.PromptTokens == 0 && u.CompletionTokens == 0 && u.TotalTokens == 0 }
+func (u Usage) Empty() bool {
+	return u.PromptTokens == 0 && u.CompletionTokens == 0 && u.TotalTokens == 0
+}
 
 type usageEnvelope struct {
 	Usage *Usage `json:"usage"`

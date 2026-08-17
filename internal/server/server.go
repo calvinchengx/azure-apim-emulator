@@ -64,6 +64,7 @@ func New(cfg *config.Config, validator auth.RequestValidator, backendClient, jwk
 		Store: st, Auth: validator,
 		Activate:               func() error { return runtime.Activate(st, cfg.StrictPolicies) },
 		EnforceRBAC:            cfg.EnforceRBAC,
+		EnforceTiers:           cfg.EnforceTiers,
 		RBACOwner:              cfg.RBACOwner,
 		ValidatePolicy:         func(value string) error { _, err := policy.Compile(value, cfg.StrictPolicies); return err },
 		ValidateResolverPolicy: func(value string) error { _, err := policy.CompileHTTPDataSource(value); return err },

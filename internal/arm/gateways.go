@@ -42,6 +42,9 @@ func (h *Handler) gatewayRoute(w http.ResponseWriter, r *http.Request, rt route)
 	// handler.go: a workspace gets a gateway through the separate top-level
 	// Microsoft.ApiManagement/gateways resource, never through this path.
 	serviceID := rt.service().ID()
+	if !h.requireCapability(w, serviceID, capabilitySelfHostedGateway) {
+		return
+	}
 	switch len(rt.Tail) {
 	case 1:
 		h.gatewayCollection(w, r, serviceID)
