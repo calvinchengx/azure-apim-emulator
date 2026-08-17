@@ -73,14 +73,25 @@ func requiresIfMatch(rt route, method string) bool {
 	if len(rt.Tail) == 2 {
 		resource := rt.Tail[0]
 		if method == http.MethodPatch {
-			return oneOf(resource, "apis", "apiVersionSets", "namedValues", "backends", "caches", "identityProviders", "openidConnectProviders", "authorizationServers", "documentations", "tags", "groups", "users", "loggers", "diagnostics", "products", "subscriptions")
+			return oneOf(resource, "apis", "apiVersionSets", "namedValues", "backends", "caches", "identityProviders", "openidConnectProviders", "authorizationServers", "documentations", "gateways", "tags", "groups", "users", "loggers", "diagnostics", "products", "subscriptions")
 		}
-		return oneOf(resource, "apis", "apiVersionSets", "namedValues", "backends", "caches", "identityProviders", "openidConnectProviders", "authorizationServers", "documentations", "certificates", "tags", "groups", "users", "policyFragments", "loggers", "diagnostics", "products", "subscriptions")
+		return oneOf(resource, "apis", "apiVersionSets", "namedValues", "backends", "caches", "identityProviders", "openidConnectProviders", "authorizationServers", "documentations", "certificates", "gateways", "tags", "groups", "users", "policyFragments", "loggers", "diagnostics", "products", "subscriptions")
 	}
-	if len(rt.Tail) != 4 || !equal(rt.Tail[0], "apis") {
+	if len(rt.Tail) != 4 {
 		return false
 	}
 	child := strings.ToLower(rt.Tail[2])
+	// A gateway's hostnames and certificate authorities require If-Match on
+	// delete, but its API associations do NOT: an association is a link, and
+	// the SDK's signature for removing one carries no entity tag.
+	// `child` is already lowercased above, so these candidates must be too --
+	// a mixed-case candidate here matches nothing and the branch goes quiet.
+	if equal(rt.Tail[0], "gateways") {
+		return method == http.MethodDelete && oneOf(child, "hostnameconfigurations", "certificateauthorities")
+	}
+	if !equal(rt.Tail[0], "apis") {
+		return false
+	}
 	if method == http.MethodPatch {
 		return oneOf(child, "operations", "releases", "diagnostics")
 	}

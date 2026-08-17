@@ -63,6 +63,22 @@ type Service struct {
 	Diagnostics           []model.Diagnostic
 	Products              map[string]model.Product
 	Subscriptions         map[string]model.Subscription
+	// Gateways are the service's self-hosted gateway registrations, each with
+	// the hostnames it answers on and the subset of the service's routes it is
+	// associated with.
+	Gateways []*SelfHostedGateway
+}
+
+// SelfHostedGateway is compiled runtime state for one self-hosted gateway.
+//
+// Its Routes are a SUBSET of the service's, not a copy: a self-hosted gateway
+// serves only the APIs associated with it, and an API that was never associated
+// is simply absent there. That absence is the whole point of the resource, and
+// it is why the association is a runtime decision rather than a label.
+type SelfHostedGateway struct {
+	Name      string
+	Hostnames map[string]bool
+	Routes    []*Route
 }
 
 // Route is a compiled API route.
@@ -559,6 +575,9 @@ func (r *Runtime) Activate(st *store.Store, strict bool) error {
 	for _, service := range snapshot.Services {
 		sort.SliceStable(service.Routes, func(i, j int) bool { return len(service.Routes[i].API.Path) > len(service.Routes[j].API.Path) })
 	}
+	if err := attachSelfHostedGateways(st, services, snapshot); err != nil {
+		return err
+	}
 	r.current.Store(snapshot)
 	r.eventStore.Store(st)
 	return nil
@@ -734,7 +753,7 @@ func (r *Runtime) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		defer r.finishTrace(trace, tracedWriter)
 	}
 	snapshot := r.current.Load()
-	serviceName := serviceForHost(snapshot, req.Host, r.defaultService)
+	serviceName, selfHosted := serviceForHost(snapshot, req.Host, r.defaultService)
 	traceEvent(trace, "ingress", serviceName)
 	service := snapshot.Services[strings.ToLower(serviceName)]
 	if service == nil {
@@ -745,7 +764,15 @@ func (r *Runtime) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		gatewayError(w, http.StatusForbidden, "PublicNetworkAccessDisabled", "Public network access is disabled for this service.")
 		return
 	}
-	route, relative := matchRoute(service.Routes, req)
+	// On a self-hosted gateway's hostname only that gateway's APIs are
+	// matchable. An unassociated API is not refused here, it is not present:
+	// the gateway was never given it, so there is nothing to route to.
+	routes := service.Routes
+	if selfHosted != nil {
+		traceEvent(trace, "gateway", selfHosted.Name)
+		routes = selfHosted.Routes
+	}
+	route, relative := matchRoute(routes, req)
 	if route == nil {
 		gatewayError(w, http.StatusNotFound, "OperationNotFound", "Unable to match incoming request to an operation.")
 		return
@@ -1593,7 +1620,57 @@ func serviceFromHost(host, fallback string) string {
 	return fallback
 }
 
-func serviceForHost(snapshot *Snapshot, host, fallback string) string {
+// attachSelfHostedGateways compiles each service's gateway registrations into
+// the snapshot, resolving every association to the route already built for that
+// API.
+//
+// An association naming an API that has no route is dropped rather than
+// rejected: an API can be associated and then have its current revision
+// removed, and a service-wide activation failure would be a disproportionate
+// answer to one dangling link.
+func attachSelfHostedGateways(st *store.Store, services []model.Service, snapshot *Snapshot) error {
+	for _, item := range services {
+		service := snapshot.Services[strings.ToLower(item.Name)]
+		gateways, err := st.ListGateways(item.ID())
+		if err != nil {
+			return err
+		}
+		for _, registration := range gateways {
+			hostnames, err := st.ListGatewayHostnameConfigurations(registration.ID())
+			if err != nil {
+				return err
+			}
+			apiIDs, err := st.ListGatewayAPIs(registration.ID())
+			if err != nil {
+				return err
+			}
+			compiled := &SelfHostedGateway{Name: registration.Name, Hostnames: map[string]bool{}}
+			for _, hostname := range hostnames {
+				compiled.Hostnames[strings.ToLower(strings.TrimSpace(hostname.Hostname))] = true
+			}
+			associated := map[string]bool{}
+			for _, apiID := range apiIDs {
+				associated[strings.ToLower(logicalAPIID(apiID))] = true
+			}
+			for _, route := range service.Routes {
+				if associated[strings.ToLower(logicalAPIID(route.API.ID()))] {
+					compiled.Routes = append(compiled.Routes, route)
+				}
+			}
+			service.Gateways = append(service.Gateways, compiled)
+		}
+	}
+	return nil
+}
+
+// serviceForHost resolves the request's Host to a service and, when the
+// hostname belongs to one of that service's self-hosted gateways rather than to
+// the service itself, to that gateway.
+//
+// Gateway hostnames are checked after the service's own so that a hostname
+// configured in both places keeps answering as the service, which is the
+// behaviour that existed before gateways were routable.
+func serviceForHost(snapshot *Snapshot, host, fallback string) (string, *SelfHostedGateway) {
 	normalized := strings.ToLower(host)
 	if parsed, _, err := net.SplitHostPort(host); err == nil {
 		normalized = strings.ToLower(parsed)
@@ -1604,12 +1681,19 @@ func serviceForHost(snapshot *Snapshot, host, fallback string) string {
 	}
 	sort.Strings(names)
 	for _, name := range names {
-		service := snapshot.Services[name]
-		if service.Hostnames[normalized] {
-			return service.Name
+		if snapshot.Services[name].Hostnames[normalized] {
+			return snapshot.Services[name].Name, nil
 		}
 	}
-	return serviceFromHost(host, fallback)
+	for _, name := range names {
+		service := snapshot.Services[name]
+		for _, gateway := range service.Gateways {
+			if gateway.Hostnames[normalized] {
+				return service.Name, gateway
+			}
+		}
+	}
+	return serviceFromHost(host, fallback), nil
 }
 
 func customHostnames(document map[string]any) map[string]bool {

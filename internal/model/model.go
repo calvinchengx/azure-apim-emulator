@@ -498,3 +498,74 @@ type AuthorizationAccessPolicy struct {
 func (v AuthorizationAccessPolicy) ID() string {
 	return v.AuthorizationID + "/accessPolicies/" + v.Name
 }
+
+// Gateway is a self-hosted gateway registered against a service.
+//
+// The resource is a REGISTRATION, not a process: Azure hands out a pair of keys
+// and a token minted from them, and a gateway container elsewhere presents that
+// token to collect its configuration. What the registration decides is which
+// APIs that gateway is allowed to serve, which is why the association below is
+// the part with runtime consequences.
+type Gateway struct {
+	ServiceID string
+	Name      string
+	// LocationName is the only required field of Azure's locationData, and it
+	// is free text: a gateway runs wherever its operator ran it, so Azure does
+	// not validate it against the Azure region list.
+	LocationName string
+	Description  string
+	// PrimaryKey and SecondaryKey sign the gateway's access token. They are
+	// never returned by a GET; listKeys is the only way to read them, exactly
+	// as with a subscription's keys.
+	PrimaryKey   string
+	SecondaryKey string
+	Document     map[string]any
+	ETag         string
+}
+
+// ID returns the gateway ARM resource ID.
+func (v Gateway) ID() string { return v.ServiceID + "/gateways/" + v.Name }
+
+// GatewayHostnameConfiguration is one hostname a self-hosted gateway answers on.
+//
+// This is what makes a self-hosted gateway addressable independently of the
+// service's own hostnames, and so it is what the emulator routes on: a request
+// arriving on this hostname is served by THIS gateway, and therefore only by
+// the APIs associated with it.
+type GatewayHostnameConfiguration struct {
+	GatewayID string
+	Name      string
+	Hostname  string
+	// CertificateID names a certificate resource on the same service. Azure
+	// requires it to exist; a hostname configuration pointing at a certificate
+	// nobody uploaded would present no chain at all.
+	CertificateID              string
+	NegotiateClientCertificate bool
+	TLS10Enabled               bool
+	TLS11Enabled               bool
+	HTTP2Enabled               bool
+	Document                   map[string]any
+	ETag                       string
+}
+
+// ID returns the hostname-configuration ARM resource ID.
+func (v GatewayHostnameConfiguration) ID() string {
+	return v.GatewayID + "/hostnameConfigurations/" + v.Name
+}
+
+// GatewayCertificateAuthority marks one of the service's certificates as
+// trusted, or explicitly not trusted, for client-certificate validation on a
+// single gateway. Trust is per gateway rather than per service because the
+// gateways run in different places and answer to different callers.
+type GatewayCertificateAuthority struct {
+	GatewayID string
+	Name      string
+	IsTrusted bool
+	Document  map[string]any
+	ETag      string
+}
+
+// ID returns the certificate-authority ARM resource ID.
+func (v GatewayCertificateAuthority) ID() string {
+	return v.GatewayID + "/certificateAuthorities/" + v.Name
+}

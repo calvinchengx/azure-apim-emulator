@@ -83,10 +83,20 @@ func TestRoutingHelpers(t *testing.T) {
 	}
 	snapshot := &Snapshot{Services: map[string]*Service{
 		"alpha": {Name: "alpha", Hostnames: map[string]bool{"api.example.test": true}},
-		"beta":  {Name: "beta", Hostnames: map[string]bool{"api.example.test:8443": true}},
+		"beta": {Name: "beta", Hostnames: map[string]bool{"api.example.test:8443": true},
+			Gateways: []*SelfHostedGateway{{Name: "edge", Hostnames: map[string]bool{"edge.example.test": true}}}},
 	}}
-	if got := serviceForHost(snapshot, "api.example.test", "fallback"); got != "alpha" || serviceForHost(snapshot, "unknown.example.test", "fallback") != "fallback" {
-		t.Fatalf("custom host routing = %q", got)
+	got, selfHosted := serviceForHost(snapshot, "api.example.test", "fallback")
+	if got != "alpha" || selfHosted != nil {
+		t.Fatalf("custom host routing = %q %v", got, selfHosted)
+	}
+	if got, selfHosted := serviceForHost(snapshot, "unknown.example.test", "fallback"); got != "fallback" || selfHosted != nil {
+		t.Fatalf("unknown host routing = %q %v", got, selfHosted)
+	}
+	// A gateway hostname resolves to its service AND to the gateway, which is
+	// what narrows the routable set to that gateway's associations.
+	if got, selfHosted := serviceForHost(snapshot, "edge.example.test:443", "fallback"); got != "beta" || selfHosted == nil || selfHosted.Name != "edge" {
+		t.Fatalf("gateway host routing = %q %v", got, selfHosted)
 	}
 	if hosts := customHostnames(map[string]any{"hostnameConfigurations": []any{map[string]any{"hostName": "API.Example.Test"}}, "properties": map[string]any{"hostnameConfigurations": []any{map[string]any{"hostName": "portal.example.test"}}}}); !hosts["api.example.test"] || !hosts["portal.example.test"] {
 		t.Fatalf("custom hostnames = %#v", hosts)

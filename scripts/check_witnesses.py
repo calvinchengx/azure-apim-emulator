@@ -18,9 +18,11 @@ Witness kinds are ranked, because they are not equal evidence:
   go:<Test>   a Go test using our own client: our reading of the contract on
               both ends of the wire
 
-Rows graded `partial` or `planned` claim nothing yet and are exempt — the
-point is to hold the green rows to account, not to demand evidence for work
-that is honestly labelled unfinished.
+Rows graded `partial` or `planned` claim nothing yet and are exempt from HAVING
+to name a witness — the point is to hold the green rows to account, not to
+demand evidence for work that is honestly labelled unfinished. A witness such a
+row does name is still checked for existence, because a dead name misleads
+whether or not the row was obliged to carry it.
 
     ./scripts/check_witnesses.py            exit non-zero on any unbacked claim
     ./scripts/check_witnesses.py --strict   also fail on manifest entries that
@@ -107,10 +109,15 @@ def main():
 
     errors = []
     for cap in green:
-        witnesses = manifest.get(cap)
-        if not witnesses:
+        if not manifest.get(cap):
             errors.append(f"{cap!r} is graded green but names no witness in witnesses.json")
-            continue
+
+    # Existence is checked for EVERY witness named, not only the green rows'.
+    # A partial row is exempt from having to name one, but a witness it does
+    # name is a statement about the tree, and a renamed test behind it rots
+    # exactly as invisibly there as anywhere else. The exemption is about what
+    # a row must claim, not about whether what it claims is true.
+    for cap, witnesses in manifest.items():
         for w in witnesses:
             kind, _, name = w.partition(":")
             if kind in ("go", "sdk") and name not in tests:
