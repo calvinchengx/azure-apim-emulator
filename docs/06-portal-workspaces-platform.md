@@ -87,14 +87,35 @@ unchanged, so every family the emulator implements at service scope is available
 inside a workspace with no per-family work. That is the whole mechanism: the
 only thing that differs is the parent ID the resources hang off.
 
-**The credential manager is the exception, and it refuses the scope
-explicitly.** Azure has no `WorkspaceAuthorizationProvider` — the SDK exposes
-two dozen other `Workspace*` operation groups but not that one — so
-`authorizationProviders` under a workspace answers 404 rather than falling
-through to the service. Falling through is the dangerous direction: a PUT would
-create a service-level provider in a scope the caller never named, and a GET
-would report service-level providers as the workspace's, with no local symptom
-until the same call is made against real Azure.
+**The peel is family-blind, so the exceptions are one explicit list.** Eight
+families are ones Azure scopes to a service only, and they answer 404 under a
+workspace rather than being dispatched: `caches`, `identityProviders`,
+`openidConnectProviders`, `authorizationProviders`, `authorizationServers`,
+`documentations`, `gateways` and `users`. The check is `serviceOnlyFamilies` in
+`internal/arm/handler.go`, applied once immediately after the segment is peeled,
+rather than a guard repeated inside each family.
+
+The list is derived from the SDK rather than judged: `@azure/arm-apimanagement`
+publishes a separate `Workspace*` operation group for every family Azure
+genuinely scopes to a workspace, so a family with no such group is service-only.
+That makes it evidence from one SDK version, not proof — if a later version adds
+a group for one of these, the row goes.
+
+`users` is the one worth stating: `WorkspaceGroupUser` does exist, but it is a
+membership link, not user CRUD. Users are a service-level directory that a
+workspace group draws members from, which is why only the FIRST path segment
+after the workspace is checked. `/workspaces/{id}/groups/{g}/users/{u}` is a
+membership and still works; `/workspaces/{id}/users/{u}` is a directory entry
+and does not.
+
+Without the list every one of these would be created happily inside a workspace,
+and that is the dangerous direction, because it has no local symptom. Two shapes
+of it were found and fixed: `authorizationProviders` fell through to the SERVICE,
+so a PUT created a provider in a scope the caller never named and a GET reported
+service-level providers as the workspace's; the other families instead created
+the resource IN the workspace, where it is retrievable and simply does not exist
+in Azure. Both work here and 404 the first time the same flow runs against a real
+tenant.
 
 **The store was rebuilt to allow it.** Every resource table previously declared
 `REFERENCES services(id)`, which made "a resource's parent is a service" a

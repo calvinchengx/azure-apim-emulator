@@ -831,7 +831,12 @@ func (h *Handler) group(w http.ResponseWriter, r *http.Request, rt route) {
 			return
 		}
 		if len(rt.Tail) == 4 {
-			h.groupUser(w, r, group, model.User{ServiceID: scope, Name: rt.Tail[3]})
+			// The GROUP is scoped, the MEMBER is not: a workspace group draws
+			// its members from the service's user directory, which is why Azure
+			// has WorkspaceGroupUser but no WorkspaceUser. Resolving the user at
+			// the workspace scope instead would make a workspace group
+			// unfillable, because no user exists at that scope to name.
+			h.groupUser(w, r, group, model.User{ServiceID: rt.service().ID(), Name: rt.Tail[3]})
 			return
 		}
 	}

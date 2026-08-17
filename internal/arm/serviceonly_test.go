@@ -62,6 +62,31 @@ func TestServiceOnlyFamiliesAreRefusedAtWorkspaceScope(t *testing.T) {
 	}
 }
 
+// Only the FIRST segment after the workspace is checked, and that distinction is
+// load-bearing rather than incidental: `users` is service-only as a directory,
+// but `WorkspaceGroupUser` exists, so a group's MEMBERSHIP inside a workspace is
+// a real Azure surface. Blocking the name at any depth would have taken it out.
+func TestServiceOnlyFamiliesAreRefusedByFirstSegmentOnly(t *testing.T) {
+	handler, st := testHandler(t)
+	seedService(t, st)
+	assertStatus(t, handler, http.MethodPut, basePath+"/workspaces/team"+apiQuery,
+		`{"properties":{"displayName":"Team"}}`, http.StatusCreated)
+	assertStatus(t, handler, http.MethodPut, basePath+"/workspaces/team/groups/devs"+apiQuery,
+		`{"properties":{"displayName":"Devs"}}`, http.StatusCreated)
+	assertStatus(t, handler, http.MethodPut, basePath+"/users/ada"+apiQuery,
+		`{"properties":{"email":"ada@example.test","firstName":"Ada","lastName":"L"}}`, http.StatusCreated)
+
+	// The directory entry is refused at workspace scope...
+	assertStatus(t, handler, http.MethodPut, basePath+"/workspaces/team/users/ada"+apiQuery,
+		`{"properties":{"email":"ada@example.test","firstName":"Ada","lastName":"L"}}`, http.StatusNotFound)
+	// ...while the same word deeper in the path is a membership and is not.
+	assertStatus(t, handler, http.MethodPut, basePath+"/workspaces/team/groups/devs/users/ada"+apiQuery,
+		"", http.StatusCreated)
+	if body := request(t, handler, http.MethodGet, basePath+"/workspaces/team/groups/devs/users"+apiQuery, "").Body.String(); !strings.Contains(body, "ada") {
+		t.Fatalf("workspace group membership listing = %s", body)
+	}
+}
+
 // The list is a claim about Azure, so it is asserted rather than left implicit:
 // a family added here by accident silently removes a working surface.
 func TestServiceOnlyFamilyListIsExact(t *testing.T) {
