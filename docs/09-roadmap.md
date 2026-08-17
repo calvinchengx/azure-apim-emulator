@@ -136,9 +136,11 @@ explicit external-adapter test fixture.
 - MCP-related import, exposure, governance, authentication, policy, and portal behavior.
   Exposure is implemented: an API declared `type: mcp` is published as an MCP
   server over the Streamable HTTP transport and its operations are its tools,
-  with schemas derived from the parameters they already declare. Passthrough of
-  an external MCP server, resources and prompts, per-tool policy scoping, and the
-  older SSE transport remain open.
+  with schemas derived from the parameters they already declare. Passthrough is implemented too: an API
+  declared `mcpMode: passthrough` forwards every JSON-RPC message to an upstream
+  MCP server rather than interpreting it, so the upstream is never capped at what
+  this emulator understands. Resources and prompts, per-tool policy scoping, and
+  the older SSE transport remain open.
 - Deterministic fake providers plus opt-in Azure/OpenAI/provider differential suites.
 - Promote supported preview contracts only after stable tracks remain green.
 
