@@ -718,6 +718,26 @@ func (h *Handler) tag(w http.ResponseWriter, r *http.Request, rt route) {
 		writeJSON(w, http.StatusOK, map[string]any{"value": resources, "count": len(resources)})
 		return
 	}
+	if (len(rt.Tail) == 3 || len(rt.Tail) == 4) &&
+		isLinkSegment(rt.Tail[2], "apiLinks", "operationLinks", "productLinks") {
+		tag := model.Tag{ServiceID: scope, Name: rt.Tail[1]}
+		if _, err := h.Store.GetTag(tag.ID()); err != nil {
+			h.storeError(w, err, tag.ID())
+			return
+		}
+		surface, err := h.tagLinkSurface(tag, rt.Tail[2])
+		if err != nil {
+			h.storeError(w, err, tag.ID())
+			return
+		}
+		surface.armType = linkType(rt.Workspace != "", "tags", rt.Tail[2])
+		name := ""
+		if len(rt.Tail) == 4 {
+			name = rt.Tail[3]
+		}
+		h.linkRoute(w, r, surface, name)
+		return
+	}
 	if len(rt.Tail) != 2 {
 		writeError(w, http.StatusNotFound, "ResourceNotFound", "The requested tag resource was not found.", r.URL.Path)
 		return
@@ -4205,6 +4225,24 @@ func (h *Handler) product(w http.ResponseWriter, r *http.Request, rt route) {
 			resources = append(resources, apiWire(api))
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"value": resources})
+		return
+	}
+	if (len(rt.Tail) == 3 || len(rt.Tail) == 4) && isLinkSegment(rt.Tail[2], "apiLinks", "groupLinks") {
+		if _, err := h.Store.GetProduct(product.ID()); err != nil {
+			h.storeError(w, err, product.ID())
+			return
+		}
+		surface, err := h.productLinkSurface(product, rt.Tail[2])
+		if err != nil {
+			h.storeError(w, err, product.ID())
+			return
+		}
+		surface.armType = linkType(rt.Workspace != "", "products", rt.Tail[2])
+		name := ""
+		if len(rt.Tail) == 4 {
+			name = rt.Tail[3]
+		}
+		h.linkRoute(w, r, surface, name)
 		return
 	}
 	if len(rt.Tail) == 3 && equal(rt.Tail[2], "tags") {

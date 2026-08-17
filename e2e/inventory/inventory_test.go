@@ -117,6 +117,8 @@ func seeds() []seed {
 			`{"properties":{"displayName":"Probe workspace"}}`},
 		{"apiId", "probe-api", "/apis/probe-api",
 			`{"properties":{"displayName":"Probe","path":"probe","protocols":["https"],"serviceUrl":"https://backend.invalid"}}`},
+		{"operationId", "probe-operation", "/apis/probe-api/operations/probe-operation",
+			`{"properties":{"displayName":"Probe","method":"GET","urlTemplate":"/probe"}}`},
 		{"productId", "probe-product", "/products/probe-product",
 			`{"properties":{"displayName":"Probe product"}}`},
 		{"groupId", "probe-group", "/groups/probe-group",
@@ -287,6 +289,28 @@ func applySeeds(t *testing.T, emu *emulator.Emulator, client *http.Client) (map[
 		}
 		failures = append(failures, fmt.Sprintf("%s (PUT %s = %d)", entry.parameter, entry.path, status))
 	}
+
+	// Seed the same resources again INSIDE the workspace.
+	//
+	// A workspace is a separate scope, so a product seeded at service scope is
+	// not the parent of `/workspaces/{ws}/products/{id}/...`. Without this the
+	// harness substitutes a seeded name into a workspace path, gets a 404 for
+	// the missing PARENT, and reports the operation `absent` — which it did for
+	// all 20 workspace-scoped link operations while the emulator served them
+	// perfectly well. A seeded parameter is only seeded in the scope it was
+	// created in, and the verdict rules cannot see scope.
+	if workspace, ok := seeded["workspaceId"]; ok {
+		base := emu.ManagementEndpoint + emu.ServiceID() + "/workspaces/" + workspace
+		for _, entry := range seeds() {
+			if entry.body == "" || entry.parameter == "workspaceId" {
+				continue
+			}
+			if _, ok := seeded[entry.parameter]; !ok {
+				continue
+			}
+			call(t, client, http.MethodPut, base+entry.path+"?api-version="+apiVersion, entry.body)
+		}
+	}
 	sort.Strings(failures)
 	return seeded, failures
 }
@@ -394,10 +418,52 @@ func leafBody(path string) string {
 	if len(segments) < 2 {
 		return emptyProperties
 	}
-	if body, ok := familyBodies()[strings.ToLower(segments[len(segments)-2])]; ok {
+	family := strings.ToLower(segments[len(segments)-2])
+	if body := linkBodyFor(path, family); body != "" {
+		return body
+	}
+	if body, ok := familyBodies()[family]; ok {
 		return body
 	}
 	return emptyProperties
+}
+
+// linkBodyFor builds the body a link resource requires.
+//
+// A link carries the FULL resource id of its target, so an empty properties bag
+// is rejected and every GET and DELETE on a link stays `unmeasured` for want of
+// a resource the harness could not create. The target is the seeded resource in
+// THIS path's scope, which matters: a link inside a workspace must point at the
+// workspace's own API, not the service's.
+func linkBodyFor(path, family string) string {
+	targets := map[string]struct{ property, collection string }{
+		"apilinks":       {"apiId", "/apis/"},
+		"grouplinks":     {"groupId", "/groups/"},
+		"productlinks":   {"productId", "/products/"},
+		"operationlinks": {"operationId", "/apis/probe-api/operations/"},
+	}
+	target, ok := targets[family]
+	if !ok {
+		return ""
+	}
+	scope := path
+	for _, parent := range []string{"/products/", "/tags/"} {
+		if index := strings.Index(path, parent); index >= 0 && index < len(scope) {
+			scope = path[:index]
+		}
+	}
+	name := "probe-" + strings.TrimSuffix(strings.TrimSuffix(target.property, "Id"), "s")
+	switch target.property {
+	case "apiId":
+		name = "probe-api"
+	case "groupId":
+		name = "probe-group"
+	case "productId":
+		name = "probe-product"
+	case "operationId":
+		name = "probe-operation"
+	}
+	return `{"properties":{"` + target.property + `":"` + scope + target.collection + name + `"}}`
 }
 
 const emptyProperties = `{"properties":{}}`
