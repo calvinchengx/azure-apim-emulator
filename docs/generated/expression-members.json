@@ -165,12 +165,12 @@
     {
       "type": "LastError",
       "name": "Element",
-      "status": "planned"
+      "status": "bound"
     },
     {
       "type": "LastError",
       "name": "ElementPath",
-      "status": "planned"
+      "status": "bound"
     },
     {
       "type": "LastError",
@@ -180,22 +180,22 @@
     {
       "type": "LastError",
       "name": "Reason",
-      "status": "planned"
+      "status": "bound"
     },
     {
       "type": "LastError",
       "name": "Scope",
-      "status": "planned"
+      "status": "bound"
     },
     {
       "type": "LastError",
       "name": "Section",
-      "status": "planned"
+      "status": "bound"
     },
     {
       "type": "LastError",
       "name": "Source",
-      "status": "planned"
+      "status": "bound"
     },
     {
       "type": "Operation",

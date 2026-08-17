@@ -119,6 +119,10 @@ type Context struct {
 	RequestId string
 	// Tracing reports whether the caller asked for a trace.
 	Tracing bool
+	// LastErrorLocation is where LastError happened, when the failure came from
+	// the policy engine. Nil for any other error, which is why every member but
+	// Message reads empty rather than inventing a position.
+	LastErrorLocation ErrorLocation
 	// OriginalUrl is the URL as the CALLER sent it, before any policy rewrote
 	// it. A policy that logs or routes on where a request was actually aimed
 	// needs the original, not the one it just changed.
@@ -179,7 +183,7 @@ func (c *contextHost) member(name string) (Value, error) {
 		if c.ctx.LastError == nil {
 			return Null(), nil
 		}
-		return Object(&lastErrorHost{err: c.ctx.LastError}), nil
+		return Object(&lastErrorHost{err: c.ctx.LastError, located: c.ctx.LastErrorLocation}), nil
 	case "Api":
 		if c.ctx.Api == nil {
 			return Null(), nil
@@ -522,15 +526,51 @@ func (r *responseHost) member(name string) (Value, error) {
 
 type lastErrorHost struct {
 	err error
+	// located is the failure's position, supplied by the policy engine. Nil
+	// when the error came from somewhere that knows no position, in which case
+	// every member but Message reads empty rather than guessing.
+	located ErrorLocation
+}
+
+// ErrorLocation is where a failure happened, as the policy engine reports it.
+//
+// An interface rather than a struct because `internal/policy` imports this
+// package: the engine supplies its own error and this reads it back, without
+// the dependency running the other way.
+type ErrorLocation interface {
+	Element() string
+	Section() string
+	Scope() string
+	Reason() string
+	ElementPath() string
 }
 
 func (e *lastErrorHost) member(name string) (Value, error) {
 	switch name {
 	case "Message":
 		return String(e.err.Error()), nil
+	case "Element", "Source":
+		// Azure exposes the failing element under both names.
+		return String(locatedValue(e.located, ErrorLocation.Element)), nil
+	case "ElementPath":
+		return String(locatedValue(e.located, ErrorLocation.ElementPath)), nil
+	case "Section":
+		return String(locatedValue(e.located, ErrorLocation.Section)), nil
+	case "Scope":
+		return String(locatedValue(e.located, ErrorLocation.Scope)), nil
+	case "Reason":
+		return String(locatedValue(e.located, ErrorLocation.Reason)), nil
 	default:
 		return Null(), fmt.Errorf("unknown member %s", name)
 	}
+}
+
+// locatedValue reads one field of a location that may not exist.
+func locatedValue(location ErrorLocation, read func(ErrorLocation) string) string {
+	if location == nil {
+		return ""
+	}
+	return read(location)
 }
 
 type urlHost struct {

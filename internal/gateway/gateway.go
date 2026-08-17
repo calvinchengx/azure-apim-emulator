@@ -470,6 +470,10 @@ func (r *Runtime) Activate(st *store.Store, strict bool) error {
 		if err := resolveBackendReferences(&plan, backends[strings.ToLower(serviceIDFromScope(item.ScopeID))]); err != nil {
 			return fmt.Errorf("compile policy %s: %w", item.ScopeID, err)
 		}
+		// Stamped here, where the document's own scope is known. After
+		// composition merges service, product, API and operation policies into
+		// one plan, nothing can tell which document an action came from.
+		plan.StampScope(policy.ScopeOf(item.ScopeID))
 		policyByScope[strings.ToLower(item.ScopeID)] = plan
 	}
 	operationsByAPI := map[string][]model.Operation{}
@@ -964,6 +968,7 @@ func (r *Runtime) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		}
 	}()
 	traceEvent(trace, "inbound", "")
+	state.Section = "inbound"
 	if err := policy.Execute(activePlan.Inbound, state); err != nil {
 		r.policyFailure(w, req, activePlan, state, err)
 		return
@@ -973,6 +978,7 @@ func (r *Runtime) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	traceEvent(trace, "backend", state.BackendURL)
+	state.Section = "backend"
 	if err := policy.Execute(activePlan.Backend, state); err != nil {
 		r.policyFailure(w, req, activePlan, state, err)
 		return
@@ -1027,6 +1033,7 @@ func (r *Runtime) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	defer response.Body.Close()
 	state.Response = response
 	traceEvent(trace, "outbound", "")
+	state.Section = "outbound"
 	if err := policy.Execute(activePlan.Outbound, state); err != nil {
 		r.policyFailure(w, req, activePlan, state, err)
 		return
@@ -1055,6 +1062,7 @@ func (r *Runtime) serveInjectedFault(w http.ResponseWriter, req *http.Request, p
 		response.StatusCode = http.StatusServiceUnavailable
 	}
 	state.Response = response
+	state.Section = "outbound"
 	if err := policy.Execute(plan.Outbound, state); err != nil {
 		r.policyFailure(w, req, plan, state, err)
 		return
@@ -1588,7 +1596,7 @@ func (r *Runtime) GetTrace(id string) (Trace, bool) {
 func (r *Runtime) policyFailure(w http.ResponseWriter, req *http.Request, plan policy.Plan, state *policy.State, cause error) {
 	state.LastError = cause
 	state.Response = &http.Response{Header: make(http.Header)}
-	if err := policy.Execute(plan.OnError, state); err == nil && state.Returned {
+	if err := func() error { state.Section = "on-error"; return policy.Execute(plan.OnError, state) }(); err == nil && state.Returned {
 		writePolicyResponse(w, state)
 		return
 	}
