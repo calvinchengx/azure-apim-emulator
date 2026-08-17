@@ -1,0 +1,13 @@
+{
+  "name": "azure-apim-emulator-mcp-witness",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "preinstall": "npx only-allow pnpm",
+    "test": "node witness.js"
+  },
+  "dependencies": {
+    "@azure/arm-apimanagement": "10.0.0",
+    "@modelcontextprotocol/sdk": "1.30.0"
+  }
+}

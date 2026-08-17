@@ -5198,11 +5198,18 @@ func splitAPIRevision(name string) (string, string) {
 	return name[:index], name[index+5:]
 }
 
-// isGraphQLAPIDocument reports whether an API payload declares apiType graphql.
+// isGraphQLAPIDocument reports whether an API payload declares the graphql type.
+//
+// Both spellings are accepted: `type` is the wire name Azure's contract uses
+// and what Microsoft's SDK sends, `apiType` is what raw ARM callers here have
+// written. Accepting only one silently ignores half the callers.
 func isGraphQLAPIDocument(document map[string]any) bool {
 	properties, _ := document["properties"].(map[string]any)
-	apiType, _ := properties["apiType"].(string)
-	return strings.EqualFold(apiType, "graphql")
+	declared, _ := properties["type"].(string)
+	if declared == "" {
+		declared, _ = properties["apiType"].(string)
+	}
+	return strings.EqualFold(declared, "graphql")
 }
 
 // isWSDLFormat reports whether an import format carries a WSDL document.
@@ -5210,15 +5217,20 @@ func isWSDLFormat(format string) bool {
 	return strings.EqualFold(format, "wsdl") || strings.EqualFold(format, "wsdl-link")
 }
 
-// markSOAPAPIType stamps apiType=soap on an imported WSDL API, which is what
+// markSOAPAPIType stamps the soap type on an imported WSDL API, which is what
 // Azure does and what puts the API on the gateway's SOAP path.
+//
+// Stamped as `type`, the name Azure's REST contract uses, so a caller reading
+// the API back with Microsoft's SDK sees the type it expects. Stamping the
+// emulator's older `apiType` spelling instead left an imported SOAP API
+// reporting no type at all to that SDK.
 func markSOAPAPIType(document map[string]any) {
 	properties, ok := document["properties"].(map[string]any)
 	if !ok {
 		properties = map[string]any{}
 		document["properties"] = properties
 	}
-	properties["apiType"] = "soap"
+	properties["type"] = "soap"
 }
 
 // wsdlOperations renders a WSDL's operations as APIM operations.

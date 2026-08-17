@@ -234,3 +234,18 @@ The emulator supports two modes:
 The public deployment/configuration protocol is characterized independently.
 Configuration backup, token rotation, fail-static behavior, gateway version
 capabilities, and unsupported-policy handling are first-class parity entries.
+
+## API type is read under two names
+
+Azure's REST contract carries an API's type as `properties.type`; Microsoft's
+own SDKs expose it client-side as `apiType` and serialize it to `type`. Raw ARM
+callers, and this emulator's WSDL import, have historically written `apiType`.
+
+`apiTypeOf` in `internal/gateway/mcp.go` reads `type` first and falls back to
+`apiType`, and every protocol family goes through it. Reading only `apiType` --
+which all of them did until an MCP witness first created a typed API through the
+official SDK -- means an API created by that SDK is stored, echoed back on GET
+looking perfectly correct, and then served as though it had no type at all. The
+round-trip is lossless and only the behaviour is missing, so there is no local
+symptom to investigate.
+

@@ -59,11 +59,7 @@ func graphQLSchemaFor(st *store.Store, api model.API) (*graphql.Schema, error) {
 	return nil, nil
 }
 
-func isGraphQLAPI(api model.API) bool {
-	properties, _ := api.Document["properties"].(map[string]any)
-	apiType, _ := properties["apiType"].(string)
-	return strings.EqualFold(apiType, graphQLAPIType)
-}
+func isGraphQLAPI(api model.API) bool { return strings.EqualFold(apiTypeOf(api), graphQLAPIType) }
 
 // serveGraphQL answers a request against a GraphQL API.
 //

@@ -17,11 +17,7 @@ import (
 // stamps it on any API imported from a WSDL.
 const soapAPIType = "soap"
 
-func isSOAPAPI(api model.API) bool {
-	properties, _ := api.Document["properties"].(map[string]any)
-	apiType, _ := properties["apiType"].(string)
-	return strings.EqualFold(apiType, soapAPIType)
-}
+func isSOAPAPI(api model.API) bool { return strings.EqualFold(apiTypeOf(api), soapAPIType) }
 
 // soapSchemaFor compiles the WSDL of a SOAP API.
 //

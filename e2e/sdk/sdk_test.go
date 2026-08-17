@@ -53,6 +53,7 @@ func TestOfficialManagementSDKs(t *testing.T) {
 		{"soap", "pnpm", []string{"test"}, filepath.Join(root, "e2e", "soap")},
 		{"credential", "pnpm", []string{"test"}, filepath.Join(root, "e2e", "credential")},
 		{"openai", "pnpm", []string{"test"}, filepath.Join(root, "e2e", "openai")},
+		{"mcp", "pnpm", []string{"test"}, filepath.Join(root, "e2e", "mcp")},
 		{"python", venvPython(root), []string{"witness.py"}, filepath.Join(root, "e2e", "python")},
 		{"dotnet", "dotnet", []string{"run", "--project", "Witness.csproj"}, filepath.Join(root, "e2e", "dotnet")},
 	}

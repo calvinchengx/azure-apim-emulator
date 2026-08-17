@@ -12,7 +12,7 @@ endif
 COMPOSE = docker compose -f compose.yaml
 
 .PHONY: build docs test test-coverage test-differential test-sdks setup-sdks \
-        setup-graphql test-graphql setup-grpc test-grpc setup-soap test-soap setup-credential test-credential setup-openai test-openai verify \
+        setup-graphql test-graphql setup-grpc test-grpc setup-soap test-soap setup-credential test-credential setup-openai test-openai setup-mcp test-mcp verify \
         check-inventory up down clean status doctor ps logs
 
 build:
@@ -74,6 +74,12 @@ setup-openai:
 
 test-openai:
 	APIM_RUN_EXTERNAL_SDK_TESTS=1 go test -count=1 -v -run 'TestOfficialManagementSDKs/openai' ./e2e/sdk
+
+setup-mcp:
+	pnpm install --frozen-lockfile
+
+test-mcp:
+	APIM_RUN_EXTERNAL_SDK_TESTS=1 go test -count=1 -v -run 'TestOfficialManagementSDKs/mcp' ./e2e/sdk
 
 docs:
 	pnpm --filter azure-apim-emulator-docs build

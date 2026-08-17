@@ -111,9 +111,14 @@ await arm(`${base}/apis/orders`, "PUT", {
   },
 });
 
-// The import must stamp apiType=soap and derive operations from the WSDL.
+// The import must stamp the API's type and derive operations from the WSDL.
+//
+// `properties.type` is the name Azure's REST contract uses and the one
+// Microsoft's SDKs read; this emulator used to stamp `apiType`, which meant an
+// imported SOAP API reported no type at all to those SDKs while a raw ARM GET
+// like this one still looked right.
 const api = await arm(`${base}/apis/orders`, "GET");
-assert.equal(api.properties.apiType, "soap", "a WSDL import must mark the API as SOAP");
+assert.equal(api.properties.type, "soap", "a WSDL import must mark the API as SOAP");
 const operations = await arm(`${base}/apis/orders/operations`, "GET");
 const names = operations.value.map((o) => o.properties.displayName).sort();
 assert.deepEqual(names, ["GetOrder"], `operations derived from the WSDL = ${JSON.stringify(names)}`);
