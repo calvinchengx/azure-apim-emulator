@@ -223,10 +223,12 @@
     ],
     "AI gateway and MCP": [
       "ci:openai-witness",
+      "ci:mcp-witness",
       "go:TestLLMTokenLimitCountsStreamedAnswers",
-      "go:TestLLMTokenLimitRefusesTheRequestAfterTheBudgetIsSpent",
       "go:TestLLMTokenBudgetsAreIndependentPerCounterKey",
-      "go:TestEstimateIsAnApproximation"
+      "go:TestAPITypeIsReadUnderBothSpellings",
+      "go:TestMCPToolCallReachesTheOperationsBackend",
+      "go:TestMCPBackendFailureIsAToolError"
     ]
   }
 }

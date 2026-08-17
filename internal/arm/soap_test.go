@@ -32,7 +32,11 @@ func TestWSDLImportDerivesOperationsAndMarksTheAPI(t *testing.T) {
 	assertStatus(t, handler, http.MethodPut, basePath+"/apis/orders"+apiQuery, body, http.StatusCreated)
 
 	got := request(t, handler, http.MethodGet, basePath+"/apis/orders"+apiQuery, "")
-	if !strings.Contains(got.Body.String(), `"apiType":"soap"`) {
+	// `type`, not `apiType`: that is the name Azure's REST contract uses and the
+	// one Microsoft's SDK reads. Stamping the other spelling left an imported
+	// SOAP API reporting no type at all to that SDK, while the GET still looked
+	// correct to anyone reading raw JSON.
+	if !strings.Contains(got.Body.String(), `"type":"soap"`) {
 		t.Fatalf("a WSDL import must mark the API as SOAP: %s", got.Body.String())
 	}
 	// The display name comes from the WSDL's service when the caller omits one.
@@ -88,7 +92,7 @@ func TestSOAPImportHelpers(t *testing.T) {
 	document := map[string]any{"properties": "not an object"}
 	markSOAPAPIType(document)
 	properties, _ := document["properties"].(map[string]any)
-	if properties["apiType"] != "soap" {
+	if properties["type"] != "soap" {
 		t.Fatalf("markSOAPAPIType = %v", document)
 	}
 }

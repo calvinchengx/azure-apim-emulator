@@ -134,6 +134,11 @@ explicit external-adapter test fixture.
   model's own `usage` object and approximate when `estimate-prompt-tokens` forces
   a decision before the model has answered.
 - MCP-related import, exposure, governance, authentication, policy, and portal behavior.
+  Exposure is implemented: an API declared `type: mcp` is published as an MCP
+  server over the Streamable HTTP transport and its operations are its tools,
+  with schemas derived from the parameters they already declare. Passthrough of
+  an external MCP server, resources and prompts, per-tool policy scoping, and the
+  older SSE transport remain open.
 - Deterministic fake providers plus opt-in Azure/OpenAI/provider differential suites.
 - Promote supported preview contracts only after stable tracks remain green.
 

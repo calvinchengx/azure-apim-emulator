@@ -42,11 +42,7 @@ func isGRPCRequest(req *http.Request) bool {
 	return strings.HasPrefix(req.Header.Get("Content-Type"), "application/grpc")
 }
 
-func isGRPCAPI(api model.API) bool {
-	properties, _ := api.Document["properties"].(map[string]any)
-	apiType, _ := properties["apiType"].(string)
-	return strings.EqualFold(apiType, grpcAPIType)
-}
+func isGRPCAPI(api model.API) bool { return strings.EqualFold(apiTypeOf(api), grpcAPIType) }
 
 // grpcSchemaFor compiles the protobuf schema of a gRPC API, and returns nil for
 // anything else. Same pairing rule as GraphQL: an apiType with no schema
