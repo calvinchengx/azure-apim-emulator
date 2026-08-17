@@ -12,7 +12,7 @@
     "  ci:job-id    a CI job name in .github/workflows; asserted to still exist",
     "",
     "'partial' and 'planned' rows are deliberately NOT required to carry a witness",
-    "— they claim nothing yet. The checker only holds the green rows to account.",
+    "\u2014 they claim nothing yet. The checker only holds the green rows to account.",
     "",
     "Azure differential evidence is a THIRD tier this family has nowhere else: it",
     "is prepared (e2e/differential) but pending an authorized live run, so no row",
@@ -250,6 +250,10 @@
       "go:TestSKUCatalogues",
       "go:TestTierEnforcementIsOptIn",
       "go:TestTierEnforcementRefusesGatewaysOnALesserTier"
+    ],
+    "stable `2024-05-01` operation inventory": [
+      "ci:operation-inventory",
+      "go:TestOperationInventoryCoverage"
     ]
   }
 }

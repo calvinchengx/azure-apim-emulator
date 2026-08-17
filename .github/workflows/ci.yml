@@ -43,6 +43,31 @@ jobs:
           python-version: "3.12"
       - run: ./scripts/check_witnesses.py --strict
       - run: ./scripts/check_policy_inventory.py --strict
+      # Binds the parity ledger's operation-surface figures to the committed
+      # probe results. The probe itself runs in the `go` job, since it needs a
+      # running emulator; this only checks that nothing drifted from it.
+      - run: ./scripts/check_operation_inventory.py --strict
+
+  operation-inventory:
+    name: Published operation surface (every 2024-05-01 operation probed)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: 1.25.11
+          cache: true
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      # Probes all 611 published operations against a fresh service each, and
+      # fails if the committed report no longer matches what the emulator
+      # serves. Implementing an operation is SUPPOSED to fail this until the
+      # report is regenerated: that diff is how the surface changing stays
+      # visible instead of being absorbed into a number nobody rechecks.
+      - run: APIM_RUN_OPERATION_INVENTORY=1 go test ./e2e/inventory/... -count=1 -timeout 20m
+      - run: ./scripts/check_operation_inventory.py --strict
 
   sdk-witnesses:
     runs-on: ubuntu-latest

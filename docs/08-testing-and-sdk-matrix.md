@@ -119,6 +119,54 @@ arbitrary response differences.
 
 These routes are local tooling and never impersonate Azure APIs.
 
+## The published operation surface
+
+Every other coverage number in this project is a fraction of a surface we chose
+to describe. This one is a fraction of the surface Microsoft publishes, which is
+why it is the only figure that can answer "how much is left".
+
+`scripts/build_operation_inventory.py` enumerates every operation in the stable
+`2024-05-01` specification from a PINNED commit, into
+`docs/generated/operations-2024-05-01.json`. Pinned rather than tracked, because
+a denominator that moves on its own converts a regression into a rounding
+difference. `e2e/inventory` then probes all of them and writes
+`docs/generated/operation-coverage-2024-05-01.json`, which is committed so that
+a change in what the emulator serves arrives as a reviewable diff.
+
+Each operation gets one of three verdicts, and only two of them are
+conclusions:
+
+- `routed` — the operation answered something other than 404. That proves it
+  exists and says nothing about whether it is right. It is a floor under the
+  surface, not a parity claim.
+- `absent` — a 404 that a missing resource cannot explain, either because the
+  probe created what it asked for first, or because Microsoft declares a create
+  for that path and the emulator 404s that too.
+- `unmeasured` — a 404 the harness cannot attribute. Recorded rather than
+  rounded into either column, because a 404 from an unimplemented route and a
+  404 from a resource that was never there are the same bytes.
+
+The probe is gated behind `APIM_RUN_OPERATION_INVENTORY=1` (`make
+test-operation-inventory`) and runs in its own CI job. A fresh service per
+operation means 611 emulator starts, which is well past Go's ten-minute default
+test timeout under CI contention, so `make verify` does not pay for it.
+
+Two properties of the harness matter more than its numbers:
+
+**Every operation is probed against a FRESH service.** The first version shared
+one emulator across the sweep, and `ApiManagementService_Delete` answered 204
+partway through: it deleted the service, and every operation ordered after it
+answered 404 and was recorded as absent. The report looked precise and was an
+artefact of its own side effects. It understated routed coverage by more than
+half. Probing is inherently destructive, so isolation is correctness here, not
+tidiness.
+
+**A failed setup downgrades a verdict instead of hardening it.** When the
+harness cannot create what an operation addresses, the operation becomes
+`unmeasured`, never `absent`. A harness whose accuracy silently depended on
+every seed body staying valid would start reporting absence the day a shape
+changed, and it would look like a regression in the emulator.
+
 ## Coverage gates
 
 - 100 percent aggregate statement coverage for committed Go code
