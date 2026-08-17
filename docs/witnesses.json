@@ -229,6 +229,13 @@
       "go:TestAPITypeIsReadUnderBothSpellings",
       "go:TestMCPToolCallReachesTheOperationsBackend",
       "go:TestMCPBackendFailureIsAToolError"
+    ],
+    "networking/private/custom domains": [
+      "ci:sdk-witnesses",
+      "go:TestPrivateEndpointConnectionApprovalWorkflow",
+      "go:TestPrivateLinkResources",
+      "go:TestNetworkStatus",
+      "go:TestOutboundNetworkDependencies"
     ]
   }
 }

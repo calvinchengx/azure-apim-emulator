@@ -236,6 +236,15 @@ CREATE TABLE IF NOT EXISTS gateway_certificate_authorities (
   name TEXT NOT NULL, is_trusted INTEGER NOT NULL,
   document_json TEXT NOT NULL, etag TEXT NOT NULL
 );
+-- Private endpoint connections parent to services(id), not scopes(id): Azure
+-- has no workspace-scoped private endpoint, and the family is refused under a
+-- workspace by serviceOnlyFamilies.
+CREATE TABLE IF NOT EXISTS private_endpoint_connections (
+  id TEXT PRIMARY KEY, service_id TEXT NOT NULL REFERENCES services(id) ON DELETE CASCADE,
+  name TEXT NOT NULL, status TEXT NOT NULL, description TEXT NOT NULL,
+  actions_required TEXT NOT NULL, endpoint_id TEXT NOT NULL,
+  document_json TEXT NOT NULL, etag TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS tags (
   id TEXT PRIMARY KEY, service_id TEXT NOT NULL REFERENCES scopes(id) ON DELETE CASCADE,
   name TEXT NOT NULL, display_name TEXT NOT NULL, etag TEXT NOT NULL

@@ -569,3 +569,30 @@ type GatewayCertificateAuthority struct {
 func (v GatewayCertificateAuthority) ID() string {
 	return v.GatewayID + "/certificateAuthorities/" + v.Name
 }
+
+// PrivateEndpointConnection is one private-link connection request against a
+// service, and the decision taken on it.
+//
+// The resource is a HANDSHAKE between two owners: a consumer creates the
+// endpoint in their own network and the service owner approves or rejects it.
+// That is why the connection state, not the endpoint, is what this resource is
+// really about.
+type PrivateEndpointConnection struct {
+	ServiceID string
+	Name      string
+	// Status is Pending, Approved or Rejected. A connection only carries
+	// traffic once approved, which is the whole point of the workflow.
+	Status          string
+	Description     string
+	ActionsRequired string
+	// EndpointID is the consumer's Microsoft.Network/privateEndpoints resource.
+	// It lives in a different subscription and this emulator never reaches it.
+	EndpointID string
+	Document   map[string]any
+	ETag       string
+}
+
+// ID returns the private-endpoint-connection ARM resource ID.
+func (v PrivateEndpointConnection) ID() string {
+	return v.ServiceID + "/privateEndpointConnections/" + v.Name
+}

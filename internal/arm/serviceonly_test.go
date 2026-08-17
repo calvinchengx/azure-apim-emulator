@@ -28,6 +28,7 @@ func TestServiceOnlyFamiliesAreRefusedAtWorkspaceScope(t *testing.T) {
 		{"documentations", `{"properties":{"title":"t","content":"c"}}`},
 		{"gateways", `{"properties":{"locationData":{"name":"dc"}}}`},
 		{"users", `{"properties":{"email":"a@b.test","firstName":"A","lastName":"B"}}`},
+		{"privateEndpointConnections", `{"properties":{"privateLinkServiceConnectionState":{"status":"Approved"}}}`},
 	}
 	for _, family := range refused {
 		collection := basePath + "/workspaces/team/" + family.family
@@ -47,6 +48,12 @@ func TestServiceOnlyFamiliesAreRefusedAtWorkspaceScope(t *testing.T) {
 				t.Fatalf("a refused %s PUT still wrote something: %s => %s", family.family, listing, body)
 			}
 		}
+	}
+
+	// The read-only networking surfaces are refused the same way. They take no
+	// PUT, so only their GET form is meaningful here.
+	for _, family := range []string{"privateLinkResources", "networkstatus", "outboundNetworkDependenciesEndpoints", "locations"} {
+		assertStatus(t, handler, http.MethodGet, basePath+"/workspaces/team/"+family+apiQuery, "", http.StatusNotFound)
 	}
 
 	// The control. These families DO have a Workspace* operation group in the
@@ -94,6 +101,10 @@ func TestServiceOnlyFamilyListIsExact(t *testing.T) {
 		"caches": true, "identityproviders": true, "openidconnectproviders": true,
 		"authorizationproviders": true, "authorizationservers": true,
 		"documentations": true, "gateways": true, "users": true,
+		// Networking belongs to the service, never to a workspace inside it.
+		"privateendpointconnections": true, "privatelinkresources": true,
+		"networkstatus": true, "outboundnetworkdependenciesendpoints": true,
+		"locations": true,
 	}
 	if len(serviceOnlyFamilies) != len(want) {
 		t.Fatalf("serviceOnlyFamilies = %v, want %v", serviceOnlyFamilies, want)
