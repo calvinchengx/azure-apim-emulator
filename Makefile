@@ -86,6 +86,7 @@ docs:
 
 check-inventory:
 	python3 scripts/check_policy_inventory.py --strict
+	python3 scripts/check_operation_inventory.py --strict
 
 verify: build test test-coverage
 	go vet ./...
