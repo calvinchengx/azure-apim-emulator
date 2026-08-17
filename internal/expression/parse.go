@@ -3,6 +3,7 @@ package expression
 import (
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 )
 
@@ -99,6 +100,15 @@ func (p *parser) peek() Token {
 		return Token{Kind: TokenEOF}
 	}
 	return p.tokens[p.pos]
+}
+
+// peekAt looks ahead without consuming, which the cast check needs: deciding
+// `(Type)` against `(expr)` requires seeing the token after the identifier.
+func (p *parser) peekAt(offset int) Token {
+	if p.pos+offset >= len(p.tokens) {
+		return Token{Kind: TokenEOF}
+	}
+	return p.tokens[p.pos+offset]
 }
 
 func (p *parser) take() Token {
@@ -404,6 +414,24 @@ func (p *parser) atom() (Expr, error) {
 	case TokenIdent:
 		return identExpr{name: token.Lexeme}, nil
 	case TokenLParen:
+		// A C# CAST, `(Type)expr`, which APIM's documented policies use
+		// constantly: `(string)`, `(int)`, `(JObject)`, and for the credential
+		// manager `((Authorization)context.Variables["x"]).AccessToken`.
+		//
+		// `(a)(b)` and `(a)` are genuinely ambiguous between a cast and a
+		// parenthesised expression, and resolving that needs type information a
+		// policy expression does not carry. Recognising only a KNOWN type name
+		// removes the ambiguity: `(Authorization)` is always a cast, `(total)`
+		// is always a parenthesised identifier.
+		if p.peek().Kind == TokenIdent && castTypes[p.peek().Lexeme] && p.peekAt(1).Kind == TokenRParen {
+			castType := p.take().Lexeme
+			p.take() // the ')'
+			operand, err := p.unary()
+			if err != nil {
+				return nil, err
+			}
+			return castExpr{typeName: castType, operand: operand}, nil
+		}
 		expr, err := p.ternary()
 		if err != nil {
 			return nil, err
@@ -636,4 +664,92 @@ func remainder(left, right float64) float64 {
 		return math.NaN()
 	}
 	return left - float64(int64(left/right))*right
+}
+
+// castTypes are the type names a policy expression may cast to. An allowlist
+// rather than "any identifier", because that is what makes `(Type)x` decidable
+// against a parenthesised expression without type information.
+var castTypes = map[string]bool{
+	"string": true, "int": true, "long": true, "bool": true, "double": true,
+	"JObject": true, "JArray": true, "JValue": true, "JToken": true,
+	"IResponse": true, "IRequest": true, "Authorization": true,
+}
+
+// castExpr evaluates its operand and converts where the conversion is
+// meaningful.
+//
+// A cast to an object type is a no-op: the emulator's value model already
+// carries the object, and refusing would reject the exact expressions Azure's
+// documentation tells people to write. A cast to a scalar DOES convert, because
+// `(int)context.Variables["n"]` is how a policy turns a stored string into a
+// number and returning the string would make arithmetic on it wrong.
+type castExpr struct {
+	typeName string
+	operand  Expr
+}
+
+func (e castExpr) eval(env *Env) (Value, error) {
+	value, err := e.operand.eval(env)
+	if err != nil {
+		return Null(), err
+	}
+	switch e.typeName {
+	case "string":
+		if value.IsNull() {
+			return String(""), nil
+		}
+		return String(value.String()), nil
+	case "int", "long":
+		number, ok := castNumber(value)
+		if !ok {
+			return Null(), fmt.Errorf("cannot cast %v to %s", value.Kind(), e.typeName)
+		}
+		return Int(int64(number)), nil
+	case "double":
+		number, ok := castNumber(value)
+		if !ok {
+			return Null(), fmt.Errorf("cannot cast %v to double", value.Kind())
+		}
+		return Double(number), nil
+	case "bool":
+		if value.kind == KindBool {
+			return value, nil
+		}
+		if value.kind == KindString {
+			parsed, err := strconv.ParseBool(value.str)
+			if err != nil {
+				return Null(), fmt.Errorf("cannot cast %q to bool", value.str)
+			}
+			return Bool(parsed), nil
+		}
+		return Null(), fmt.Errorf("cannot cast %v to bool", value.Kind())
+	default:
+		// An object cast asserts the shape rather than converting it.
+		return value, nil
+	}
+}
+
+// castNumber converts for a numeric cast, INCLUDING from a string.
+//
+// This is a deliberate, documented divergence from C#, where `(int)` on a
+// boxed string throws and you would write `int.Parse`. It exists because this
+// emulator's `context.Variables` is map[string]string, so every variable is a
+// string no matter what produced it, and a strict cast would make
+// `(int)context.Variables["x"]` fail for every policy that Azure accepts.
+//
+// The real gap is the string-only variable model, not the cast. Refusing here
+// would not surface that gap, it would just make documented policies
+// unrunnable; converting makes them run and leaves the gap where it belongs.
+func castNumber(value Value) (float64, bool) {
+	if number, ok := value.AsNumber(); ok {
+		return number, true
+	}
+	if value.kind != KindString {
+		return 0, false
+	}
+	number, err := strconv.ParseFloat(strings.TrimSpace(value.str), 64)
+	if err != nil {
+		return 0, false
+	}
+	return number, true
 }
