@@ -195,3 +195,153 @@ console.log("mcp witness: a missing required argument never reached the backend"
 
 await mcp.close();
 backend.close();
+
+// ---------------------------------------------------------------------------
+// MCP passthrough: APIM in front of an MCP server somebody else runs.
+//
+// The other half of the feature, and the assertion is different in kind. For an
+// exposed API the emulator SYNTHESISES the tools, so the witness checks that
+// they match the operations. Here the tools belong to an upstream server the
+// emulator never inspects, so what is checked is that a real client and a real
+// server complete a session THROUGH the gateway without either noticing it.
+//
+// A REAL MCP server, from the same reference implementation as the client. That
+// is the point: a hand-rolled upstream would only prove the proxy agrees with my
+// reading of the protocol, which is the reading that produced the proxy.
+const { McpServer } = await import("@modelcontextprotocol/sdk/server/mcp.js");
+const { StreamableHTTPServerTransport } = await import("@modelcontextprotocol/sdk/server/streamableHttp.js");
+const { z } = await import("zod");
+
+const upstream = new McpServer({ name: "upstream-orders", version: "2.0.0" });
+upstream.tool(
+  "upstream-echo",
+  "A tool the gateway has never heard of.",
+  { text: z.string() },
+  async ({ text }) => ({ content: [{ type: "text", text: `upstream saw: ${text}` }] }),
+);
+
+const upstreamTransport = new StreamableHTTPServerTransport({ sessionIdGenerator: () => "upstream-session" });
+await upstream.connect(upstreamTransport);
+
+let upstreamCalls = 0;
+const upstreamHeaders = [];
+const upstreamServer = createServer((request, response) => {
+  upstreamCalls += 1;
+  upstreamHeaders.push(request.headers);
+  let body = "";
+  request.on("data", (chunk) => (body += chunk));
+  request.on("end", () => {
+    let parsed;
+    try {
+      parsed = body ? JSON.parse(body) : undefined;
+    } catch {
+      parsed = undefined;
+    }
+    upstreamTransport.handleRequest(request, response, parsed);
+  });
+});
+await new Promise((resolve) => upstreamServer.listen(0, "127.0.0.1", resolve));
+const upstreamURL = `http://127.0.0.1:${upstreamServer.address().port}/mcp`;
+
+// An MCP API in passthrough mode. It has no operations, because its tools are
+// not its own.
+//
+// Written through raw ARM rather than the SDK, because `mcpMode` is THIS
+// EMULATOR'S OWN property: the preview ARM contract for MCP servers has not
+// been captured here, so Microsoft's client has no field for it and
+// docs/parity.md says as much. Everything else on the API is the SDK's own
+// model, and the API is read back through the SDK below.
+const armBase = `/subscriptions/${process.env.APIM_SUBSCRIPTION_ID}/resourceGroups/${resourceGroup}` +
+  `/providers/Microsoft.ApiManagement/service/${serviceName}`;
+const armPut = async (path, body) => {
+  const response = await fetch(`${endpoint}${armBase}${path}?api-version=2024-05-01`, {
+    method: "PUT",
+    headers: { "content-type": "application/json", authorization: "Bearer sdk-token" },
+    body: JSON.stringify(body),
+  });
+  if (response.status >= 400) {
+    throw new Error(`PUT ${path} -> ${response.status} ${await response.text()}`);
+  }
+  return response.json();
+};
+
+await armPut("/apis/orders-proxy", {
+  properties: {
+    displayName: "Orders proxy",
+    path: "orders-proxy",
+    serviceUrl: upstreamURL,
+    protocols: ["https"],
+    subscriptionRequired: false,
+    type: "mcp",
+    mcpMode: "passthrough",
+  },
+});
+// A policy in front of the proxy, because the reason to put APIM here at all is
+// that policies still run.
+await armPut("/apis/orders-proxy/policies/policy", {
+  properties: {
+    format: "rawxml",
+    value: `<policies><inbound><base />
+      <set-header name="X-Through-Apim" exists-action="override"><value>yes</value></set-header>
+    </inbound><backend><forward-request /></backend><outbound><base /></outbound><on-error><base /></on-error></policies>`,
+  },
+});
+
+// Read back through Microsoft's client, so the resource is still one the SDK
+// can see even though one of its properties is ours.
+const proxyApi = await client.api.get(resourceGroup, serviceName, "orders-proxy");
+if (proxyApi.apiType !== "mcp" || proxyApi.path !== "orders-proxy") {
+  throw new Error(`proxy API = ${JSON.stringify({ apiType: proxyApi.apiType, path: proxyApi.path })}`);
+}
+
+const proxied = new Client({ name: "apim-emulator-passthrough-witness", version: "1.0.0" });
+await proxied.connect(new StreamableHTTPClientTransport(new URL(`${gatewayEndpoint}/orders-proxy/mcp`)));
+// The handshake completing at all is the assertion: the SDK validates the
+// upstream server's protocolVersion and capabilities, and the session id it was
+// given has to survive the round trip or nothing after initialize is accepted.
+console.log("mcp witness: a session was established through the gateway to an upstream server");
+
+const upstreamTools = (await proxied.listTools()).tools;
+if (upstreamTools.length !== 1 || upstreamTools[0].name !== "upstream-echo") {
+  throw new Error(`proxied tools = ${JSON.stringify(upstreamTools.map((t) => t.name))}`);
+}
+// The tool is the UPSTREAM server's, described by it. The gateway contributed
+// nothing to this and could not have: it never saw a tool list of its own.
+if (upstreamTools[0].description !== "A tool the gateway has never heard of.") {
+  throw new Error(`proxied description = ${upstreamTools[0].description}`);
+}
+
+const answered = await proxied.callTool({ name: "upstream-echo", arguments: { text: "hello" } });
+if (answered.content?.[0]?.text !== "upstream saw: hello") {
+  throw new Error(`proxied call = ${JSON.stringify(answered.content)}`);
+}
+if (upstreamCalls === 0) {
+  throw new Error("the upstream server was never called");
+}
+console.log("mcp witness: tools and results come from the upstream server, unaltered");
+
+// The proxy is not a tunnel: APIM policies still run, which is the whole reason
+// to put it in front of an MCP server. Asserted on what the UPSTREAM SAW rather
+// than on a status code, because a header the policy added is direct evidence
+// the request went through the policy pipeline.
+if (!upstreamHeaders.some((headers) => headers["x-through-apim"] === "yes")) {
+  throw new Error("the inbound policy did not run in front of the proxied server");
+}
+console.log("mcp witness: policies run in front of a proxied MCP server");
+
+// And the proxy does not soften the upstream's own semantics. A stateful MCP
+// server refuses a request carrying no session, and that refusal has to reach
+// the caller as the upstream issued it -- a gateway that translated it into
+// something friendlier would hide a real protocol error.
+const sessionless = await fetch(`${gatewayEndpoint}/orders-proxy/mcp`, {
+  method: "POST",
+  headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream" },
+  body: JSON.stringify({ jsonrpc: "2.0", id: 99, method: "ping" }),
+});
+if (sessionless.status !== 400) {
+  throw new Error(`a session-less request through the proxy = ${sessionless.status}, want the upstream's own 400`);
+}
+console.log("mcp witness: the upstream's refusal reaches the caller unaltered");
+
+await proxied.close();
+upstreamServer.close();

@@ -109,6 +109,10 @@ type Route struct {
 	// MCP is the tool surface of an API published as an MCP server, nil for
 	// every other API type. Its tools are this API's own operations.
 	MCP *mcp.Schema
+	// MCPPassthrough marks an MCP API that proxies an upstream server instead
+	// of synthesising one. Its tools belong to that server and are never seen
+	// here, which is why the two modes cannot share a code path.
+	MCPPassthrough bool
 	// SOAP is the compiled WSDL of a SOAP API, nil for every other API type.
 	SOAP *soapc.Schema
 	// Resolvers make the API SYNTHETIC: present means fields are produced by
@@ -577,6 +581,7 @@ func (r *Runtime) Activate(st *store.Store, strict bool) error {
 			grpcSchema = nil
 		}
 		mcpSchema := mcpSchemaFor(api, operationList)
+		mcpPassthrough := mcpSchema != nil && isMCPPassthrough(api.Document)
 		resolvers, err := graphQLResolversFor(st, api, schema)
 		if err != nil {
 			if strict {
@@ -584,7 +589,7 @@ func (r *Runtime) Activate(st *store.Store, strict bool) error {
 			}
 			resolvers = nil
 		}
-		service.Routes = append(service.Routes, &Route{API: api, VersionSet: versionSet, Operations: operationList, OperationPlans: operationPlans, SubscriptionPlans: subscriptionPlans, Plan: plan, AcceptedKeys: keysByAPI[strings.ToLower(api.ID())], Diagnostics: diagnostics[strings.ToLower(api.ID())], GraphQL: schema, Resolvers: resolvers, GRPC: grpcSchema, SOAP: soapSchema, MCP: mcpSchema})
+		service.Routes = append(service.Routes, &Route{API: api, VersionSet: versionSet, Operations: operationList, OperationPlans: operationPlans, SubscriptionPlans: subscriptionPlans, Plan: plan, AcceptedKeys: keysByAPI[strings.ToLower(api.ID())], Diagnostics: diagnostics[strings.ToLower(api.ID())], GraphQL: schema, Resolvers: resolvers, GRPC: grpcSchema, SOAP: soapSchema, MCP: mcpSchema, MCPPassthrough: mcpPassthrough})
 	}
 	for _, service := range snapshot.Services {
 		sort.SliceStable(service.Routes, func(i, j int) bool { return len(service.Routes[i].API.Path) > len(service.Routes[j].API.Path) })
@@ -881,6 +886,10 @@ func (r *Runtime) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 	if route.GRPC != nil && isGRPCRequest(req) {
 		r.serveGRPC(w, req, service, route, state, activePlan)
+		return
+	}
+	if mcpPassthroughRequest(route, relative) {
+		r.serveMCPPassthrough(w, req, service, state, activePlan)
 		return
 	}
 	if route.MCP != nil && isMCPRequest(relative) {

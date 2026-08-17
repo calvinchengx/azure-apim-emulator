@@ -228,7 +228,10 @@
       "go:TestLLMTokenBudgetsAreIndependentPerCounterKey",
       "go:TestAPITypeIsReadUnderBothSpellings",
       "go:TestMCPToolCallReachesTheOperationsBackend",
-      "go:TestMCPBackendFailureIsAToolError"
+      "go:TestMCPBackendFailureIsAToolError",
+      "go:TestMCPPassthroughForwardsEveryMessage",
+      "go:TestMCPPassthroughStreamsAnEventStream",
+      "go:TestMCPPassthroughRunsPolicies"
     ],
     "networking/private/custom domains": [
       "ci:sdk-witnesses",
