@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"sort"
 	"strings"
 
 	"github.com/calvinchengx/azure-apim-emulator/internal/grpcapi"
@@ -210,7 +211,17 @@ func trailerNames(response *http.Response) []string {
 			add(name)
 		}
 	}
+	// SORTED, because ranging a map is randomised in Go and this list becomes
+	// the wire's Trailer header. The set is what matters to a client, but
+	// emitting it in a different order on every response is a difference
+	// callers can see, and it made a test that read only the first announced
+	// name fail roughly one run in ten.
+	declared := make([]string, 0, len(response.Trailer))
 	for name := range response.Trailer {
+		declared = append(declared, name)
+	}
+	sort.Strings(declared)
+	for _, name := range declared {
 		add(name)
 	}
 	// grpc-status is what carries success or failure. Announcing it even when

@@ -130,8 +130,14 @@ func TestGRPCForwardsTrailersAndStatus(t *testing.T) {
 	if got := recorder.Header().Get(http.TrailerPrefix + "Grpc-Message"); got != "no such order" {
 		t.Fatalf("Grpc-Message trailer = %q", got)
 	}
-	if !strings.Contains(recorder.Header().Get("Trailer"), "Grpc-Status") {
-		t.Fatalf("trailers must be announced before the body, got %q", recorder.Header().Get("Trailer"))
+	// Every announced value, not Get(), which returns only the FIRST. The
+	// announcement is a set; asserting through Get() made this test depend on
+	// which name happened to be announced first.
+	announced := strings.Join(recorder.Header().Values("Trailer"), ",")
+	for _, want := range []string{"Grpc-Status", "Grpc-Message"} {
+		if !strings.Contains(announced, want) {
+			t.Fatalf("%s must be announced before the body, got %q", want, announced)
+		}
 	}
 	if body := recorder.Body.String(); body != "body" {
 		t.Fatalf("body = %q", body)
