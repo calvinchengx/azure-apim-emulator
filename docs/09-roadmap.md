@@ -78,8 +78,15 @@ same underlying APIM resources as the gateway.
 
 - Workspace resource hierarchy, uniqueness, references, RBAC, deletion, and service governance.
 - Dedicated/shared/default workspace gateway association and runtime isolation.
+  Self-hosted gateway registration, API association, hostnames and per-gateway
+  certificate-authority trust are implemented, with hostname-routed runtime
+  isolation and documented key/token issuance; workspace gateways (the top-level
+  `Microsoft.ApiManagement/gateways` resource) remain open.
 - Separate-process self-hosted gateways, configuration sync, auth/token rotation,
   backup, last-known-good, heartbeat, metrics, disconnected and fail-static behavior.
+  The configuration-sync payload is proprietary and uncaptured, so it is not
+  emulated and no real self-hosted gateway container has connected to this
+  emulator.
 - Gateway capability/version matrix and Arc-visible management contracts.
 - Federated workspace diagnostics and unified developer portal discovery.
 

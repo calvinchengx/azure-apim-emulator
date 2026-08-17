@@ -208,6 +208,34 @@ CREATE TABLE IF NOT EXISTS authorization_access_policies (
   name TEXT NOT NULL, tenant_id TEXT NOT NULL, object_id TEXT NOT NULL,
   document_json TEXT NOT NULL, etag TEXT NOT NULL
 );
+-- Self-hosted gateways parent to services(id), NOT scopes(id), and that is
+-- deliberate: Azure has no service/{svc}/workspaces/{ws}/gateways. A workspace
+-- gets a gateway through the separate top-level Microsoft.ApiManagement/gateways
+-- resource, so pointing this at scopes(id) would make the emulator accept a URL
+-- Azure answers 404 to.
+CREATE TABLE IF NOT EXISTS gateways (
+  id TEXT PRIMARY KEY, service_id TEXT NOT NULL REFERENCES services(id) ON DELETE CASCADE,
+  name TEXT NOT NULL, location_name TEXT NOT NULL, description TEXT NOT NULL,
+  primary_key TEXT NOT NULL, secondary_key TEXT NOT NULL,
+  document_json TEXT NOT NULL, etag TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS gateway_apis (
+  gateway_id TEXT NOT NULL REFERENCES gateways(id) ON DELETE CASCADE,
+  api_id TEXT NOT NULL,
+  PRIMARY KEY (gateway_id, api_id)
+);
+CREATE TABLE IF NOT EXISTS gateway_hostname_configurations (
+  id TEXT PRIMARY KEY, gateway_id TEXT NOT NULL REFERENCES gateways(id) ON DELETE CASCADE,
+  name TEXT NOT NULL, hostname TEXT NOT NULL, certificate_id TEXT NOT NULL,
+  negotiate_client_certificate INTEGER NOT NULL, tls10_enabled INTEGER NOT NULL,
+  tls11_enabled INTEGER NOT NULL, http2_enabled INTEGER NOT NULL,
+  document_json TEXT NOT NULL, etag TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS gateway_certificate_authorities (
+  id TEXT PRIMARY KEY, gateway_id TEXT NOT NULL REFERENCES gateways(id) ON DELETE CASCADE,
+  name TEXT NOT NULL, is_trusted INTEGER NOT NULL,
+  document_json TEXT NOT NULL, etag TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS tags (
   id TEXT PRIMARY KEY, service_id TEXT NOT NULL REFERENCES scopes(id) ON DELETE CASCADE,
   name TEXT NOT NULL, display_name TEXT NOT NULL, etag TEXT NOT NULL

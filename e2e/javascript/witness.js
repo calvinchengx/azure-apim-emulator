@@ -284,3 +284,209 @@ if (fetched.scope !== workspaceScope) {
 await authorization.roleAssignments.delete(workspaceScope, assignmentName);
 await client.workspace.delete(resourceGroup, serviceName, "rbac-team", "*");
 console.log("javascript witness: role assignments created, listed and deleted through Microsoft.Authorization");
+
+// ---------------------------------------------------------------------------
+// Self-hosted gateways, driven by Microsoft's own SDK.
+//
+// The SDK exposes four separate operation groups for this one resource tree --
+// gateway, gatewayApi, gatewayHostnameConfiguration, gatewayCertificateAuthority
+// -- so the emulator has to answer all four, at the URLs the SDK composes.
+const { createHmac } = await import("node:crypto");
+
+const gatewayId = "edge-witness";
+const registered = await client.gateway.createOrUpdate(resourceGroup, serviceName, gatewayId, {
+  locationData: { name: "contoso-dc", city: "Wellington", countryOrRegion: "NZ" },
+  description: "self-hosted witness",
+});
+if (registered.name !== gatewayId || registered.locationData.city !== "Wellington") {
+  throw new Error(`gateway did not round-trip: ${JSON.stringify(registered)}`);
+}
+if (registered.primaryKey || registered.secondaryKey) {
+  throw new Error("a gateway key was returned by createOrUpdate");
+}
+
+const readBack = await client.gateway.get(resourceGroup, serviceName, gatewayId);
+if (readBack.primaryKey || readBack.secondaryKey) {
+  throw new Error("a gateway key was returned by get");
+}
+
+const gatewayKeys = await client.gateway.listKeys(resourceGroup, serviceName, gatewayId);
+if (!gatewayKeys.primary || !gatewayKeys.secondary || gatewayKeys.primary === gatewayKeys.secondary) {
+  throw new Error(`unexpected gateway keys: ${JSON.stringify(gatewayKeys)}`);
+}
+
+// The token is checked by RECOMPUTING it here, from the key listKeys handed
+// back, rather than by comparing it to a string the emulator also produced.
+// `{gatewayId}&{expiry}&base64(HMAC-SHA512(key, "{gatewayId}\n{expiry}"))` is
+// the format Microsoft documents for minting this token by hand, so an
+// independent implementation of it is the oracle.
+const expiry = new Date(Date.now() + 24 * 3600 * 1000);
+const minted = await client.gateway.generateToken(resourceGroup, serviceName, gatewayId, {
+  keyType: "primary",
+  expiry,
+});
+const [tokenId, tokenExpiry, tokenSignature] = minted.value.split("&");
+if (tokenId !== gatewayId) {
+  throw new Error(`token names the wrong gateway: ${minted.value}`);
+}
+const recomputed = createHmac("sha512", gatewayKeys.primary)
+  .update(`${gatewayId}\n${tokenExpiry}`)
+  .digest("base64");
+if (recomputed !== tokenSignature) {
+  throw new Error(`token signature did not verify: ${minted.value}`);
+}
+if (new Date(tokenExpiry).getTime() !== expiry.getTime()) {
+  throw new Error(`token expiry ${tokenExpiry} does not restate ${expiry.toISOString()}`);
+}
+
+// Rotating a key must invalidate what that key signed, and leave the other
+// key's tokens alone. That is the entire reason there are two.
+await client.gateway.regenerateKey(resourceGroup, serviceName, gatewayId, { keyType: "primary" });
+const rotatedGatewayKeys = await client.gateway.listKeys(resourceGroup, serviceName, gatewayId);
+if (rotatedGatewayKeys.primary === gatewayKeys.primary) {
+  throw new Error("the primary gateway key did not rotate");
+}
+if (rotatedGatewayKeys.secondary !== gatewayKeys.secondary) {
+  throw new Error("rotating the primary gateway key disturbed the secondary");
+}
+
+// Two APIs, one associated and one not: the assertion is the ABSENCE of the
+// second on the gateway, not the presence of the first.
+for (const [name, path] of [["gateway-served-api", "gateway-served"], ["gateway-withheld-api", "gateway-withheld"]]) {
+  await client.api.beginCreateOrUpdateAndWait(resourceGroup, serviceName, name, {
+    displayName: name,
+    path,
+    serviceUrl: process.env.APIM_BACKEND_URL,
+    protocols: ["https"],
+    subscriptionRequired: false,
+  });
+  await client.apiOperation.createOrUpdate(resourceGroup, serviceName, name, "get", {
+    displayName: "Get",
+    method: "GET",
+    urlTemplate: "/items",
+  });
+}
+await client.gatewayApi.createOrUpdate(resourceGroup, serviceName, gatewayId, "gateway-served-api");
+const gatewayApis = [];
+for await (const item of client.gatewayApi.listByService(resourceGroup, serviceName, gatewayId)) {
+  gatewayApis.push(item.name);
+}
+if (!gatewayApis.includes("gateway-served-api")) {
+  throw new Error(`gateway API listing = ${gatewayApis.join(", ")}`);
+}
+if (gatewayApis.includes("gateway-withheld-api")) {
+  throw new Error("an unassociated API appeared in the gateway's listing");
+}
+
+const gatewayHost = "edge.witness.test";
+await client.gatewayHostnameConfiguration.createOrUpdate(resourceGroup, serviceName, gatewayId, "primary", {
+  hostname: gatewayHost,
+  http2Enabled: true,
+  negotiateClientCertificate: false,
+});
+const hostnames = [];
+for await (const item of client.gatewayHostnameConfiguration.listByService(resourceGroup, serviceName, gatewayId)) {
+  hostnames.push(item.hostname);
+}
+if (!hostnames.includes(gatewayHost)) {
+  throw new Error(`gateway hostname listing = ${hostnames.join(", ")}`);
+}
+
+// The runtime half. A request arriving on the gateway's hostname is served by
+// that gateway, so only its associated API is reachable there -- while both
+// stay reachable on the service's own front door. A management plane that
+// recorded the association without this would be recording a preference.
+const gatewayEndpoint = process.env.APIM_GATEWAY_ENDPOINT ?? endpoint;
+const gatewayURL = new URL(gatewayEndpoint);
+const { request: httpsRequest } = await import("node:https");
+const { checkServerIdentity } = await import("node:tls");
+
+// node:https rather than fetch, and the reason matters: `Host` is a forbidden
+// header name, so undici DROPS it silently and every request would arrive at
+// the service's own front door while looking like it had been addressed to the
+// gateway. The first draft of this witness did exactly that, and only the
+// negative assertion below caught it.
+const onGateway = (path) =>
+  new Promise((resolve, reject) => {
+    const call = httpsRequest(
+      {
+        hostname: gatewayURL.hostname,
+        port: gatewayURL.port,
+        path,
+        method: "GET",
+        // The Host header is deliberately NOT the host being connected to.
+        // That is exactly how a self-hosted gateway's own hostname is
+        // presented in front of it.
+        headers: { Host: gatewayHost },
+        // The certificate is still verified, against the host actually being
+        // connected to. Node would otherwise derive the name to verify from
+        // the Host header and fail on a name the emulator's certificate has no
+        // reason to carry. Turning verification OFF here would have hidden a
+        // real TLS defect, so it is redirected rather than disabled.
+        checkServerIdentity: (_, certificate) => checkServerIdentity(gatewayURL.hostname, certificate),
+      },
+      (response) => {
+        response.resume();
+        response.on("end", () => resolve({ status: response.statusCode }));
+      },
+    );
+    call.on("error", reject);
+    call.end();
+  });
+
+const servedOnGateway = await onGateway("/gateway-served/items");
+if (servedOnGateway.status !== 200) {
+  throw new Error(`associated API on the gateway hostname: ${servedOnGateway.status}`);
+}
+const withheldOnGateway = await onGateway("/gateway-withheld/items");
+if (withheldOnGateway.status !== 404) {
+  throw new Error(`unassociated API was served by the gateway: ${withheldOnGateway.status}`);
+}
+for (const path of ["/gateway-served/items", "/gateway-withheld/items"]) {
+  const direct = await fetch(`${gatewayEndpoint}${path}`);
+  if (direct.status !== 200) {
+    throw new Error(`${path} on the service front door: ${direct.status}`);
+  }
+}
+
+// Removing the association takes the API off the gateway, which is what makes
+// the link a runtime decision rather than a label.
+await client.gatewayApi.delete(resourceGroup, serviceName, gatewayId, "gateway-served-api");
+const afterDetach = await onGateway("/gateway-served/items");
+if (afterDetach.status !== 404) {
+  throw new Error(`a detached API was still served by the gateway: ${afterDetach.status}`);
+}
+
+// Per-gateway certificate-authority trust: the gateways run in different places
+// and answer to different callers, so trust is not a service-wide setting.
+await client.gatewayCertificateAuthority.createOrUpdate(resourceGroup, serviceName, gatewayId, "corp-root", {
+  isTrusted: true,
+});
+const authority = await client.gatewayCertificateAuthority.get(resourceGroup, serviceName, gatewayId, "corp-root");
+if (authority.isTrusted !== true) {
+  throw new Error(`certificate authority = ${JSON.stringify(authority)}`);
+}
+await client.gatewayCertificateAuthority.delete(resourceGroup, serviceName, gatewayId, "corp-root", "*");
+
+const gateways = [];
+for await (const item of client.gateway.listByService(resourceGroup, serviceName)) {
+  gateways.push(item.name);
+}
+if (!gateways.includes(gatewayId)) {
+  throw new Error(`gateway listing = ${gateways.join(", ")}`);
+}
+
+// Deleting the registration stops the hostname being a gateway's. The
+// before/after pair is the assertion: the same request was refused while the
+// gateway existed and is not refused once it does not, so the restriction was
+// the gateway's and it went with it.
+//
+// It is answered rather than refused afterwards because an unrecognised Host
+// falls back to the default service in this emulator. That fallback predates
+// gateways and is NOT asserted here as correct.
+await client.gateway.delete(resourceGroup, serviceName, gatewayId, "*");
+const afterDelete = await onGateway("/gateway-withheld/items");
+if (afterDelete.status !== 200) {
+  throw new Error(`the gateway's restriction outlived the gateway: ${afterDelete.status}`);
+}
+console.log("javascript witness: self-hosted gateway registered, token verified, and serving only its associated APIs");

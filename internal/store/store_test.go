@@ -425,23 +425,51 @@ func TestClosedStoreErrors(t *testing.T) {
 			_, err := st.ListNamedValues("service")
 			return err
 		},
-		"delete named value":    func() error { return st.DeleteNamedValue("named") },
-		"upsert backend":        func() error { _, err := st.UpsertBackend(model.Backend{}); return err },
-		"get backend":           func() error { _, err := st.GetBackend("backend"); return err },
-		"list backends":         func() error { _, err := st.ListBackends("service"); return err },
-		"delete backend":        func() error { return st.DeleteBackend("backend") },
-		"upsert certificate":    func() error { _, err := st.UpsertCertificate(model.Certificate{}); return err },
-		"get certificate":       func() error { _, err := st.GetCertificate("certificate"); return err },
-		"list certificates":     func() error { _, err := st.ListCertificates("service"); return err },
-		"delete certificate":    func() error { return st.DeleteCertificate("certificate") },
-		"upsert API schema":     func() error { _, err := st.UpsertAPISchema(model.APISchema{}); return err },
-		"get API schema":        func() error { _, err := st.GetAPISchema("schema"); return err },
-		"list API schemas":      func() error { _, err := st.ListAPISchemas("api"); return err },
-		"delete API schema":     func() error { return st.DeleteAPISchema("schema") },
-		"upsert workspace":      func() error { _, err := st.UpsertWorkspace(model.Workspace{}); return err },
-		"get workspace":         func() error { _, err := st.GetWorkspace("ws"); return err },
-		"list workspaces":       func() error { _, err := st.ListWorkspaces("service"); return err },
-		"delete workspace":      func() error { return st.DeleteWorkspace("ws") },
+		"delete named value":   func() error { return st.DeleteNamedValue("named") },
+		"upsert backend":       func() error { _, err := st.UpsertBackend(model.Backend{}); return err },
+		"get backend":          func() error { _, err := st.GetBackend("backend"); return err },
+		"list backends":        func() error { _, err := st.ListBackends("service"); return err },
+		"delete backend":       func() error { return st.DeleteBackend("backend") },
+		"upsert certificate":   func() error { _, err := st.UpsertCertificate(model.Certificate{}); return err },
+		"get certificate":      func() error { _, err := st.GetCertificate("certificate"); return err },
+		"list certificates":    func() error { _, err := st.ListCertificates("service"); return err },
+		"delete certificate":   func() error { return st.DeleteCertificate("certificate") },
+		"upsert API schema":    func() error { _, err := st.UpsertAPISchema(model.APISchema{}); return err },
+		"get API schema":       func() error { _, err := st.GetAPISchema("schema"); return err },
+		"list API schemas":     func() error { _, err := st.ListAPISchemas("api"); return err },
+		"delete API schema":    func() error { return st.DeleteAPISchema("schema") },
+		"upsert workspace":     func() error { _, err := st.UpsertWorkspace(model.Workspace{}); return err },
+		"get workspace":        func() error { _, err := st.GetWorkspace("ws"); return err },
+		"list workspaces":      func() error { _, err := st.ListWorkspaces("service"); return err },
+		"delete workspace":     func() error { return st.DeleteWorkspace("ws") },
+		"upsert gateway":       func() error { _, err := st.UpsertGateway(model.Gateway{}); return err },
+		"get gateway":          func() error { _, err := st.GetGateway("gw"); return err },
+		"list gateways":        func() error { _, err := st.ListGateways("service"); return err },
+		"delete gateway":       func() error { return st.DeleteGateway("gw") },
+		"attach gateway API":   func() error { return st.AttachGatewayAPI("gw", "api") },
+		"detach gateway API":   func() error { return st.DetachGatewayAPI("gw", "api") },
+		"list gateway APIs":    func() error { _, err := st.ListGatewayAPIs("gw"); return err },
+		"gateway API attached": func() error { _, err := st.GatewayAPIAttached("gw", "api"); return err },
+		"upsert gateway host": func() error {
+			_, err := st.UpsertGatewayHostnameConfiguration(model.GatewayHostnameConfiguration{})
+			return err
+		},
+		"get gateway host": func() error { _, err := st.GetGatewayHostnameConfiguration("hc"); return err },
+		"list gateway hosts": func() error {
+			_, err := st.ListGatewayHostnameConfigurations("gw")
+			return err
+		},
+		"delete gateway host": func() error { return st.DeleteGatewayHostnameConfiguration("hc") },
+		"upsert gateway CA": func() error {
+			_, err := st.UpsertGatewayCertificateAuthority(model.GatewayCertificateAuthority{})
+			return err
+		},
+		"get gateway CA": func() error { _, err := st.GetGatewayCertificateAuthority("ca"); return err },
+		"list gateway CAs": func() error {
+			_, err := st.ListGatewayCertificateAuthorities("gw")
+			return err
+		},
+		"delete gateway CA":     func() error { return st.DeleteGatewayCertificateAuthority("ca") },
 		"upsert authz provider": func() error { _, err := st.UpsertAuthorizationProvider(model.AuthorizationProvider{}); return err },
 		"get authz provider":    func() error { _, err := st.GetAuthorizationProvider("p"); return err },
 		"list authz providers":  func() error { _, err := st.ListAuthorizationProviders("s"); return err },
@@ -669,6 +697,36 @@ func TestScanFunctionsRejectMalformedRows(t *testing.T) {
 			`CREATE TABLE workspaces (id, service_id, name, display_name, description, document_json, etag)`,
 			`INSERT INTO workspaces VALUES ('id', 'svc', NULL, '', '', '{}', '')`,
 			func(db *sql.DB) error { _, err := (&Store{db: db}).ListWorkspaces("svc"); return err },
+		},
+		{
+			"gateways",
+			`CREATE TABLE gateways (id, service_id, name, location_name, description, primary_key, secondary_key, document_json, etag)`,
+			`INSERT INTO gateways VALUES ('id', 'svc', NULL, '', '', '', '', '{}', '')`,
+			func(db *sql.DB) error { _, err := (&Store{db: db}).ListGateways("svc"); return err },
+		},
+		{
+			"gateway APIs",
+			`CREATE TABLE gateway_apis (gateway_id, api_id)`,
+			`INSERT INTO gateway_apis VALUES ('gw', NULL)`,
+			func(db *sql.DB) error { _, err := (&Store{db: db}).ListGatewayAPIs("gw"); return err },
+		},
+		{
+			"gateway hostname configurations",
+			`CREATE TABLE gateway_hostname_configurations (id, gateway_id, name, hostname, certificate_id, negotiate_client_certificate, tls10_enabled, tls11_enabled, http2_enabled, document_json, etag)`,
+			`INSERT INTO gateway_hostname_configurations VALUES ('id', 'gw', NULL, '', '', 0, 0, 0, 0, '{}', '')`,
+			func(db *sql.DB) error {
+				_, err := (&Store{db: db}).ListGatewayHostnameConfigurations("gw")
+				return err
+			},
+		},
+		{
+			"gateway certificate authorities",
+			`CREATE TABLE gateway_certificate_authorities (id, gateway_id, name, is_trusted, document_json, etag)`,
+			`INSERT INTO gateway_certificate_authorities VALUES ('id', 'gw', NULL, 0, '{}', '')`,
+			func(db *sql.DB) error {
+				_, err := (&Store{db: db}).ListGatewayCertificateAuthorities("gw")
+				return err
+			},
 		},
 		{
 			"authorization providers",

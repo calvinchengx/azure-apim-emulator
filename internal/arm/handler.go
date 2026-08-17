@@ -178,6 +178,8 @@ func (h *Handler) dispatch(w http.ResponseWriter, r *http.Request, parsed route)
 		h.authorizationProviderRoute(w, r, parsed)
 	case "authorizationServers":
 		h.authorizationServer(w, r, parsed)
+	case "gateways":
+		h.gatewayRoute(w, r, parsed)
 	case "documentations":
 		h.documentation(w, r, parsed)
 	case "certificates":
