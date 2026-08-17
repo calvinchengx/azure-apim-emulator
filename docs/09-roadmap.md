@@ -128,7 +128,11 @@ explicit external-adapter test fixture.
 ## P8 - AI gateway, MCP, and current previews
 
 - Model APIs and provider adapters, load balancing, token limits, semantic cache,
-  content safety, prompt controls, logging, and model telemetry.
+  content safety, prompt controls, logging, and model telemetry. Token limits and
+  token metrics are implemented for both the `llm-*` and `azure-openai-*` policy
+  names, streamed answers included; the counts are exact when they come from the
+  model's own `usage` object and approximate when `estimate-prompt-tokens` forces
+  a decision before the model has answered.
 - MCP-related import, exposure, governance, authentication, policy, and portal behavior.
 - Deterministic fake providers plus opt-in Azure/OpenAI/provider differential suites.
 - Promote supported preview contracts only after stable tracks remain green.

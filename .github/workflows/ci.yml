@@ -134,6 +134,26 @@ jobs:
       - run: make setup-credential
       - run: make test-credential
 
+  openai-witness:
+    name: LLM token governance witness (OpenAI's own client)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: 1.25.11
+          cache: true
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: make setup-openai
+      - run: make test-openai
+
   distribution:
     runs-on: ubuntu-latest
     timeout-minutes: 25
