@@ -129,3 +129,28 @@ func collectionIndex(key Value) (int, bool) {
 		return 0, false
 	}
 }
+
+// jsonDocument turns decoded JSON into a value a policy can walk.
+//
+// Objects and arrays stay indexable rather than collapsing to their text, which
+// is the difference between `As<JObject>()` and `As<string>()`. Scalars fall
+// through to the same conversion GraphQL arguments use, so a number reads the
+// same way in both places.
+func jsonDocument(value any) (Value, error) {
+	switch typed := value.(type) {
+	case map[string]any:
+		return Object(&jsonMapHost{values: typed}), nil
+	case []any:
+		items := make([]Value, 0, len(typed))
+		for _, item := range typed {
+			converted, err := jsonDocument(item)
+			if err != nil {
+				return Null(), err
+			}
+			items = append(items, converted)
+		}
+		return Object(&listHost{items: items, what: "elements"}), nil
+	default:
+		return jsonValue(typed)
+	}
+}

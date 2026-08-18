@@ -4,6 +4,7 @@ import (
 	"crypto/sha1"
 	"crypto/x509"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -809,9 +810,117 @@ func (b *bodyHost) member(name string) (Value, error) {
 	switch name {
 	case "AsString":
 		return Object(funcValue{fn: b.asString}), nil
+	case "As":
+		// `As` without a type argument is not a member Azure has: the only
+		// legal spelling is `As<T>()`. Saying so is more useful than "unknown
+		// member As".
+		return Null(), fmt.Errorf("Body.As requires a type argument, as in As<string>()")
+	case "AsFormUrlEncodedContent":
+		return Object(funcValue{fn: b.asFormUrlEncodedContent}), nil
 	default:
 		return Null(), fmt.Errorf("unknown member %s", name)
 	}
+}
+
+// genericMember serves `Body.As<T>()`.
+//
+// The type argument decides what comes back, which is the whole point of the
+// generic: `As<string>()` is the raw body and `As<JObject>()` is parsed JSON a
+// policy can index into. A type this emulator cannot produce is REFUSED rather
+// than silently downgraded to a string, because a policy indexing into what it
+// believes is an object would otherwise fail somewhere far from the cause.
+func (b *bodyHost) genericMember(name, typeArg string) (Value, error) {
+	if name != "As" {
+		return Null(), fmt.Errorf("%s is not a generic member", name)
+	}
+	switch typeArg {
+	case "string", "String":
+		return Object(funcValue{fn: b.asString}), nil
+	case "JObject", "JToken", "JArray":
+		return Object(funcValue{fn: b.asJSON}), nil
+	default:
+		return Null(), fmt.Errorf("Body.As<%s> is not supported; this emulator reads a body as string, JObject, JToken or JArray", typeArg)
+	}
+}
+
+// asJSON parses the body into a value a policy can index into.
+func (b *bodyHost) asJSON(args []Value) (Value, error) {
+	if len(args) > 1 {
+		return Null(), fmt.Errorf("As takes at most one argument")
+	}
+	text, err := b.read()
+	if err != nil {
+		return Null(), err
+	}
+	var decoded any
+	if err := json.Unmarshal([]byte(text), &decoded); err != nil {
+		return Null(), fmt.Errorf("the body is not JSON: %w", err)
+	}
+	// jsonValue collapses an object or array to its JSON TEXT, which is right
+	// for a GraphQL argument and wrong here: `As<JObject>()` exists so a policy
+	// can index into the result.
+	return jsonDocument(decoded)
+}
+
+// asFormUrlEncodedContent parses a form body into a dictionary of values.
+//
+// Azure returns IDictionary<string, IList<string>>: a field may legitimately
+// repeat, and collapsing it to the first value would lose that. Each field is
+// a collection here for the same reason.
+func (b *bodyHost) asFormUrlEncodedContent(args []Value) (Value, error) {
+	if len(args) > 1 {
+		return Null(), fmt.Errorf("AsFormUrlEncodedContent takes at most one argument")
+	}
+	text, err := b.read()
+	if err != nil {
+		return Null(), err
+	}
+	form, err := url.ParseQuery(text)
+	if err != nil {
+		return Null(), fmt.Errorf("the body is not form-encoded: %w", err)
+	}
+	fields := map[string]Value{}
+	for name, values := range form {
+		items := make([]Value, 0, len(values))
+		for _, value := range values {
+			items = append(items, String(value))
+		}
+		fields[name] = Object(&listHost{items: items, what: "values"})
+	}
+	return Object(&formHost{fields: fields}), nil
+}
+
+// formHost is the parsed form body: a dictionary of field name to values.
+type formHost struct {
+	fields map[string]Value
+}
+
+func (f *formHost) member(name string) (Value, error) {
+	switch name {
+	case "Count":
+		return Double(float64(len(f.fields))), nil
+	case "ContainsKey":
+		return Object(funcValue{fn: func(args []Value) (Value, error) {
+			if len(args) != 1 || args[0].kind != KindString {
+				return Null(), fmt.Errorf("ContainsKey requires a string")
+			}
+			_, ok := f.fields[args[0].str]
+			return Bool(ok), nil
+		}}), nil
+	default:
+		return Null(), fmt.Errorf("unknown member %s", name)
+	}
+}
+
+func (f *formHost) index(key Value) (Value, error) {
+	if key.kind != KindString {
+		return Null(), fmt.Errorf("a form body is indexed by field name")
+	}
+	value, ok := f.fields[key.str]
+	if !ok {
+		return Null(), nil
+	}
+	return value, nil
 }
 
 func (b *bodyHost) asString(args []Value) (Value, error) {

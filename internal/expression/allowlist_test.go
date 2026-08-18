@@ -110,6 +110,8 @@ func TestAllowlistBoundMembersEvaluate(t *testing.T) {
 		"context.Subscription":         "@(context.Subscription != null)",
 		"context.User":                 "@(context.User != null)",
 		"context.Deployment":           "@(context.Deployment != null)",
+		"Body.As":                      `@(context.Request.Body.As<string>() == "")`,
+		"Body.AsFormUrlEncodedContent": "@(context.Request.Body.AsFormUrlEncodedContent().Count)",
 		"User.Email":                   "@(context.User.Email)",
 		"User.FirstName":               "@(context.User.FirstName)",
 		"User.LastName":                "@(context.User.LastName)",
@@ -289,6 +291,7 @@ func binderCases(t *testing.T) map[string]map[string]bool {
 		"groupHost":          {"Group"},
 		"userIdentityHost":   {"UserIdentity"},
 		"listHost":           {},
+		"formHost":           {},
 		"productHost":        {"Product"},
 		"subscriptionHost":   {"Subscription"},
 		"deploymentHost":     {"Deployment"},
@@ -448,15 +451,26 @@ func TestAllowlistDoesNotInventContextMembers(t *testing.T) {
 
 // A planned member must not resolve. A binder that answered one anyway would
 // make the ledger's own count wrong in the flattering direction.
-func TestPlannedMembersDoNotResolve(t *testing.T) {
-	planned := 0
-	for _, member := range Allowlist() {
-		if member.Status == MemberPlanned {
-			planned++
-		}
+// The canary this replaces asserted there is always at least one PLANNED
+// member, which stopped being true the moment the surface was completed. What
+// it was really guarding is the inventory silently emptying, so that is what it
+// checks now: a documented surface that shrank to nothing would pass every
+// other test in this file.
+func TestDocumentedSurfaceIsNotEmpty(t *testing.T) {
+	if len(Documented()) < 100 {
+		t.Fatalf("the documented surface has %d members; it had 113, so the inventory stopped measuring", len(Documented()))
 	}
-	if planned == 0 {
-		t.Fatal("no planned members: either the surface is complete or the inventory stopped measuring")
+	// And every planned member, if any remain, must genuinely not resolve --
+	// a planned member that answers would make the ledger's own count wrong in
+	// the flattering direction.
+	env := Bind(Context{})
+	for _, member := range Allowlist() {
+		if member.Status != MemberPlanned {
+			continue
+		}
+		if _, err := EvalEnv("@(context."+member.Type+"."+member.Name+")", env); err == nil {
+			t.Fatalf("planned %s.%s resolved", member.Type, member.Name)
+		}
 	}
 }
 

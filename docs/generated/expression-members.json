@@ -1,6 +1,6 @@
 {
   "source": "Microsoft Learn policy-expressions reference, cross-checked against the expression binder",
-  "status": "partial",
+  "status": "implemented",
   "members": [
     {
       "type": "context",
@@ -485,12 +485,12 @@
     {
       "type": "Body",
       "name": "As",
-      "status": "planned"
+      "status": "bound"
     },
     {
       "type": "Body",
       "name": "AsFormUrlEncodedContent",
-      "status": "planned"
+      "status": "bound"
     },
     {
       "type": "GraphQL",
