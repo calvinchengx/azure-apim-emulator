@@ -41,25 +41,6 @@ func (e *PolicyError) Scope() string   { return e.scope }
 func (e *PolicyError) Reason() string  { return e.reason }
 func (e *PolicyError) Unwrap() error   { return e.Err }
 
-// ElementPath is where the element sits, as `section/element`.
-//
-// Azure reports a deeper path for a nested element; this reports the section
-// and the element that failed, which is what an on-error policy switches on.
-// The nesting is a known simplification, stated in `docs/parity.md` rather than
-// faked with a path this engine cannot compute.
-func (e *PolicyError) ElementPath() string {
-	switch {
-	case e.section == "" && e.element == "":
-		return ""
-	case e.section == "":
-		return e.element
-	case e.element == "":
-		return e.section
-	default:
-		return e.section + "/" + e.element
-	}
-}
-
 // reasonFor classifies a failure where the engine genuinely can.
 //
 // Only expression evaluation is classified, because that is the one failure

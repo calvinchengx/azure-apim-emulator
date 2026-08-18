@@ -96,7 +96,7 @@ phase-1 operator set. The evaluator runs context-free expressions and binds
 method/URL/headers/IP, response status/headers, last-error message, policy
 variables, member access, indexing, and calls (`ToString`, `Length`,
 `GetValueOrDefault`, `Get`, `ContainsKey`). `Url.Port`, `LastError.Message`,
-and request/response `Body.AsString()` (with body capture/replay) are bound
+and request/response `Body.As<string>()` (with body capture/replay) are bound
 for `choose`/on-error through `stateEnv` the same way retry already
 binds last-error. `context.Api` (`Id`/`Name`/`Path`), `Operation`
 (`Id`/`Name`/`Method`/`UrlTemplate`), `Product`/`Subscription`/`User`

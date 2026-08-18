@@ -768,9 +768,9 @@ func bindRequestContext(service *Service, route *Route, operation model.Operatio
 		// The gateway serving the request: the built-in one unless a self-hosted
 		// gateway's hostname matched. `IsManaged` is what a policy tests to
 		// behave differently on an edge deployment.
-		gateway := &expression.GatewayContext{Id: "managed", InstanceId: service.Name, IsManaged: true, RegionName: service.Location}
+		gateway := &expression.GatewayContext{Id: "managed", InstanceId: service.Name, IsManaged: true}
 		if selfHosted != nil {
-			gateway = &expression.GatewayContext{Id: selfHosted.Name, InstanceId: selfHosted.Name, IsManaged: false, RegionName: service.Location}
+			gateway = &expression.GatewayContext{Id: selfHosted.Name, InstanceId: selfHosted.Name, IsManaged: false}
 		}
 		deployment = &expression.DeploymentContext{
 			ServiceName: service.Name, Region: service.Location,

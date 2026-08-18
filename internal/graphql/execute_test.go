@@ -95,7 +95,7 @@ func TestExecuteProjectsResolverPayloadOntoTheSelection(t *testing.T) {
 	}
 }
 
-// Arguments are what a resolver policy reads through context.GraphQL.Arguments.
+// Arguments are what a resolver policy reads through context.GraphQL.GraphQLArguments.
 func TestExecutePassesArgumentsIncludingDefaults(t *testing.T) {
 	rec := newRecorder()
 	rec.values["Query.orders"] = []any{}

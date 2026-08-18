@@ -38,7 +38,7 @@ func TestRequestEnvBindings(t *testing.T) {
 		{"@(context.Request.Headers.GetValueOrDefault('Missing', 'fallback'))", "fallback"},
 		{"@(context.Request.Headers.GetValueOrDefault('Missing'))", ""},
 		{"@(context.Request.Url.Port)", int64(443)},
-		{"@(context.Request.Body.AsString())", ""},
+		{"@(context.Request.Body.As<string>())", ""},
 		{"@(context.Variables['route'])", "blue"},
 		{"@(context.Variables.ContainsKey('route'))", true},
 		{"@(context.Variables.ContainsKey('missing'))", false},
@@ -229,7 +229,7 @@ func TestDeploymentContextBindings(t *testing.T) {
 		Operation:    &OperationContext{Id: "get-pet", Name: "Get pet", Method: http.MethodGet, UrlTemplate: "/{id}"},
 		Product:      &ProductContext{Id: "starter", Name: "Starter"},
 		Subscription: &SubscriptionContext{Id: "sub-1", Name: "Dev"},
-		User:         &UserContext{Id: "ada", Name: "Ada"},
+		User:         &UserContext{Id: "ada", FirstName: "Ada"},
 		Deployment:   &DeploymentContext{ServiceName: "emulator", Region: "local"},
 	})
 	cases := []struct {
@@ -248,7 +248,7 @@ func TestDeploymentContextBindings(t *testing.T) {
 		{"@(context.Subscription.Id)", "sub-1"},
 		{"@(context.Subscription.Name)", "Dev"},
 		{"@(context.User.Id)", "ada"},
-		{"@(context.User.Name)", "Ada"},
+		{"@(context.User.FirstName)", "Ada"},
 		{"@(context.Deployment.ServiceName)", "emulator"},
 		{"@(context.Deployment.Region)", "local"},
 		{"@(context.Product != null)", true},
@@ -294,7 +294,7 @@ func TestDeploymentContextBindings(t *testing.T) {
 
 func TestRequestAndResponseBodyAsString(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("payload"))
-	got, err := EvalEnv("@(context.Request.Body.AsString())", RequestEnv(request, nil))
+	got, err := EvalEnv("@(context.Request.Body.As<string>())", RequestEnv(request, nil))
 	if err != nil || got.String() != "payload" {
 		t.Fatalf("request body = %q %v", got, err)
 	}
@@ -311,7 +311,7 @@ func TestRequestAndResponseBodyAsString(t *testing.T) {
 	cached.GetBody = func() (io.ReadCloser, error) {
 		return io.NopCloser(strings.NewReader("cached")), nil
 	}
-	fromCache, err := EvalEnv("@(context.Request.Body.AsString())", RequestEnv(cached, nil))
+	fromCache, err := EvalEnv("@(context.Request.Body.As<string>())", RequestEnv(cached, nil))
 	if err != nil || fromCache.String() != "cached" {
 		t.Fatalf("GetBody = %q %v", fromCache, err)
 	}
@@ -319,11 +319,11 @@ func TestRequestAndResponseBodyAsString(t *testing.T) {
 	emptyReq := httptest.NewRequest(http.MethodGet, "/", nil)
 	emptyReq.Body = nil
 	emptyReq.GetBody = nil
-	empty, err := EvalEnv("@(context.Request.Body.AsString())", RequestEnv(emptyReq, nil))
+	empty, err := EvalEnv("@(context.Request.Body.As<string>())", RequestEnv(emptyReq, nil))
 	if err != nil || empty.String() != "" {
 		t.Fatalf("empty request body = %q %v", empty, err)
 	}
-	nilBody, err := EvalEnv("@(context.Request.Body.AsString())", RequestEnv(&http.Request{Method: http.MethodGet}, nil))
+	nilBody, err := EvalEnv("@(context.Request.Body.As<string>())", RequestEnv(&http.Request{Method: http.MethodGet}, nil))
 	if err != nil || nilBody.String() != "" {
 		t.Fatalf("nil request body = %q %v", nilBody, err)
 	}
@@ -335,7 +335,7 @@ func TestRequestAndResponseBodyAsString(t *testing.T) {
 	}
 
 	response := &http.Response{Body: io.NopCloser(strings.NewReader(`{"ok":true}`))}
-	fromResponse, err := EvalEnv("@(context.Response.Body.AsString())", Bind(Context{Response: response}))
+	fromResponse, err := EvalEnv("@(context.Response.Body.As<string>())", Bind(Context{Response: response}))
 	if err != nil || fromResponse.String() != `{"ok":true}` {
 		t.Fatalf("response body = %q %v", fromResponse, err)
 	}
@@ -344,7 +344,7 @@ func TestRequestAndResponseBodyAsString(t *testing.T) {
 		t.Fatalf("replayed response body = %q", second)
 	}
 
-	noBody, err := EvalEnv("@(context.Response.Body.AsString())", Bind(Context{Response: &http.Response{}}))
+	noBody, err := EvalEnv("@(context.Response.Body.As<string>())", Bind(Context{Response: &http.Response{}}))
 	if err != nil || noBody.String() != "" {
 		t.Fatalf("nil response body = %q %v", noBody, err)
 	}
@@ -364,20 +364,20 @@ func TestRequestAndResponseBodyAsString(t *testing.T) {
 
 	failGet := httptest.NewRequest(http.MethodPost, "/", nil)
 	failGet.GetBody = func() (io.ReadCloser, error) { return nil, errors.New("get body failed") }
-	if _, err := EvalEnv("@(context.Request.Body.AsString())", RequestEnv(failGet, nil)); err == nil {
+	if _, err := EvalEnv("@(context.Request.Body.As<string>())", RequestEnv(failGet, nil)); err == nil {
 		t.Fatal("GetBody error accepted")
 	}
 	failRead := httptest.NewRequest(http.MethodPost, "/", nil)
 	failRead.GetBody = func() (io.ReadCloser, error) { return errorReader{}, nil }
-	if _, err := EvalEnv("@(context.Request.Body.AsString())", RequestEnv(failRead, nil)); err == nil {
+	if _, err := EvalEnv("@(context.Request.Body.As<string>())", RequestEnv(failRead, nil)); err == nil {
 		t.Fatal("GetBody read error accepted")
 	}
 	failBody := httptest.NewRequest(http.MethodPost, "/", nil)
 	failBody.Body = errorReader{}
-	if _, err := EvalEnv("@(context.Request.Body.AsString())", RequestEnv(failBody, nil)); err == nil {
+	if _, err := EvalEnv("@(context.Request.Body.As<string>())", RequestEnv(failBody, nil)); err == nil {
 		t.Fatal("request body read error accepted")
 	}
-	if _, err := EvalEnv("@(context.Response.Body.AsString())", Bind(Context{Response: &http.Response{Body: errorReader{}}})); err == nil {
+	if _, err := EvalEnv("@(context.Response.Body.As<string>())", Bind(Context{Response: &http.Response{Body: errorReader{}}})); err == nil {
 		t.Fatal("response body read error accepted")
 	}
 }
@@ -423,7 +423,7 @@ func TestBoundScalarMembersAndTheirEdges(t *testing.T) {
 			CreatedDate: "2026-01-01T00:00:00Z", StartDate: "2026-01-02T00:00:00Z", EndDate: "2026-12-31T00:00:00Z"},
 		Deployment: &DeploymentContext{ServiceName: "emulator", Region: "local",
 			ServiceId: "/subscriptions/s/service/emulator", GatewayId: "edge",
-			Gateway: &GatewayContext{Id: "edge", InstanceId: "edge-1", IsManaged: false, RegionName: "local"}},
+			Gateway: &GatewayContext{Id: "edge", InstanceId: "edge-1", IsManaged: false}},
 		Timestamp: time.Date(2026, 8, 18, 9, 30, 0, 0, time.UTC),
 		Elapsed:   func() time.Duration { return 1500 * time.Millisecond },
 		RequestId: "req-7",
@@ -443,7 +443,6 @@ func TestBoundScalarMembersAndTheirEdges(t *testing.T) {
 		{"@(context.Subscription.EndDate)", "2026-12-31T00:00:00Z"},
 		{"@(context.Deployment.ServiceId)", "/subscriptions/s/service/emulator"},
 		{"@(context.Deployment.Gateway.InstanceId)", "edge-1"},
-		{"@(context.Deployment.Gateway.RegionName)", "local"},
 		{"@(context.Timestamp)", "2026-08-18T09:30:00Z"},
 		// Rendered as .NET renders a TimeSpan, which is what a policy comparing
 		// against a literal was written for.

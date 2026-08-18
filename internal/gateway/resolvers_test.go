@@ -124,7 +124,7 @@ func ordersResolver(url string) string {
 }
 
 func orderResolver(url string) string {
-	return `Query/order|<http-data-source><http-request><set-method>GET</set-method><set-url>@("` + url + `/orders/" + context.GraphQL.Arguments["ref"])</set-url></http-request></http-data-source>`
+	return `Query/order|<http-data-source><http-request><set-method>GET</set-method><set-url>@("` + url + `/orders/" + context.GraphQL.GraphQLArguments["ref"])</set-url></http-request></http-data-source>`
 }
 
 func customerResolver(url string) string {

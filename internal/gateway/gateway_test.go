@@ -2107,7 +2107,7 @@ func TestLastErrorReportsItsLocation(t *testing.T) {
 	if _, err := st.UpsertPolicy(model.Policy{ScopeID: api.ID(), Value: `<policies>` +
 		`<inbound><set-header name="X-Broken" exists-action="override"><value>@(context.Product.Name)</value></set-header></inbound>` +
 		`<on-error><return-response><set-status code="500" reason="Failed"/>` +
-		`<set-body>@(context.LastError.Section + "|" + context.LastError.Source + "|" + context.LastError.Scope + "|" + context.LastError.ElementPath + "|" + context.LastError.Reason)</set-body>` +
+		`<set-body>@(context.LastError.Section + "|" + context.LastError.Source + "|" + context.LastError.Scope + "|" + context.LastError.Reason)</set-body>` +
 		`</return-response></on-error></policies>`}); err != nil {
 		t.Fatal(err)
 	}
@@ -2118,8 +2118,8 @@ func TestLastErrorReportsItsLocation(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	runtime.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/orders", nil))
 	body := recorder.Body.String()
-	// section | source | scope | elementPath | reason
-	if body != "inbound|set-header|api|inbound/set-header|ExpressionValueEvaluationFailure" {
+	// section | source | scope | reason
+	if body != "inbound|set-header|api|ExpressionValueEvaluationFailure" {
 		t.Fatalf("last error location = %q", body)
 	}
 }

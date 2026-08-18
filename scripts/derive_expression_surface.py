@@ -55,9 +55,42 @@ INTERFACE_TO_TYPE = {
 
 IDENT = re.compile(r"^\**`?([A-Za-z_][A-Za-z0-9_]*)`?\**\s*(?::|$|<|\()")
 
+# Rows whose first cell is a METHOD SIGNATURE document members too. Skipping
+# them is how `Headers.GetValueOrDefault` -- which Microsoft documents, and which
+# this emulator implements -- came to be classified as an undocumented helper.
+SIGNATURE = re.compile(r"^[\w<>\[\]\.]+\s+([\w\.]+)(?:<[^>]*>)?\((.*)\)$")
+
+# An extension method names its receiver as `input: this <TYPE>`, and the
+# receiver is the type the member hangs off.
+RECEIVER_TO_TYPE = {
+    "string": "string",
+    "byte[]": "byte[]",
+    "System.Security.Cryptography.X509Certificates.X509Certificate2": "Certificate",
+}
+
 
 def canonical(name):
     return INTERFACE_TO_TYPE.get(name, name)
+
+
+def parse_signature(head, surface):
+    """Record a member documented as a method signature.
+
+    `string context.Request.Headers.GetValueOrDefault(headerName: string, ...)`
+    is a member of `Headers`; `BasicAuthCredentials AsBasic(input: this string)`
+    is a member of `string`.
+    """
+    match = SIGNATURE.match(head)
+    if not match:
+        return
+    qualified, arguments = match.group(1), match.group(2)
+    name = qualified.split(".")[-1]
+    if "." in qualified:
+        surface.setdefault(canonical(qualified.split(".")[-2]), set()).add(name)
+        return
+    receiver = re.search(r":\s*this\s+([\w\.\[\]]+)", arguments)
+    if receiver and receiver.group(1) in RECEIVER_TO_TYPE:
+        surface.setdefault(RECEIVER_TO_TYPE[receiver.group(1)], set()).add(name)
 
 
 def parse_docs(path):
@@ -73,6 +106,9 @@ def parse_docs(path):
         # Rows for allowed .NET types and for standalone method signatures are
         # not part of the context graph.
         if not re.fullmatch(r"(context(\.[A-Za-z][A-Za-z0-9_]*)*|I[A-Z][A-Za-z0-9_]*)", head):
+            # A method-signature row documents a member of the type it hangs
+            # off, so it is read rather than skipped.
+            parse_signature(head, surface)
             continue
         typ = canonical(head.split(".")[-1])
         for fragment in re.split(r"<br\s*/?>", cells[2]):
