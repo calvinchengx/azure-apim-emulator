@@ -252,13 +252,13 @@ async function resolver(name, path, policy) {
 
 await resolver("orders", "Query/orders",
   `<http-data-source><http-request><set-method>GET</set-method><set-url>${restUrl}/orders</set-url></http-request></http-data-source>`);
-// Reading the argument is the load-bearing part: context.GraphQL.Arguments is
+// Reading the argument is the load-bearing part: context.GraphQL.GraphQLArguments is
 // the documented Azure member, so this policy is copy-pasteable into a real
 // service. Concatenation rather than $"..." interpolation, because the
 // expression lexer does not yet accept C# interpolated strings; that gap is
 // pre-existing and applies to every policy, not just resolvers.
 await resolver("order", "Query/order",
-  `<http-data-source><http-request><set-method>GET</set-method><set-url>@("${restUrl}/orders/" + context.GraphQL.Arguments["ref"])</set-url></http-request></http-data-source>`);
+  `<http-data-source><http-request><set-method>GET</set-method><set-url>@("${restUrl}/orders/" + context.GraphQL.GraphQLArguments["ref"])</set-url></http-request></http-data-source>`);
 // A NESTED resolver, reading its parent object rather than an argument.
 await resolver("customer", "Order/customer",
   `<http-data-source><http-request><set-method>GET</set-method><set-url>@("${restUrl}/customers/" + context.GraphQL.Parent["customerId"])</set-url></http-request></http-data-source>`);
@@ -288,10 +288,10 @@ assert.ok(!list.body.errors, `orders reported errors: ${JSON.stringify(list.body
 assert.deepEqual(list.body.data.orders, [{ ref: "A-1" }, { ref: "A-2" }],
   "unselected fields must not be returned; the REST payload had total and customerId too");
 
-// An argument reaching the resolver through context.GraphQL.Arguments.
+// An argument reaching the resolver through context.GraphQL.GraphQLArguments.
 const one = await shop(`{ order(ref: "Z-9") { ref total } }`);
 assert.deepEqual(one.body.data.order, { ref: "Z-9", total: 99 },
-  "the argument must reach the resolver's URL through context.GraphQL.Arguments");
+  "the argument must reach the resolver's URL through context.GraphQL.GraphQLArguments");
 
 // A variable, substituted before the resolver sees it.
 const byVariable = await shop("query Get($r: ID!) { order(ref: $r) { ref } }", { r: "V-1" });
