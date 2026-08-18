@@ -1,5 +1,7 @@
 package expression
 
+import "sort"
+
 // MemberStatus is the ledger state of one documented expression member.
 type MemberStatus string
 
@@ -8,6 +10,13 @@ const (
 	MemberBound MemberStatus = "bound"
 	// MemberPlanned is a documented APIM member that is still unknown at runtime.
 	MemberPlanned MemberStatus = "planned"
+	// MemberFramework is a member of a .NET type Microsoft's reference lists as
+	// available to a policy, but whose members that reference does not
+	// enumerate. `context.Request.Certificate` is an X509Certificate2: the type
+	// really is available in a tenant, so this is a stronger claim than an
+	// extension, but the member list is OUR reading of .NET rather than of an
+	// APIM document, so it is a weaker one than `bound`.
+	MemberFramework MemberStatus = "framework"
 	// MemberExtension is a member THIS EMULATOR answers and Azure does not
 	// document. It is a divergence in the permissive direction: a policy using
 	// it works here and fails in a tenant. Naming it is the point -- an
@@ -58,9 +67,9 @@ func Allowlist() []Member {
 		{Type: "Gateway", Name: "Id", Status: MemberBound},
 		{Type: "Gateway", Name: "InstanceId", Status: MemberBound},
 		{Type: "Gateway", Name: "IsManaged", Status: MemberBound},
-		{Type: "Gateway", Name: "RegionName", Status: MemberBound},
-		{Type: "LastError", Name: "Element", Status: MemberBound},
-		{Type: "LastError", Name: "ElementPath", Status: MemberBound},
+		{Type: "Gateway", Name: "RegionName", Status: MemberExtension},
+		{Type: "LastError", Name: "Element", Status: MemberExtension},
+		{Type: "LastError", Name: "ElementPath", Status: MemberExtension},
 		{Type: "LastError", Name: "Message", Status: MemberBound},
 		{Type: "LastError", Name: "Reason", Status: MemberBound},
 		{Type: "LastError", Name: "Scope", Status: MemberBound},
@@ -110,13 +119,13 @@ func Allowlist() []Member {
 		{Type: "Group", Name: "Name", Status: MemberBound},
 		{Type: "UserIdentity", Name: "Id", Status: MemberBound},
 		{Type: "UserIdentity", Name: "Provider", Status: MemberBound},
-		{Type: "Certificate", Name: "Issuer", Status: MemberBound},
-		{Type: "Certificate", Name: "NotAfter", Status: MemberBound},
-		{Type: "Certificate", Name: "NotBefore", Status: MemberBound},
-		{Type: "Certificate", Name: "SerialNumber", Status: MemberBound},
-		{Type: "Certificate", Name: "Subject", Status: MemberBound},
-		{Type: "Certificate", Name: "Thumbprint", Status: MemberBound},
-		{Type: "Certificate", Name: "Verify", Status: MemberBound},
+		{Type: "Certificate", Name: "Issuer", Status: MemberFramework},
+		{Type: "Certificate", Name: "NotAfter", Status: MemberFramework},
+		{Type: "Certificate", Name: "NotBefore", Status: MemberFramework},
+		{Type: "Certificate", Name: "SerialNumber", Status: MemberFramework},
+		{Type: "Certificate", Name: "Subject", Status: MemberFramework},
+		{Type: "Certificate", Name: "Thumbprint", Status: MemberFramework},
+		{Type: "Certificate", Name: "Verify", Status: MemberFramework},
 		{Type: "Url", Name: "Host", Status: MemberBound},
 		{Type: "Url", Name: "Path", Status: MemberBound},
 		{Type: "Url", Name: "Port", Status: MemberBound},
@@ -125,7 +134,7 @@ func Allowlist() []Member {
 		{Type: "Url", Name: "Scheme", Status: MemberBound},
 		{Type: "Body", Name: "As", Status: MemberBound},
 		{Type: "Body", Name: "AsFormUrlEncodedContent", Status: MemberBound},
-		{Type: "GraphQL", Name: "Arguments", Status: MemberBound},
+		{Type: "GraphQL", Name: "Arguments", Status: MemberExtension},
 		{Type: "GraphQL", Name: "Parent", Status: MemberBound},
 		{Type: "Arguments", Name: "ContainsKey", Status: MemberBound},
 		{Type: "Arguments", Name: "Count", Status: MemberBound},
@@ -143,4 +152,50 @@ func Allowlist() []Member {
 		{Type: "value", Name: "ToString", Status: MemberBound},
 		{Type: "string", Name: "Length", Status: MemberBound},
 	}
+}
+
+// frameworkTypeOf names the .NET type a `framework` allowlist entry reads.
+//
+// The gate uses it to check Microsoft's reference actually lists that type. An
+// entry claiming framework status for a type nobody lists would be an extension
+// wearing a stronger label.
+func frameworkTypeOf(typ string) (string, bool) {
+	switch typ {
+	case "Certificate":
+		return "System.Security.Cryptography.X509Certificates.X509Certificate2", true
+	}
+	return "", false
+}
+
+// Inventory is the full ledger: what this emulator implements, plus every
+// documented member it does not, as `planned`.
+//
+// Planned rows are COMPUTED rather than written down. Hand-maintaining a list of
+// what somebody else documents is exactly the drift this package already paid
+// for once: a documented member nobody noticed simply never got a row. Deriving
+// them means a member Microsoft adds becomes a planned row the moment the
+// vendored source is refreshed, with nobody needing to notice.
+func Inventory() []Member {
+	implemented := map[string]map[string]bool{}
+	members := []Member{}
+	for _, member := range Allowlist() {
+		if implemented[member.Type] == nil {
+			implemented[member.Type] = map[string]bool{}
+		}
+		implemented[member.Type][member.Name] = true
+		members = append(members, member)
+	}
+	for _, member := range Documented() {
+		if implemented[member.Type][member.Name] {
+			continue
+		}
+		members = append(members, Member{Type: member.Type, Name: member.Name, Status: MemberPlanned})
+	}
+	sort.SliceStable(members, func(i, j int) bool {
+		if members[i].Type != members[j].Type {
+			return members[i].Type < members[j].Type
+		}
+		return members[i].Name < members[j].Name
+	})
+	return members
 }

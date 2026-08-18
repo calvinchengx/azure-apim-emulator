@@ -43,6 +43,10 @@ jobs:
           python-version: "3.12"
       - run: ./scripts/check_witnesses.py --strict
       - run: ./scripts/check_policy_inventory.py --strict
+      # Binds the expression inventory to Microsoft's own vendored sources. A
+      # refresh of third_party/microsoft that nobody regenerated from fails here
+      # rather than leaving the ledger measuring against a stale denominator.
+      - run: ./scripts/derive_expression_surface.py --check
       # Binds the parity ledger's operation-surface figures to the committed
       # probe results. The probe itself runs in the `go` job, since it needs a
       # running emulator; this only checks that nothing drifted from it.

@@ -3,81 +3,6 @@
   "status": "implemented",
   "members": [
     {
-      "type": "context",
-      "name": "Api",
-      "status": "bound"
-    },
-    {
-      "type": "context",
-      "name": "Deployment",
-      "status": "bound"
-    },
-    {
-      "type": "context",
-      "name": "Elapsed",
-      "status": "bound"
-    },
-    {
-      "type": "context",
-      "name": "GraphQL",
-      "status": "bound"
-    },
-    {
-      "type": "context",
-      "name": "LastError",
-      "status": "bound"
-    },
-    {
-      "type": "context",
-      "name": "Operation",
-      "status": "bound"
-    },
-    {
-      "type": "context",
-      "name": "Product",
-      "status": "bound"
-    },
-    {
-      "type": "context",
-      "name": "Request",
-      "status": "bound"
-    },
-    {
-      "type": "context",
-      "name": "RequestId",
-      "status": "bound"
-    },
-    {
-      "type": "context",
-      "name": "Response",
-      "status": "bound"
-    },
-    {
-      "type": "context",
-      "name": "Subscription",
-      "status": "bound"
-    },
-    {
-      "type": "context",
-      "name": "Timestamp",
-      "status": "bound"
-    },
-    {
-      "type": "context",
-      "name": "Tracing",
-      "status": "bound"
-    },
-    {
-      "type": "context",
-      "name": "User",
-      "status": "bound"
-    },
-    {
-      "type": "context",
-      "name": "Variables",
-      "status": "bound"
-    },
-    {
       "type": "Api",
       "name": "Id",
       "status": "bound"
@@ -99,6 +24,11 @@
     },
     {
       "type": "Api",
+      "name": "Protocols",
+      "status": "planned"
+    },
+    {
+      "type": "Api",
       "name": "Revision",
       "status": "bound"
     },
@@ -109,7 +39,147 @@
     },
     {
       "type": "Api",
+      "name": "SubscriptionKeyParameterNames",
+      "status": "planned"
+    },
+    {
+      "type": "Api",
       "name": "Version",
+      "status": "bound"
+    },
+    {
+      "type": "Arguments",
+      "name": "ContainsKey",
+      "status": "bound"
+    },
+    {
+      "type": "Arguments",
+      "name": "Count",
+      "status": "bound"
+    },
+    {
+      "type": "Authorization",
+      "name": "AccessToken",
+      "status": "bound"
+    },
+    {
+      "type": "Authorization",
+      "name": "ClientId",
+      "status": "bound"
+    },
+    {
+      "type": "Authorization",
+      "name": "ExpiresIn",
+      "status": "bound"
+    },
+    {
+      "type": "Authorization",
+      "name": "Scopes",
+      "status": "bound"
+    },
+    {
+      "type": "AzureVnetInfo",
+      "name": "PrivateLinkId",
+      "status": "planned"
+    },
+    {
+      "type": "AzureVnetInfo",
+      "name": "SnatVip",
+      "status": "planned"
+    },
+    {
+      "type": "AzureVnetInfo",
+      "name": "SubnetId",
+      "status": "planned"
+    },
+    {
+      "type": "AzureVnetInfo",
+      "name": "VnetTrafficTag",
+      "status": "planned"
+    },
+    {
+      "type": "Backend",
+      "name": "AzureRegion",
+      "status": "planned"
+    },
+    {
+      "type": "Backend",
+      "name": "Id",
+      "status": "planned"
+    },
+    {
+      "type": "Backend",
+      "name": "Type",
+      "status": "planned"
+    },
+    {
+      "type": "BasicAuthCredentials",
+      "name": "Password",
+      "status": "planned"
+    },
+    {
+      "type": "BasicAuthCredentials",
+      "name": "Username",
+      "status": "planned"
+    },
+    {
+      "type": "Body",
+      "name": "As",
+      "status": "bound"
+    },
+    {
+      "type": "Body",
+      "name": "AsFormUrlEncodedContent",
+      "status": "bound"
+    },
+    {
+      "type": "Body",
+      "name": "AsString",
+      "status": "extension"
+    },
+    {
+      "type": "Certificate",
+      "name": "Issuer",
+      "status": "framework"
+    },
+    {
+      "type": "Certificate",
+      "name": "NotAfter",
+      "status": "framework"
+    },
+    {
+      "type": "Certificate",
+      "name": "NotBefore",
+      "status": "framework"
+    },
+    {
+      "type": "Certificate",
+      "name": "SerialNumber",
+      "status": "framework"
+    },
+    {
+      "type": "Certificate",
+      "name": "Subject",
+      "status": "framework"
+    },
+    {
+      "type": "Certificate",
+      "name": "Thumbprint",
+      "status": "framework"
+    },
+    {
+      "type": "Certificate",
+      "name": "Verify",
+      "status": "framework"
+    },
+    {
+      "type": "Certificates",
+      "name": "ContainsKey",
+      "status": "bound"
+    },
+    {
+      "type": "Certificates",
+      "name": "Count",
       "status": "bound"
     },
     {
@@ -143,6 +213,16 @@
       "status": "bound"
     },
     {
+      "type": "Deployment",
+      "name": "SustainabilityInfo",
+      "status": "planned"
+    },
+    {
+      "type": "Foundry",
+      "name": "Deployment",
+      "status": "planned"
+    },
+    {
       "type": "Gateway",
       "name": "Id",
       "status": "bound"
@@ -160,22 +240,122 @@
     {
       "type": "Gateway",
       "name": "RegionName",
+      "status": "extension"
+    },
+    {
+      "type": "GraphQL",
+      "name": "Arguments",
+      "status": "extension"
+    },
+    {
+      "type": "GraphQL",
+      "name": "GraphQLArguments",
+      "status": "planned"
+    },
+    {
+      "type": "GraphQL",
+      "name": "Parent",
       "status": "bound"
+    },
+    {
+      "type": "Group",
+      "name": "Id",
+      "status": "bound"
+    },
+    {
+      "type": "Group",
+      "name": "Name",
+      "status": "bound"
+    },
+    {
+      "type": "Headers",
+      "name": "Get",
+      "status": "bound"
+    },
+    {
+      "type": "Headers",
+      "name": "GetValueOrDefault",
+      "status": "bound"
+    },
+    {
+      "type": "Jwt",
+      "name": "Algorithm",
+      "status": "planned"
+    },
+    {
+      "type": "Jwt",
+      "name": "Audiences",
+      "status": "planned"
+    },
+    {
+      "type": "Jwt",
+      "name": "Claims",
+      "status": "planned"
+    },
+    {
+      "type": "Jwt",
+      "name": "ExpirationTime",
+      "status": "planned"
+    },
+    {
+      "type": "Jwt",
+      "name": "Id",
+      "status": "planned"
+    },
+    {
+      "type": "Jwt",
+      "name": "IssuedAt",
+      "status": "planned"
+    },
+    {
+      "type": "Jwt",
+      "name": "Issuer",
+      "status": "planned"
+    },
+    {
+      "type": "Jwt",
+      "name": "NotBefore",
+      "status": "planned"
+    },
+    {
+      "type": "Jwt",
+      "name": "Subject",
+      "status": "planned"
+    },
+    {
+      "type": "Jwt",
+      "name": "Type",
+      "status": "planned"
     },
     {
       "type": "LastError",
       "name": "Element",
-      "status": "bound"
+      "status": "extension"
     },
     {
       "type": "LastError",
       "name": "ElementPath",
-      "status": "bound"
+      "status": "extension"
+    },
+    {
+      "type": "LastError",
+      "name": "HttpErrorCode",
+      "status": "planned"
     },
     {
       "type": "LastError",
       "name": "Message",
       "status": "bound"
+    },
+    {
+      "type": "LastError",
+      "name": "Path",
+      "status": "planned"
+    },
+    {
+      "type": "LastError",
+      "name": "PolicyId",
+      "status": "planned"
     },
     {
       "type": "LastError",
@@ -218,6 +398,21 @@
       "status": "bound"
     },
     {
+      "type": "PrivateEndpointConnection",
+      "name": "GroupId",
+      "status": "planned"
+    },
+    {
+      "type": "PrivateEndpointConnection",
+      "name": "MemberName",
+      "status": "planned"
+    },
+    {
+      "type": "PrivateEndpointConnection",
+      "name": "Name",
+      "status": "planned"
+    },
+    {
       "type": "Product",
       "name": "Apis",
       "status": "bound"
@@ -249,6 +444,11 @@
     },
     {
       "type": "Product",
+      "name": "SubscriptionLimit",
+      "status": "planned"
+    },
+    {
+      "type": "Product",
       "name": "SubscriptionRequired",
       "status": "bound"
     },
@@ -259,6 +459,11 @@
     },
     {
       "type": "Request",
+      "name": "AzureVnetInfo",
+      "status": "planned"
+    },
+    {
+      "type": "Request",
       "name": "Body",
       "status": "bound"
     },
@@ -266,6 +471,11 @@
       "type": "Request",
       "name": "Certificate",
       "status": "bound"
+    },
+    {
+      "type": "Request",
+      "name": "Foundry",
+      "status": "planned"
     },
     {
       "type": "Request",
@@ -291,6 +501,11 @@
       "type": "Request",
       "name": "OriginalUrl",
       "status": "bound"
+    },
+    {
+      "type": "Request",
+      "name": "PrivateEndpointConnection",
+      "status": "planned"
     },
     {
       "type": "Request",
@@ -358,99 +573,19 @@
       "status": "bound"
     },
     {
-      "type": "User",
-      "name": "Email",
-      "status": "bound"
+      "type": "SubscriptionKeyParameterNames",
+      "name": "Header",
+      "status": "planned"
     },
     {
-      "type": "User",
-      "name": "FirstName",
-      "status": "bound"
+      "type": "SubscriptionKeyParameterNames",
+      "name": "Query",
+      "status": "planned"
     },
     {
-      "type": "User",
-      "name": "Groups",
-      "status": "bound"
-    },
-    {
-      "type": "User",
-      "name": "Id",
-      "status": "bound"
-    },
-    {
-      "type": "User",
-      "name": "Identities",
-      "status": "bound"
-    },
-    {
-      "type": "User",
-      "name": "LastName",
-      "status": "bound"
-    },
-    {
-      "type": "User",
-      "name": "Note",
-      "status": "bound"
-    },
-    {
-      "type": "User",
-      "name": "RegistrationDate",
-      "status": "bound"
-    },
-    {
-      "type": "Group",
-      "name": "Id",
-      "status": "bound"
-    },
-    {
-      "type": "Group",
-      "name": "Name",
-      "status": "bound"
-    },
-    {
-      "type": "UserIdentity",
-      "name": "Id",
-      "status": "bound"
-    },
-    {
-      "type": "UserIdentity",
-      "name": "Provider",
-      "status": "bound"
-    },
-    {
-      "type": "Certificate",
-      "name": "Issuer",
-      "status": "bound"
-    },
-    {
-      "type": "Certificate",
-      "name": "NotAfter",
-      "status": "bound"
-    },
-    {
-      "type": "Certificate",
-      "name": "NotBefore",
-      "status": "bound"
-    },
-    {
-      "type": "Certificate",
-      "name": "SerialNumber",
-      "status": "bound"
-    },
-    {
-      "type": "Certificate",
-      "name": "Subject",
-      "status": "bound"
-    },
-    {
-      "type": "Certificate",
-      "name": "Thumbprint",
-      "status": "bound"
-    },
-    {
-      "type": "Certificate",
-      "name": "Verify",
-      "status": "bound"
+      "type": "SustainabilityInfo",
+      "name": "CurrentCarbonIntensity",
+      "status": "planned"
     },
     {
       "type": "Url",
@@ -483,73 +618,58 @@
       "status": "bound"
     },
     {
-      "type": "Body",
-      "name": "As",
+      "type": "User",
+      "name": "Email",
       "status": "bound"
     },
     {
-      "type": "Body",
-      "name": "AsFormUrlEncodedContent",
+      "type": "User",
+      "name": "FirstName",
       "status": "bound"
     },
     {
-      "type": "GraphQL",
-      "name": "Arguments",
+      "type": "User",
+      "name": "Groups",
       "status": "bound"
     },
     {
-      "type": "GraphQL",
-      "name": "Parent",
+      "type": "User",
+      "name": "Id",
       "status": "bound"
     },
     {
-      "type": "Arguments",
-      "name": "ContainsKey",
+      "type": "User",
+      "name": "Identities",
       "status": "bound"
     },
     {
-      "type": "Arguments",
-      "name": "Count",
+      "type": "User",
+      "name": "LastName",
       "status": "bound"
     },
     {
-      "type": "Authorization",
-      "name": "AccessToken",
+      "type": "User",
+      "name": "Name",
+      "status": "extension"
+    },
+    {
+      "type": "User",
+      "name": "Note",
       "status": "bound"
     },
     {
-      "type": "Authorization",
-      "name": "ClientId",
+      "type": "User",
+      "name": "RegistrationDate",
       "status": "bound"
     },
     {
-      "type": "Authorization",
-      "name": "Scopes",
+      "type": "UserIdentity",
+      "name": "Id",
       "status": "bound"
     },
     {
-      "type": "Authorization",
-      "name": "ExpiresIn",
-      "status": "bound"
-    },
-    {
-      "type": "Headers",
-      "name": "Get",
-      "status": "bound"
-    },
-    {
-      "type": "Headers",
-      "name": "GetValueOrDefault",
-      "status": "bound"
-    },
-    {
-      "type": "Certificates",
-      "name": "ContainsKey",
-      "status": "bound"
-    },
-    {
-      "type": "Certificates",
-      "name": "Count",
+      "type": "UserIdentity",
+      "name": "Provider",
       "status": "bound"
     },
     {
@@ -558,23 +678,113 @@
       "status": "bound"
     },
     {
-      "type": "Body",
-      "name": "AsString",
-      "status": "extension"
+      "type": "Workspace",
+      "name": "Id",
+      "status": "planned"
     },
     {
-      "type": "User",
+      "type": "Workspace",
       "name": "Name",
-      "status": "extension"
+      "status": "planned"
     },
     {
-      "type": "value",
-      "name": "ToString",
+      "type": "context",
+      "name": "Api",
       "status": "bound"
+    },
+    {
+      "type": "context",
+      "name": "Backend",
+      "status": "planned"
+    },
+    {
+      "type": "context",
+      "name": "Deployment",
+      "status": "bound"
+    },
+    {
+      "type": "context",
+      "name": "Elapsed",
+      "status": "bound"
+    },
+    {
+      "type": "context",
+      "name": "GraphQL",
+      "status": "bound"
+    },
+    {
+      "type": "context",
+      "name": "LastError",
+      "status": "bound"
+    },
+    {
+      "type": "context",
+      "name": "Operation",
+      "status": "bound"
+    },
+    {
+      "type": "context",
+      "name": "Product",
+      "status": "bound"
+    },
+    {
+      "type": "context",
+      "name": "Request",
+      "status": "bound"
+    },
+    {
+      "type": "context",
+      "name": "RequestId",
+      "status": "bound"
+    },
+    {
+      "type": "context",
+      "name": "Response",
+      "status": "bound"
+    },
+    {
+      "type": "context",
+      "name": "Subscription",
+      "status": "bound"
+    },
+    {
+      "type": "context",
+      "name": "Timestamp",
+      "status": "bound"
+    },
+    {
+      "type": "context",
+      "name": "Trace",
+      "status": "planned"
+    },
+    {
+      "type": "context",
+      "name": "Tracing",
+      "status": "bound"
+    },
+    {
+      "type": "context",
+      "name": "User",
+      "status": "bound"
+    },
+    {
+      "type": "context",
+      "name": "Variables",
+      "status": "bound"
+    },
+    {
+      "type": "context",
+      "name": "Workspace",
+      "status": "planned"
     },
     {
       "type": "string",
       "name": "Length",
+      "status": "bound"
+    },
+    {
+      "type": "value",
+      "name": "ToString",
       "status": "bound"
     }
   ]
