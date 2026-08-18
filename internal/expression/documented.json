@@ -1,0 +1,1142 @@
+{
+ "note": "DERIVED by scripts/derive_expression_surface.py from third_party/microsoft/. Do not edit by hand.",
+ "members": [
+  {
+   "type": "Api",
+   "name": "Id",
+   "sources": [
+    "reference",
+    "toolkit"
+   ]
+  },
+  {
+   "type": "Api",
+   "name": "IsCurrentRevision",
+   "sources": [
+    "reference",
+    "toolkit"
+   ]
+  },
+  {
+   "type": "Api",
+   "name": "Name",
+   "sources": [
+    "reference",
+    "toolkit"
+   ]
+  },
+  {
+   "type": "Api",
+   "name": "Path",
+   "sources": [
+    "reference",
+    "toolkit"
+   ]
+  },
+  {
+   "type": "Api",
+   "name": "Protocols",
+   "sources": [
+    "reference",
+    "toolkit"
+   ]
+  },
+  {
+   "type": "Api",
+   "name": "Revision",
+   "sources": [
+    "reference",
+    "toolkit"
+   ]
+  },
+  {
+   "type": "Api",
+   "name": "ServiceUrl",
+   "sources": [
+    "reference",
+    "toolkit"
+   ]
+  },
+  {
+   "type": "Api",
+   "name": "SubscriptionKeyParameterNames",
+   "sources": [
+    "reference",
+    "toolkit"
+   ]
+  },
+  {
+   "type": "Api",
+   "name": "Version",
+   "sources": [
+    "reference",
+    "toolkit"
+   ]
+  },
+  {
+   "type": "AzureVnetInfo",
+   "name": "PrivateLinkId",
+   "sources": [
+    "toolkit"
+   ]
+  },
+  {
+   "type": "AzureVnetInfo",
+   "name": "SnatVip",
+   "sources": [
+    "toolkit"
+   ]
+  },
+  {
+   "type": "AzureVnetInfo",
+   "name": "SubnetId",
+   "sources": [
+    "toolkit"
+   ]
+  },
+  {
+   "type": "AzureVnetInfo",
+   "name": "VnetTrafficTag",
+   "sources": [
+    "toolkit"
+   ]
+  },
+  {
+   "type": "Backend",
+   "name": "AzureRegion",
+   "sources": [
+    "reference"
+   ]
+  },
+  {
+   "type": "Backend",
+   "name": "Id",
+   "sources": [
+    "reference"
+   ]
+  },
+  {
+   "type": "Backend",
+   "name": "Type",
+   "sources": [
+    "reference"
+   ]
+  },
+  {
+   "type": "BasicAuthCredentials",
+   "name": "Password",
+   "sources": [
+    "toolkit"
+   ]
+  },
+  {
+   "type": "BasicAuthCredentials",
+   "name": "Username",
+   "sources": [
+    "toolkit"
+   ]
+  },
+  {
+   "type": "Body",
+   "name": "As",
+   "sources": [
+    "reference"
+   ]
+  },
+  {
+   "type": "Body",
+   "name": "AsFormUrlEncodedContent",
+   "sources": [
+    "reference"
+   ]
+  },
+  {
+   "type": "Deployment",
+   "name": "Certificates",
+   "sources": [
+    "reference",
+    "toolkit"
+   ]
+  },
+  {
+   "type": "Deployment",
+   "name": "Gateway",
+   "sources": [
+    "reference"
+   ]
+  },
+  {
+   "type": "Deployment",
+   "name": "GatewayId",
+   "sources": [
+    "reference",
+    "toolkit"
+   ]
+  },
+  {
+   "type": "Deployment",
+   "name": "Region",
+   "sources": [
+    "reference",
+    "toolkit"
+   ]
+  },
+  {
+   "type": "Deployment",
+   "name": "ServiceId",
+   "sources": [
+    "reference",
+    "toolkit"
+   ]
+  },
+  {
+   "type": "Deployment",
+   "name": "ServiceName",
+   "sources": [
+    "reference",
+    "toolkit"
+   ]
+  },
+  {
+   "type": "Deployment",
+   "name": "SustainabilityInfo",
+   "sources": [
+    "reference"
+   ]
+  },
+  {
+   "type": "Foundry",
+   "name": "Deployment",
+   "sources": [
+    "reference"
+   ]
+  },
+  {
+   "type": "Gateway",
+   "name": "Id",
+   "sources": [
+    "reference"
+   ]
+  },
+  {
+   "type": "Gateway",
+   "name": "InstanceId",
+   "sources": [
+    "reference"
+   ]
+  },
+  {
+   "type": "Gateway",
+   "name": "IsManaged",
+   "sources": [
+    "reference"
+   ]
+  },
+  {
+   "type": "GraphQL",
+   "name": "GraphQLArguments",
+   "sources": [
+    "reference"
+   ]
+  },
+  {
+   "type": "GraphQL",
+   "name": "Parent",
+   "sources": [
+    "reference"
+   ]
+  },
+  {
+   "type": "Group",
+   "name": "Id",
+   "sources": [
+    "reference",
+    "toolkit"
+   ]
+  },
+  {
+   "type": "Group",
+   "name": "Name",
+   "sources": [
+    "reference",
+    "toolkit"
+   ]
+  },
+  {
+   "type": "Jwt",
+   "name": "Algorithm",
+   "sources": [
+    "toolkit"
+   ]
+  },
+  {
+   "type": "Jwt",
+   "name": "Audiences",
+   "sources": [
+    "toolkit"
+   ]
+  },
+  {
+   "type": "Jwt",
+   "name": "Claims",
+   "sources": [
+    "toolkit"
+   ]
+  },
+  {
+   "type": "Jwt",
+   "name": "ExpirationTime",
+   "sources": [
+    "toolkit"
+   ]
+  },
+  {
+   "type": "Jwt",
+   "name": "Id",
+   "sources": [
+    "toolkit"
+   ]
+  },
+  {
+   "type": "Jwt",
+   "name": "IssuedAt",
+   "sources": [
+    "toolkit"
+   ]
+  },
+  {
+   "type": "Jwt",
+   "name": "Issuer",
+   "sources": [
+    "toolkit"
+   ]
+  },
+  {
+   "type": "Jwt",
+   "name": "NotBefore",
+   "sources": [
+    "toolkit"
+   ]
+  },
+  {
+   "type": "Jwt",
+   "name": "Subject",
+   "sources": [
+    "toolkit"
+   ]
+  },
+  {
+   "type": "Jwt",
+   "name": "Type",
+   "sources": [
+    "toolkit"
+   ]
+  },
+  {
+   "type": "LastError",
+   "name": "HttpErrorCode",
+   "sources": [
+    "toolkit"
+   ]
+  },
+  {
+   "type": "LastError",
+   "name": "Message",
+   "sources": [
+    "reference",
+    "toolkit"
+   ]
+  },
+  {
+   "type": "LastError",
+   "name": "Path",
+   "sources": [
+    "reference",
+    "toolkit"
+   ]
+  },
+  {
+   "type": "LastError",
+   "name": "PolicyId",
+   "sources": [
+    "reference",
+    "toolkit"
+   ]
+  },
+  {
+   "type": "LastError",
+   "name": "Reason",
+   "sources": [
+    "reference",
+    "toolkit"
+   ]
+  },
+  {
+   "type": "LastError",
+   "name": "Scope",
+   "sources": [
+    "reference",
+    "toolkit"
+   ]
+  },
+  {
+   "type": "LastError",
+   "name": "Section",
+   "sources": [
+    "reference",
+    "toolkit"
+   ]
+  },
+  {
+   "type": "LastError",
+   "name": "Source",
+   "sources": [
+    "reference",
+    "toolkit"
+   ]
+  },
+  {
+   "type": "Operation",
+   "name": "Id",
+   "sources": [
+    "reference",
+    "toolkit"
+   ]
+  },
+  {
+   "type": "Operation",
+   "name": "Method",
+   "sources": [
+    "reference",
+    "toolkit"
+   ]
+  },
+  {
+   "type": "Operation",
+   "name": "Name",
+   "sources": [
+    "reference",
+    "toolkit"
+   ]
+  },
+  {
+   "type": "Operation",
+   "name": "UrlTemplate",
+   "sources": [
+    "reference",
+    "toolkit"
+   ]
+  },
+  {
+   "type": "PrivateEndpointConnection",
+   "name": "GroupId",
+   "sources": [
+    "reference",
+    "toolkit"
+   ]
+  },
+  {
+   "type": "PrivateEndpointConnection",
+   "name": "MemberName",
+   "sources": [
+    "reference",
+    "toolkit"
+   ]
+  },
+  {
+   "type": "PrivateEndpointConnection",
+   "name": "Name",
+   "sources": [
+    "reference",
+    "toolkit"
+   ]
+  },
+  {
+   "type": "Product",
+   "name": "Apis",
+   "sources": [
+    "toolkit"
+   ]
+  },
+  {
+   "type": "Product",
+   "name": "ApprovalRequired",
+   "sources": [
+    "reference",
+    "toolkit"
+   ]
+  },
+  {
+   "type": "Product",
+   "name": "Groups",
+   "sources": [
+    "reference",
+    "toolkit"
+   ]
+  },
+  {
+   "type": "Product",
+   "name": "Id",
+   "sources": [
+    "reference",
+    "toolkit"
+   ]
+  },
+  {
+   "type": "Product",
+   "name": "Name",
+   "sources": [
+    "reference",
+    "toolkit"
+   ]
+  },
+  {
+   "type": "Product",
+   "name": "State",
+   "sources": [
+    "reference",
+    "toolkit"
+   ]
+  },
+  {
+   "type": "Product",
+   "name": "SubscriptionLimit",
+   "sources": [
+    "toolkit"
+   ]
+  },
+  {
+   "type": "Product",
+   "name": "SubscriptionRequired",
+   "sources": [
+    "reference",
+    "toolkit"
+   ]
+  },
+  {
+   "type": "Product",
+   "name": "SubscriptionsLimit",
+   "sources": [
+    "reference"
+   ]
+  },
+  {
+   "type": "Request",
+   "name": "AzureVnetInfo",
+   "sources": [
+    "toolkit"
+   ]
+  },
+  {
+   "type": "Request",
+   "name": "Body",
+   "sources": [
+    "reference",
+    "toolkit"
+   ]
+  },
+  {
+   "type": "Request",
+   "name": "Certificate",
+   "sources": [
+    "reference",
+    "toolkit"
+   ]
+  },
+  {
+   "type": "Request",
+   "name": "Foundry",
+   "sources": [
+    "reference"
+   ]
+  },
+  {
+   "type": "Request",
+   "name": "Headers",
+   "sources": [
+    "reference",
+    "toolkit"
+   ]
+  },
+  {
+   "type": "Request",
+   "name": "IpAddress",
+   "sources": [
+    "reference",
+    "toolkit"
+   ]
+  },
+  {
+   "type": "Request",
+   "name": "MatchedParameters",
+   "sources": [
+    "reference",
+    "toolkit"
+   ]
+  },
+  {
+   "type": "Request",
+   "name": "Method",
+   "sources": [
+    "reference",
+    "toolkit"
+   ]
+  },
+  {
+   "type": "Request",
+   "name": "OriginalUrl",
+   "sources": [
+    "reference",
+    "toolkit"
+   ]
+  },
+  {
+   "type": "Request",
+   "name": "PrivateEndpointConnection",
+   "sources": [
+    "reference",
+    "toolkit"
+   ]
+  },
+  {
+   "type": "Request",
+   "name": "Url",
+   "sources": [
+    "reference",
+    "toolkit"
+   ]
+  },
+  {
+   "type": "Response",
+   "name": "Body",
+   "sources": [
+    "reference",
+    "toolkit"
+   ]
+  },
+  {
+   "type": "Response",
+   "name": "Headers",
+   "sources": [
+    "reference",
+    "toolkit"
+   ]
+  },
+  {
+   "type": "Response",
+   "name": "StatusCode",
+   "sources": [
+    "reference",
+    "toolkit"
+   ]
+  },
+  {
+   "type": "Response",
+   "name": "StatusReason",
+   "sources": [
+    "reference",
+    "toolkit"
+   ]
+  },
+  {
+   "type": "Subscription",
+   "name": "CreatedDate",
+   "sources": [
+    "reference",
+    "toolkit"
+   ]
+  },
+  {
+   "type": "Subscription",
+   "name": "EndDate",
+   "sources": [
+    "reference",
+    "toolkit"
+   ]
+  },
+  {
+   "type": "Subscription",
+   "name": "Id",
+   "sources": [
+    "reference",
+    "toolkit"
+   ]
+  },
+  {
+   "type": "Subscription",
+   "name": "Key",
+   "sources": [
+    "reference",
+    "toolkit"
+   ]
+  },
+  {
+   "type": "Subscription",
+   "name": "Name",
+   "sources": [
+    "reference",
+    "toolkit"
+   ]
+  },
+  {
+   "type": "Subscription",
+   "name": "PrimaryKey",
+   "sources": [
+    "reference",
+    "toolkit"
+   ]
+  },
+  {
+   "type": "Subscription",
+   "name": "SecondaryKey",
+   "sources": [
+    "reference",
+    "toolkit"
+   ]
+  },
+  {
+   "type": "Subscription",
+   "name": "StartDate",
+   "sources": [
+    "reference",
+    "toolkit"
+   ]
+  },
+  {
+   "type": "SubscriptionKeyParameterNames",
+   "name": "Header",
+   "sources": [
+    "reference",
+    "toolkit"
+   ]
+  },
+  {
+   "type": "SubscriptionKeyParameterNames",
+   "name": "Query",
+   "sources": [
+    "reference",
+    "toolkit"
+   ]
+  },
+  {
+   "type": "SustainabilityInfo",
+   "name": "CurrentCarbonIntensity",
+   "sources": [
+    "reference"
+   ]
+  },
+  {
+   "type": "Url",
+   "name": "Host",
+   "sources": [
+    "reference",
+    "toolkit"
+   ]
+  },
+  {
+   "type": "Url",
+   "name": "Path",
+   "sources": [
+    "reference",
+    "toolkit"
+   ]
+  },
+  {
+   "type": "Url",
+   "name": "Port",
+   "sources": [
+    "reference",
+    "toolkit"
+   ]
+  },
+  {
+   "type": "Url",
+   "name": "Query",
+   "sources": [
+    "reference",
+    "toolkit"
+   ]
+  },
+  {
+   "type": "Url",
+   "name": "QueryString",
+   "sources": [
+    "reference",
+    "toolkit"
+   ]
+  },
+  {
+   "type": "Url",
+   "name": "Scheme",
+   "sources": [
+    "reference",
+    "toolkit"
+   ]
+  },
+  {
+   "type": "User",
+   "name": "Email",
+   "sources": [
+    "reference",
+    "toolkit"
+   ]
+  },
+  {
+   "type": "User",
+   "name": "FirstName",
+   "sources": [
+    "reference",
+    "toolkit"
+   ]
+  },
+  {
+   "type": "User",
+   "name": "Groups",
+   "sources": [
+    "reference",
+    "toolkit"
+   ]
+  },
+  {
+   "type": "User",
+   "name": "Id",
+   "sources": [
+    "reference",
+    "toolkit"
+   ]
+  },
+  {
+   "type": "User",
+   "name": "Identities",
+   "sources": [
+    "reference",
+    "toolkit"
+   ]
+  },
+  {
+   "type": "User",
+   "name": "LastName",
+   "sources": [
+    "reference",
+    "toolkit"
+   ]
+  },
+  {
+   "type": "User",
+   "name": "Note",
+   "sources": [
+    "reference",
+    "toolkit"
+   ]
+  },
+  {
+   "type": "User",
+   "name": "RegistrationDate",
+   "sources": [
+    "reference",
+    "toolkit"
+   ]
+  },
+  {
+   "type": "UserIdentity",
+   "name": "Id",
+   "sources": [
+    "reference",
+    "toolkit"
+   ]
+  },
+  {
+   "type": "UserIdentity",
+   "name": "Provider",
+   "sources": [
+    "reference",
+    "toolkit"
+   ]
+  },
+  {
+   "type": "Workspace",
+   "name": "Id",
+   "sources": [
+    "reference"
+   ]
+  },
+  {
+   "type": "Workspace",
+   "name": "Name",
+   "sources": [
+    "reference"
+   ]
+  },
+  {
+   "type": "context",
+   "name": "Api",
+   "sources": [
+    "reference",
+    "toolkit"
+   ]
+  },
+  {
+   "type": "context",
+   "name": "Backend",
+   "sources": [
+    "reference"
+   ]
+  },
+  {
+   "type": "context",
+   "name": "Deployment",
+   "sources": [
+    "reference",
+    "toolkit"
+   ]
+  },
+  {
+   "type": "context",
+   "name": "Elapsed",
+   "sources": [
+    "reference",
+    "toolkit"
+   ]
+  },
+  {
+   "type": "context",
+   "name": "GraphQL",
+   "sources": [
+    "reference"
+   ]
+  },
+  {
+   "type": "context",
+   "name": "LastError",
+   "sources": [
+    "reference",
+    "toolkit"
+   ]
+  },
+  {
+   "type": "context",
+   "name": "Operation",
+   "sources": [
+    "reference",
+    "toolkit"
+   ]
+  },
+  {
+   "type": "context",
+   "name": "Product",
+   "sources": [
+    "toolkit"
+   ]
+  },
+  {
+   "type": "context",
+   "name": "Request",
+   "sources": [
+    "reference",
+    "toolkit"
+   ]
+  },
+  {
+   "type": "context",
+   "name": "RequestId",
+   "sources": [
+    "reference",
+    "toolkit"
+   ]
+  },
+  {
+   "type": "context",
+   "name": "Response",
+   "sources": [
+    "reference",
+    "toolkit"
+   ]
+  },
+  {
+   "type": "context",
+   "name": "Subscription",
+   "sources": [
+    "reference",
+    "toolkit"
+   ]
+  },
+  {
+   "type": "context",
+   "name": "Timestamp",
+   "sources": [
+    "reference",
+    "toolkit"
+   ]
+  },
+  {
+   "type": "context",
+   "name": "Trace",
+   "sources": [
+    "toolkit"
+   ]
+  },
+  {
+   "type": "context",
+   "name": "Tracing",
+   "sources": [
+    "reference",
+    "toolkit"
+   ]
+  },
+  {
+   "type": "context",
+   "name": "User",
+   "sources": [
+    "reference",
+    "toolkit"
+   ]
+  },
+  {
+   "type": "context",
+   "name": "Variables",
+   "sources": [
+    "reference",
+    "toolkit"
+   ]
+  },
+  {
+   "type": "context",
+   "name": "Workspace",
+   "sources": [
+    "reference"
+   ]
+  }
+ ],
+ "frameworkTypes": [
+  "Newtonsoft.Json.Formatting",
+  "Newtonsoft.Json.JsonConvert",
+  "Newtonsoft.Json.Linq.Extensions",
+  "Newtonsoft.Json.Linq.JArray",
+  "Newtonsoft.Json.Linq.JConstructor",
+  "Newtonsoft.Json.Linq.JContainer",
+  "Newtonsoft.Json.Linq.JObject",
+  "Newtonsoft.Json.Linq.JProperty",
+  "Newtonsoft.Json.Linq.JRaw",
+  "Newtonsoft.Json.Linq.JToken",
+  "Newtonsoft.Json.Linq.JTokenType",
+  "Newtonsoft.Json.Linq.JValue",
+  "System.Array",
+  "System.BitConverter",
+  "System.Boolean",
+  "System.Byte",
+  "System.Char",
+  "System.Collections.Generic.Dictionary<TKey, TValue>",
+  "System.Collections.Generic.HashSet<T>",
+  "System.Collections.Generic.ICollection<T>",
+  "System.Collections.Generic.IDictionary<TKey, TValue>",
+  "System.Collections.Generic.IEnumerable<T>",
+  "System.Collections.Generic.IEnumerator<T>",
+  "System.Collections.Generic.IList<T>",
+  "System.Collections.Generic.IReadOnlyCollection<T>",
+  "System.Collections.Generic.IReadOnlyDictionary<TKey, TValue>",
+  "System.Collections.Generic.ISet<T>",
+  "System.Collections.Generic.KeyValuePair<TKey, TValue>",
+  "System.Collections.Generic.List<T>",
+  "System.Collections.Generic.Queue<T>",
+  "System.Collections.Generic.Stack<T>",
+  "System.Convert",
+  "System.DateTime",
+  "System.DateTimeKind",
+  "System.DateTimeOffset",
+  "System.Decimal",
+  "System.Double",
+  "System.Enum",
+  "System.Exception",
+  "System.Guid",
+  "System.IO.StringReader",
+  "System.IO.StringWriter",
+  "System.Int16",
+  "System.Int32",
+  "System.Int64",
+  "System.Linq.Enumerable",
+  "System.Math",
+  "System.MidpointRounding",
+  "System.Net.IPAddress",
+  "System.Net.WebUtility",
+  "System.Nullable",
+  "System.Random",
+  "System.SByte",
+  "System.Security.Cryptography.AsymmetricAlgorithm",
+  "System.Security.Cryptography.CipherMode",
+  "System.Security.Cryptography.HMAC",
+  "System.Security.Cryptography.HMACMD5",
+  "System.Security.Cryptography.HMACSHA1",
+  "System.Security.Cryptography.HMACSHA256",
+  "System.Security.Cryptography.HMACSHA384",
+  "System.Security.Cryptography.HMACSHA512",
+  "System.Security.Cryptography.HashAlgorithm",
+  "System.Security.Cryptography.HashAlgorithmName",
+  "System.Security.Cryptography.KeyedHashAlgorithm",
+  "System.Security.Cryptography.MD5",
+  "System.Security.Cryptography.Oid",
+  "System.Security.Cryptography.PaddingMode",
+  "System.Security.Cryptography.RNGCryptoServiceProvider",
+  "System.Security.Cryptography.RSA",
+  "System.Security.Cryptography.RSAEncryptionPadding",
+  "System.Security.Cryptography.RSASignaturePadding",
+  "System.Security.Cryptography.SHA1",
+  "System.Security.Cryptography.SHA1Managed",
+  "System.Security.Cryptography.SHA256",
+  "System.Security.Cryptography.SHA256Managed",
+  "System.Security.Cryptography.SHA384",
+  "System.Security.Cryptography.SHA384Managed",
+  "System.Security.Cryptography.SHA512",
+  "System.Security.Cryptography.SHA512Managed",
+  "System.Security.Cryptography.SymmetricAlgorithm",
+  "System.Security.Cryptography.X509Certificates.PublicKey",
+  "System.Security.Cryptography.X509Certificates.RSACertificateExtensions",
+  "System.Security.Cryptography.X509Certificates.X500DistinguishedName",
+  "System.Security.Cryptography.X509Certificates.X509Certificate",
+  "System.Security.Cryptography.X509Certificates.X509Certificate2",
+  "System.Security.Cryptography.X509Certificates.X509ContentType",
+  "System.Security.Cryptography.X509Certificates.X509NameType",
+  "System.Single",
+  "System.String",
+  "System.StringComparer",
+  "System.StringComparison",
+  "System.StringSplitOptions",
+  "System.Text.Encoding",
+  "System.Text.RegularExpressions.Capture",
+  "System.Text.RegularExpressions.CaptureCollection",
+  "System.Text.RegularExpressions.Group",
+  "System.Text.RegularExpressions.GroupCollection",
+  "System.Text.RegularExpressions.Match",
+  "System.Text.RegularExpressions.Regex",
+  "System.Text.RegularExpressions.RegexOptions",
+  "System.Text.StringBuilder",
+  "System.TimeSpan",
+  "System.TimeZone",
+  "System.TimeZoneInfo",
+  "System.TimeZoneInfo.AdjustmentRule",
+  "System.TimeZoneInfo.TransitionTime",
+  "System.Tuple",
+  "System.UInt16",
+  "System.UInt32",
+  "System.UInt64",
+  "System.Uri",
+  "System.UriPartial",
+  "System.Xml.Linq.Extensions",
+  "System.Xml.Linq.XAttribute",
+  "System.Xml.Linq.XCData",
+  "System.Xml.Linq.XComment",
+  "System.Xml.Linq.XContainer",
+  "System.Xml.Linq.XDeclaration",
+  "System.Xml.Linq.XDocument",
+  "System.Xml.Linq.XDocumentType",
+  "System.Xml.Linq.XElement",
+  "System.Xml.Linq.XName",
+  "System.Xml.Linq.XNamespace",
+  "System.Xml.Linq.XNode",
+  "System.Xml.Linq.XNodeDocumentOrderComparer",
+  "System.Xml.Linq.XNodeEqualityComparer",
+  "System.Xml.Linq.XObject",
+  "System.Xml.Linq.XProcessingInstruction",
+  "System.Xml.Linq.XText",
+  "System.Xml.XmlNodeType"
+ ]
+}

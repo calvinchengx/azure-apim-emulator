@@ -16,6 +16,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -33,8 +34,8 @@ func TestAllowlistMatchesCheckedInLedger(t *testing.T) {
 	if err := json.Unmarshal(raw, &document); err != nil {
 		t.Fatal(err)
 	}
-	if diff := memberDiff(document.Members, Allowlist()); diff != "" {
-		t.Fatalf("expression-members.json drifted from Allowlist(): %s", diff)
+	if diff := memberDiff(document.Members, Inventory()); diff != "" {
+		t.Fatalf("expression-members.json drifted from Inventory(): %s", diff)
 	}
 }
 
@@ -59,7 +60,7 @@ func TestBinderCasesMatchAllowlist(t *testing.T) {
 			}
 		}
 	}
-	for _, member := range Allowlist() {
+	for _, member := range Inventory() {
 		if member.Status != MemberPlanned {
 			continue
 		}
@@ -217,7 +218,10 @@ func TestAllowlistBoundMembersEvaluate(t *testing.T) {
 		"string.Length":                "@('ab'.Length)",
 	}
 	for _, member := range Allowlist() {
-		if member.Status != MemberBound {
+		// Framework members are Microsoft-backed claims that sit on the binder,
+		// so they must evaluate for the same reason bound members must. Only
+		// extensions are exempt: they are ours, and named as such.
+		if member.Status != MemberBound && member.Status != MemberFramework {
 			continue
 		}
 		source, ok := cases[member.Type+"."+member.Name]
@@ -228,7 +232,7 @@ func TestAllowlistBoundMembersEvaluate(t *testing.T) {
 			t.Fatalf("%s (%s): %v", member.Type+"."+member.Name, source, err)
 		}
 	}
-	for _, member := range Allowlist() {
+	for _, member := range Inventory() {
 		if member.Status != MemberPlanned {
 			continue
 		}
@@ -262,7 +266,9 @@ func TestAllowlistBoundMembersEvaluate(t *testing.T) {
 func boundByType(members []Member) map[string]map[string]bool {
 	result := map[string]map[string]bool{}
 	for _, member := range members {
-		if member.Status != MemberBound && member.Status != MemberExtension {
+		// Framework members sit on the binder too: the .NET type is available in
+		// a tenant, so the binder answers them. Only `planned` is absent.
+		if member.Status == MemberPlanned {
 			continue
 		}
 		if result[member.Type] == nil {
@@ -404,9 +410,40 @@ func joinMembers(values []string) string {
 // A self-referential inventory can prove the emulator agrees with itself and
 // can never show what it has never heard of. With this, a member Azure adds is
 // a `planned` row somebody has to write rather than an absence nothing detects.
+// The ledger is generated rather than hand-edited. Running the suite with
+// APIM_UPDATE_LEDGER=1 rewrites it from Inventory(); CI runs without it, so a
+// stale ledger fails the drift test above instead of being silently rewritten.
+func TestUpdateLedger(t *testing.T) {
+	if os.Getenv("APIM_UPDATE_LEDGER") != "1" {
+		t.Skip("set APIM_UPDATE_LEDGER=1 to regenerate docs/generated/expression-members.json")
+	}
+	path := filepath.Join("..", "..", "docs", "generated", "expression-members.json")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document struct {
+		Source  string   `json:"source"`
+		Status  string   `json:"status"`
+		Members []Member `json:"members"`
+	}
+	if err := json.Unmarshal(raw, &document); err != nil {
+		t.Fatal(err)
+	}
+	document.Members = Inventory()
+	encoded, err := json.MarshalIndent(document, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, append(encoded, '\n'), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("rewrote %s with %d members", path, len(document.Members))
+}
+
 func TestEveryDocumentedMemberIsClassified(t *testing.T) {
 	listed := map[string]map[string]bool{}
-	for _, member := range Allowlist() {
+	for _, member := range Inventory() {
 		if listed[member.Type] == nil {
 			listed[member.Type] = map[string]bool{}
 		}
@@ -419,7 +456,16 @@ func TestEveryDocumentedMemberIsClassified(t *testing.T) {
 		}
 	}
 	if len(missing) > 0 {
-		t.Fatalf("%d documented member(s) missing from the allowlist: %s", len(missing), strings.Join(missing, ", "))
+		t.Fatalf("%d documented member(s) missing from the inventory: %s", len(missing), strings.Join(missing, ", "))
+	}
+	// The inventory computes planned rows, so the property worth guarding is
+	// that it computes them from the DOCUMENTED surface rather than from
+	// nothing: a planned row for a member nobody documents would be invented.
+	documented := documentedIndex()
+	for _, member := range Inventory() {
+		if member.Status == MemberPlanned && !documented[member.Type][member.Name] {
+			t.Fatalf("%s.%s is planned but nobody documents it", member.Type, member.Name)
+		}
 	}
 }
 
@@ -444,6 +490,19 @@ func TestAllowlistDoesNotInventContextMembers(t *testing.T) {
 		if member.Status == MemberExtension {
 			continue
 		}
+		// A framework member reads a .NET type Microsoft lists as available.
+		// The type must actually appear on that list, or the entry is an
+		// extension wearing a stronger label.
+		if member.Status == MemberFramework {
+			dotted, ok := frameworkTypeOf(member.Type)
+			if !ok {
+				t.Fatalf("%s is framework-classified without naming a .NET type", member.Type)
+			}
+			if !slices.Contains(FrameworkTypes(), dotted) {
+				t.Fatalf("%s claims .NET type %s, which Microsoft's reference does not list", member.Type, dotted)
+			}
+			continue
+		}
 		t.Fatalf("allowlist has %s.%s, which Azure does not document and which is not a declared helper",
 			member.Type, member.Name)
 	}
@@ -457,8 +516,13 @@ func TestAllowlistDoesNotInventContextMembers(t *testing.T) {
 // checks now: a documented surface that shrank to nothing would pass every
 // other test in this file.
 func TestDocumentedSurfaceIsNotEmpty(t *testing.T) {
-	if len(Documented()) < 100 {
-		t.Fatalf("the documented surface has %d members; it had 113, so the inventory stopped measuring", len(Documented()))
+	if len(Documented()) < 125 {
+		t.Fatalf("the documented surface has %d members; it had 131, so the inventory stopped measuring", len(Documented()))
+	}
+	// The surface is derived from vendored sources, so an empty or unreadable
+	// vendor directory must not read as "Microsoft documents nothing".
+	if len(FrameworkTypes()) < 100 {
+		t.Fatalf("the allowed .NET type list has %d entries; it had 130", len(FrameworkTypes()))
 	}
 	// And every planned member, if any remain, must genuinely not resolve --
 	// a planned member that answers would make the ledger's own count wrong in
