@@ -14,12 +14,6 @@ import (
 	"time"
 )
 
-// NamedContext is Id/Name for Product, Subscription, and User.
-type NamedContext struct {
-	Id   string
-	Name string
-}
-
 // ApiContext is the documented scalar API identity.
 type ApiContext struct {
 	Id   string
@@ -65,7 +59,7 @@ type GatewayContext struct {
 
 // ProductContext is the documented product identity.
 //
-// Separate from NamedContext, rather than sharing it with User, because Azure's
+// Separate from the user context, rather than one struct for all three, because Azure's
 // IProduct and IUser are different types: one struct carrying both would let a
 // policy read a product field off a user and get an empty string instead of an
 // error.
@@ -76,6 +70,28 @@ type ProductContext struct {
 	ApprovalRequired     bool
 	SubscriptionRequired bool
 	SubscriptionsLimit   Value
+	// Groups and Apis are what the product grants access to. Empty rather than
+	// nil-checked at every read: a product with no groups is a product a policy
+	// can still ask about.
+	Groups []GroupContext
+	Apis   []ApiContext
+}
+
+// UserContext is the documented developer identity.
+//
+// Its own type, for the same reason Product and
+// Subscription have theirs: IUser has members the others do not, and one struct
+// carrying all of them lets a policy read a product field off a user.
+type UserContext struct {
+	Id               string
+	Name             string
+	Email            string
+	FirstName        string
+	LastName         string
+	Note             string
+	RegistrationDate string
+	Groups           []GroupContext
+	Identities       []UserIdentityContext
 }
 
 // SubscriptionContext is the documented subscription identity.
@@ -105,7 +121,7 @@ type Context struct {
 	Operation    *OperationContext
 	Product      *ProductContext
 	Subscription *SubscriptionContext
-	User         *NamedContext
+	User         *UserContext
 	Deployment   *DeploymentContext
 	// Timestamp is when the gateway received the request, and Elapsed is
 	// measured from it. Both are zero outside a request, where `context` still
@@ -205,7 +221,10 @@ func (c *contextHost) member(name string) (Value, error) {
 		}
 		return Object(&subscriptionHost{ctx: c.ctx.Subscription}), nil
 	case "User":
-		return namedObject(c.ctx.User), nil
+		if c.ctx.User == nil {
+			return Null(), nil
+		}
+		return Object(&userHost{ctx: c.ctx.User}), nil
 	case "Deployment":
 		if c.ctx.Deployment == nil {
 			return Null(), nil
@@ -227,29 +246,6 @@ func (c *contextHost) member(name string) (Value, error) {
 			return Null(), nil
 		}
 		return Object(&graphQLHost{ctx: c.ctx.GraphQL}), nil
-	default:
-		return Null(), fmt.Errorf("unknown member %s", name)
-	}
-}
-
-func namedObject(value *NamedContext) Value {
-	if value == nil {
-		return Null()
-	}
-	return Object(&namedHost{id: value.Id, name: value.Name})
-}
-
-type namedHost struct {
-	id   string
-	name string
-}
-
-func (h *namedHost) member(name string) (Value, error) {
-	switch name {
-	case "Id":
-		return String(h.id), nil
-	case "Name":
-		return String(h.name), nil
 	default:
 		return Null(), fmt.Errorf("unknown member %s", name)
 	}
@@ -296,11 +292,44 @@ func (h *productHost) member(name string) (Value, error) {
 		return Bool(h.ctx.ApprovalRequired), nil
 	case "SubscriptionRequired":
 		return Bool(h.ctx.SubscriptionRequired), nil
+	case "Groups":
+		return groupList(h.ctx.Groups), nil
+	case "Apis":
+		return apiList(h.ctx.Apis), nil
 	case "SubscriptionsLimit":
 		// Null rather than zero when the product sets no limit: Azure types this
 		// as a nullable int, and reporting 0 would read as "no subscriptions
 		// allowed", which is the opposite of "unlimited".
 		return h.ctx.SubscriptionsLimit, nil
+	default:
+		return Null(), fmt.Errorf("unknown member %s", name)
+	}
+}
+
+type userHost struct {
+	ctx *UserContext
+}
+
+func (h *userHost) member(name string) (Value, error) {
+	switch name {
+	case "Id":
+		return String(h.ctx.Id), nil
+	case "Name":
+		return String(h.ctx.Name), nil
+	case "Email":
+		return String(h.ctx.Email), nil
+	case "FirstName":
+		return String(h.ctx.FirstName), nil
+	case "LastName":
+		return String(h.ctx.LastName), nil
+	case "Note":
+		return String(h.ctx.Note), nil
+	case "RegistrationDate":
+		return String(h.ctx.RegistrationDate), nil
+	case "Groups":
+		return groupList(h.ctx.Groups), nil
+	case "Identities":
+		return identityList(h.ctx.Identities), nil
 	default:
 		return Null(), fmt.Errorf("unknown member %s", name)
 	}

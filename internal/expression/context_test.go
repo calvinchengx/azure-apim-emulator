@@ -229,7 +229,7 @@ func TestDeploymentContextBindings(t *testing.T) {
 		Operation:    &OperationContext{Id: "get-pet", Name: "Get pet", Method: http.MethodGet, UrlTemplate: "/{id}"},
 		Product:      &ProductContext{Id: "starter", Name: "Starter"},
 		Subscription: &SubscriptionContext{Id: "sub-1", Name: "Dev"},
-		User:         &NamedContext{Id: "ada", Name: "Ada"},
+		User:         &UserContext{Id: "ada", Name: "Ada"},
 		Deployment:   &DeploymentContext{ServiceName: "emulator", Region: "local"},
 	})
 	cases := []struct {
@@ -270,8 +270,6 @@ func TestDeploymentContextBindings(t *testing.T) {
 	for _, source := range []string{
 		"@(context.Api.Revision)",
 		"@(context.Operation.Url)",
-		"@(context.Product.Apis)",
-		"@(context.User.Email)",
 		"@(context.Api.Id)",
 		"@(context.Operation.Name)",
 		"@(context.Product.Name)",
@@ -287,8 +285,6 @@ func TestDeploymentContextBindings(t *testing.T) {
 	for _, source := range []string{
 		"@(context.Api.Nonexistent)",
 		"@(context.Operation.Url)",
-		"@(context.Product.Apis)",
-		"@(context.User.Email)",
 	} {
 		if _, err := EvalEnv(source, env); err == nil {
 			t.Fatalf("accepted %s", source)

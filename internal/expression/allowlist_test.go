@@ -77,9 +77,9 @@ func TestAllowlistBoundMembersEvaluate(t *testing.T) {
 		LastError:    errors.New("temporary"),
 		Api:          &ApiContext{Id: "pets", Name: "Pets", Path: "pets"},
 		Operation:    &OperationContext{Id: "list", Name: "List", Method: http.MethodGet, UrlTemplate: "/"},
-		Product:      &ProductContext{Id: "starter", Name: "Starter"},
+		Product:      &ProductContext{Id: "starter", Name: "Starter", Groups: []GroupContext{{Id: "devs", Name: "Developers"}}, Apis: []ApiContext{{Id: "pets", Name: "Pets"}}},
 		Subscription: &SubscriptionContext{Id: "dev", Name: "Dev"},
-		User:         &NamedContext{Id: "ada", Name: "Ada"},
+		User:         &UserContext{Id: "ada", Name: "Ada", Email: "ada@example.test", FirstName: "Ada", LastName: "L", Note: "vip", RegistrationDate: "2026-01-01T00:00:00Z", Groups: []GroupContext{{Id: "devs", Name: "Developers"}}, Identities: []UserIdentityContext{{Id: "ada@example.test", Provider: "Basic"}}},
 		Deployment: &DeploymentContext{
 			ServiceName: "emulator", Region: "local", ServiceId: "/subscriptions/s/service/emulator",
 			GatewayId: "managed",
@@ -110,6 +110,19 @@ func TestAllowlistBoundMembersEvaluate(t *testing.T) {
 		"context.Subscription":         "@(context.Subscription != null)",
 		"context.User":                 "@(context.User != null)",
 		"context.Deployment":           "@(context.Deployment != null)",
+		"User.Email":                   "@(context.User.Email)",
+		"User.FirstName":               "@(context.User.FirstName)",
+		"User.LastName":                "@(context.User.LastName)",
+		"User.Note":                    "@(context.User.Note)",
+		"User.RegistrationDate":        "@(context.User.RegistrationDate)",
+		"User.Groups":                  "@(context.User.Groups.Count)",
+		"User.Identities":              "@(context.User.Identities.Count)",
+		"Group.Id":                     "@(context.User.Groups[0].Id)",
+		"Group.Name":                   "@(context.User.Groups[0].Name)",
+		"UserIdentity.Id":              "@(context.User.Identities[0].Id)",
+		"UserIdentity.Provider":        "@(context.User.Identities[0].Provider)",
+		"Product.Groups":               "@(context.Product.Groups.Count)",
+		"Product.Apis":                 "@(context.Product.Apis.Count)",
 		"context.Timestamp":            "@(context.Timestamp != null)",
 		"Deployment.Certificates":      "@(context.Deployment.Certificates.Count == 1)",
 		"Certificates.ContainsKey":     "@(context.Deployment.Certificates.ContainsKey('client'))",
@@ -271,7 +284,11 @@ func binderCases(t *testing.T) map[string]map[string]bool {
 		"bodyHost":           {"Body"},
 		"apiHost":            {"Api"},
 		"operationHost":      {"Operation"},
-		"namedHost":          {"User"},
+		"namedHost":          {},
+		"userHost":           {"User"},
+		"groupHost":          {"Group"},
+		"userIdentityHost":   {"UserIdentity"},
+		"listHost":           {},
 		"productHost":        {"Product"},
 		"subscriptionHost":   {"Subscription"},
 		"deploymentHost":     {"Deployment"},
@@ -323,7 +340,7 @@ func binderCases(t *testing.T) map[string]map[string]bool {
 		}
 		return true
 	}
-	for _, name := range []string{"context.go", "graphql.go"} {
+	for _, name := range []string{"context.go", "graphql.go", "collections.go"} {
 		file, err := goparser.ParseFile(token.NewFileSet(), name, nil, 0)
 		if err != nil {
 			t.Fatal(err)

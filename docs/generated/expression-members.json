@@ -220,7 +220,7 @@
     {
       "type": "Product",
       "name": "Apis",
-      "status": "planned"
+      "status": "bound"
     },
     {
       "type": "Product",
@@ -230,7 +230,7 @@
     {
       "type": "Product",
       "name": "Groups",
-      "status": "planned"
+      "status": "bound"
     },
     {
       "type": "Product",
@@ -360,17 +360,17 @@
     {
       "type": "User",
       "name": "Email",
-      "status": "planned"
+      "status": "bound"
     },
     {
       "type": "User",
       "name": "FirstName",
-      "status": "planned"
+      "status": "bound"
     },
     {
       "type": "User",
       "name": "Groups",
-      "status": "planned"
+      "status": "bound"
     },
     {
       "type": "User",
@@ -380,42 +380,42 @@
     {
       "type": "User",
       "name": "Identities",
-      "status": "planned"
+      "status": "bound"
     },
     {
       "type": "User",
       "name": "LastName",
-      "status": "planned"
+      "status": "bound"
     },
     {
       "type": "User",
       "name": "Note",
-      "status": "planned"
+      "status": "bound"
     },
     {
       "type": "User",
       "name": "RegistrationDate",
-      "status": "planned"
+      "status": "bound"
     },
     {
       "type": "Group",
       "name": "Id",
-      "status": "planned"
+      "status": "bound"
     },
     {
       "type": "Group",
       "name": "Name",
-      "status": "planned"
+      "status": "bound"
     },
     {
       "type": "UserIdentity",
       "name": "Id",
-      "status": "planned"
+      "status": "bound"
     },
     {
       "type": "UserIdentity",
       "name": "Provider",
-      "status": "planned"
+      "status": "bound"
     },
     {
       "type": "Certificate",

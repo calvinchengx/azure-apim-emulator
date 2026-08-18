@@ -68,6 +68,12 @@ type Service struct {
 	Diagnostics           []model.Diagnostic
 	Products              map[string]model.Product
 	Subscriptions         map[string]model.Subscription
+	// Users, and the groups and APIs the identity graph hangs off, so a policy
+	// can read `context.User.Groups` without the gateway reaching the store on
+	// the request path.
+	Users         map[string]expression.UserContext
+	ProductGroups map[string][]expression.GroupContext
+	ProductApis   map[string][]expression.ApiContext
 	// ClientCertificateHosts are the custom hostnames configured with
 	// negotiateClientCertificate. A request arriving on one without a client
 	// certificate is refused before any policy runs, because the refusal
@@ -506,7 +512,7 @@ func (r *Runtime) Activate(st *store.Store, strict bool) error {
 	}
 	snapshot := &Snapshot{Services: map[string]*Service{}}
 	for _, item := range services {
-		snapshot.Services[strings.ToLower(item.Name)] = &Service{Name: item.Name, Location: item.Location, ID: item.ID(), Hostnames: customHostnames(item.Document), ClientCertificateHosts: clientCertificateHosts(item.Document), PublicNetworkDisabled: !publicNetworkAccess(item.Document), Backends: backends[strings.ToLower(item.ID())], Certificates: certificates[strings.ToLower(item.ID())], Diagnostics: diagnostics[strings.ToLower(item.ID())], Products: map[string]model.Product{}, Subscriptions: map[string]model.Subscription{}}
+		snapshot.Services[strings.ToLower(item.Name)] = &Service{Name: item.Name, Location: item.Location, ID: item.ID(), Hostnames: customHostnames(item.Document), ClientCertificateHosts: clientCertificateHosts(item.Document), PublicNetworkDisabled: !publicNetworkAccess(item.Document), Backends: backends[strings.ToLower(item.ID())], Certificates: certificates[strings.ToLower(item.ID())], Diagnostics: diagnostics[strings.ToLower(item.ID())], Products: map[string]model.Product{}, Subscriptions: map[string]model.Subscription{}, Users: map[string]expression.UserContext{}, ProductGroups: map[string][]expression.GroupContext{}, ProductApis: map[string][]expression.ApiContext{}}
 	}
 	indexServiceIdentities(snapshot.Services, products, subscriptions)
 	for _, api := range apis {
@@ -603,6 +609,9 @@ func (r *Runtime) Activate(st *store.Store, strict bool) error {
 		sort.SliceStable(service.Routes, func(i, j int) bool { return len(service.Routes[i].API.Path) > len(service.Routes[j].API.Path) })
 	}
 	if err := attachSelfHostedGateways(st, services, snapshot); err != nil {
+		return err
+	}
+	if err := loadIdentityGraph(st, services, apis, links, snapshot); err != nil {
 		return err
 	}
 	r.current.Store(snapshot)
@@ -740,7 +749,7 @@ func displayName(display, name string) string {
 	return name
 }
 
-func bindRequestContext(service *Service, route *Route, operation model.Operation, req *http.Request, selfHosted *SelfHostedGateway) (*expression.ApiContext, *expression.OperationContext, *expression.ProductContext, *expression.SubscriptionContext, *expression.NamedContext, *expression.DeploymentContext) {
+func bindRequestContext(service *Service, route *Route, operation model.Operation, req *http.Request, selfHosted *SelfHostedGateway) (*expression.ApiContext, *expression.OperationContext, *expression.ProductContext, *expression.SubscriptionContext, *expression.UserContext, *expression.DeploymentContext) {
 	var api *expression.ApiContext
 	if route != nil {
 		api = &expression.ApiContext{
@@ -753,7 +762,7 @@ func bindRequestContext(service *Service, route *Route, operation model.Operatio
 	operationCtx := &expression.OperationContext{Id: operation.Name, Name: displayName(operation.DisplayName, operation.Name), Method: operation.Method, UrlTemplate: operation.URLTemplate}
 	var product *expression.ProductContext
 	var subscription *expression.SubscriptionContext
-	var user *expression.NamedContext
+	var user *expression.UserContext
 	var deployment *expression.DeploymentContext
 	if service != nil {
 		// The gateway serving the request: the built-in one unless a self-hosted
@@ -770,9 +779,12 @@ func bindRequestContext(service *Service, route *Route, operation model.Operatio
 		if req != nil && service.Subscriptions != nil {
 			if matched, ok := service.Subscriptions[strings.ToLower(subscriptionKey(req))]; ok {
 				subscription = subscriptionContext(matched, subscriptionKey(req))
+				user = subscriptionOwner(service, matched)
 				if service.Products != nil {
 					if linked, ok := service.Products[strings.ToLower(matched.Scope)]; ok {
 						product = productContext(linked)
+						product.Groups = service.ProductGroups[strings.ToLower(linked.ID())]
+						product.Apis = service.ProductApis[strings.ToLower(linked.ID())]
 					}
 				}
 			}
