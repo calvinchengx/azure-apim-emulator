@@ -51,6 +51,33 @@ type binaryExpr struct {
 	left, right Expr
 }
 
+// lambdaExpr is `x => body`. It evaluates to a CALLABLE rather than to a
+// result, so a LINQ operator invokes it through the same call machinery a
+// policy uses for any other call.
+type lambdaExpr struct {
+	param string
+	body  Expr
+}
+
+func (e lambdaExpr) eval(env *Env) (Value, error) {
+	return Object(funcValue{fn: func(args []Value) (Value, error) {
+		if len(args) != 1 {
+			return Null(), fmt.Errorf("a lambda takes one argument")
+		}
+		// The body sees the bindings in scope where the lambda was WRITTEN,
+		// plus its parameter. Copying rather than mutating keeps one element's
+		// binding from leaking into the next iteration.
+		child := &Env{Bindings: map[string]Value{}}
+		if env != nil {
+			for name, value := range env.Bindings {
+				child.Bindings[name] = value
+			}
+		}
+		child.Bindings[e.param] = args[0]
+		return e.body.eval(child)
+	}}), nil
+}
+
 type ternaryExpr struct {
 	cond, then, els Expr
 }
@@ -272,6 +299,9 @@ func (p *parser) varDecl() (varDecl, error) {
 }
 
 func (p *parser) ternary() (Expr, error) {
+	if lambda, ok, err := p.lambda(); ok || err != nil {
+		return lambda, err
+	}
 	cond, err := p.or()
 	if err != nil {
 		return nil, err
@@ -782,6 +812,24 @@ func castNumber(value Value) (float64, bool) {
 // argument is only recognised when the very next tokens are `< identifier > (`.
 // Anything else rewinds and the `<` is left for the comparison parser, so no
 // existing expression changes meaning.
+// lambda parses `x => body`, the anonymous function a LINQ operator takes.
+//
+// One parameter is what policies write. `(a, b) => ...` is NOT accepted: it
+// would have to be told apart from a parenthesised expression, and refusing it
+// keeps a two-parameter lambda a clear error rather than a confusing one.
+func (p *parser) lambda() (Expr, bool, error) {
+	if p.peek().Kind != TokenIdent || p.peekAt(1).Kind != TokenArrow {
+		return nil, false, nil
+	}
+	param := p.take().Lexeme
+	p.take()
+	body, err := p.ternary()
+	if err != nil {
+		return nil, true, err
+	}
+	return lambdaExpr{param: param, body: body}, true, nil
+}
+
 func (p *parser) typeArgument() string {
 	start := p.pos
 	if p.peek().Kind != TokenLt {

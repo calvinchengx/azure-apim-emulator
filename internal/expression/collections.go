@@ -26,9 +26,36 @@ func (l *listHost) member(name string) (Value, error) {
 	switch name {
 	case "Count":
 		return Double(float64(len(l.items))), nil
+	case "Any":
+		return Object(funcValue{fn: l.any}), nil
 	default:
-		return Null(), fmt.Errorf("unknown member %s on a collection of %s (this expression language has no LINQ operators)", name, l.what)
+		return Null(), fmt.Errorf("unknown member %s on a collection of %s (Count and Any are the only operators this expression language implements)", name, l.what)
 	}
+}
+
+// any answers whether any element satisfies the predicate.
+//
+// The predicate is a lambda, which evaluates to a callable, so this invokes it
+// the same way a policy invokes anything else. A predicate that answers with
+// something other than a boolean is an ERROR rather than a truthiness test: a
+// policy whose predicate returns a string has a bug, and guessing would hide it.
+func (l *listHost) any(args []Value) (Value, error) {
+	if len(args) != 1 {
+		return Null(), fmt.Errorf("Any takes one predicate, as in Any(g => g.Name == \"admin\")")
+	}
+	for _, item := range l.items {
+		got, err := args[0].call([]Value{item})
+		if err != nil {
+			return Null(), err
+		}
+		if got.kind != KindBool {
+			return Null(), fmt.Errorf("an Any predicate must answer true or false")
+		}
+		if got.Truthy() {
+			return Bool(true), nil
+		}
+	}
+	return Bool(false), nil
 }
 
 // index reads one element. Out of range is an error rather than null, because a
