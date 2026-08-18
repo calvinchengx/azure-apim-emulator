@@ -7,9 +7,9 @@ import (
 	"testing"
 )
 
-// A collection answers Count and position, and refuses everything else loudly.
-// The loudness matters: this language has no LINQ, so a policy written with
-// `.Any(...)` must fail visibly rather than quietly returning false.
+// A collection answers Count, position and Any, and refuses everything else
+// loudly. The loudness matters: the LINQ surface here is Any alone, so a policy
+// written with `.Where(...)` must fail visibly rather than quietly doing nothing.
 func TestCollectionMembersAndRefusals(t *testing.T) {
 	env := Bind(Context{User: &UserContext{
 		Groups:     []GroupContext{{Id: "devs", Name: "Developers"}, {Id: "ops", Name: "Operations"}},
@@ -35,8 +35,11 @@ func TestCollectionMembersAndRefusals(t *testing.T) {
 	for _, test := range []struct{ source, contains string }{
 		// The LINQ refusal says why, so the failure is actionable rather than
 		// just "unknown member".
-		{"@(context.User.Groups.Any())", "no LINQ operators"},
-		{"@(context.User.Identities.Where())", "no LINQ operators"},
+		{"@(context.User.Groups.Any())", "takes one predicate"},
+		{"@(context.User.Identities.Where())", "Count and Any are the only operators"},
+		{"@(context.User.Groups.Any(g => g.Name))", "must answer true or false"},
+		{"@(context.User.Groups.Any(g => g.Nonexistent == 1))", "unknown member"},
+		{"@(context.User.Groups.Count(g => true))", "value is not callable"},
 		// Out of range is an error rather than null: a null would surface later
 		// as a confusing member-access-on-null somewhere else.
 		{"@(context.User.Groups[9].Id)", "outside a collection"},
@@ -53,6 +56,57 @@ func TestCollectionMembersAndRefusals(t *testing.T) {
 		if !strings.Contains(err.Error(), test.contains) {
 			t.Fatalf("%s failed with %q, want it to mention %q", test.source, err, test.contains)
 		}
+	}
+}
+
+// A lambda is the anonymous function a LINQ operator takes. It closes over the
+// scope it was written in, and its parameter does not escape that scope.
+func TestLambdaAndAny(t *testing.T) {
+	env := Bind(Context{User: &UserContext{
+		Groups: []GroupContext{{Id: "devs", Name: "Developers"}, {Id: "ops", Name: "Operations"}},
+	}})
+	for _, test := range []struct {
+		source string
+		want   bool
+	}{
+		{`@(context.User.Groups.Any(g => g.Name == "Developers"))`, true},
+		{`@(context.User.Groups.Any(g => g.Id == "ops"))`, true},
+		{`@(context.User.Groups.Any(g => g.Name == "admin"))`, false},
+		// An empty collection answers false rather than failing.
+		{`@(context.User.Identities.Any(i => i.Provider == "Basic"))`, false},
+	} {
+		got, err := EvalEnv(test.source, env)
+		if err != nil {
+			t.Fatalf("%s: %v", test.source, err)
+		}
+		if got.Truthy() != test.want {
+			t.Fatalf("%s = %v, want %v", test.source, got.Truthy(), test.want)
+		}
+	}
+	// The body sees the enclosing scope, so a lambda can compare against a local.
+	if got, err := EvalEnv(`@{ var wanted = "ops"; return context.User.Groups.Any(g => g.Id == wanted); }`, env); err != nil || !got.Truthy() {
+		t.Fatalf("closure over a local = %v, %v", got.Truthy(), err)
+	}
+	// The parameter does not leak out of the lambda.
+	if _, err := EvalEnv(`@(context.User.Groups.Any(g => g.Name == "Developers") ? g.Name : "none")`, env); err == nil {
+		t.Fatal("the lambda parameter leaked into the enclosing scope")
+	}
+	// A lambda is a value, so calling one with the wrong arity is an error
+	// rather than a silently ignored argument.
+	lambda, _, err := Parse(`@(g => g.Id)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	callable, err := lambda.eval(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := callable.call(nil); err == nil {
+		t.Fatal("a lambda accepted zero arguments")
+	}
+	// A malformed body reports rather than being swallowed by the rewind.
+	if _, _, err := Parse(`@(g => )`); err == nil {
+		t.Fatal("an empty lambda body was accepted")
 	}
 }
 
