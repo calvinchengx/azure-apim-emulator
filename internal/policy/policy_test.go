@@ -1359,7 +1359,7 @@ func TestChoosePolicy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	state = &State{User: &expr.NamedContext{Name: "Ada"}, Subscription: &expr.SubscriptionContext{Name: "Dev"}, Deployment: &expr.DeploymentContext{Region: "local"}}
+	state = &State{User: &expr.UserContext{Name: "Ada"}, Subscription: &expr.SubscriptionContext{Name: "Dev"}, Deployment: &expr.DeploymentContext{Region: "local"}}
 	if err := Execute(identPlan.Inbound, state); err != nil || state.Variables["who"] != "AdaDevlocal" {
 		t.Fatalf("identity variables = %+v %v", state, err)
 	}

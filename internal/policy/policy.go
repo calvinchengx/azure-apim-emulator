@@ -242,7 +242,7 @@ type State struct {
 	Operation               *expr.OperationContext
 	Product                 *expr.ProductContext
 	Subscription            *expr.SubscriptionContext
-	User                    *expr.NamedContext
+	User                    *expr.UserContext
 	Deployment              *expr.DeploymentContext
 	GraphQL                 *expr.GraphQLContext
 	// TokenLimit reports the tokens still available to a counter key and
