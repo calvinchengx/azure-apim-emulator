@@ -27,6 +27,9 @@ type identExpr struct{ name string }
 type memberExpr struct {
 	recv Expr
 	name string
+	// typeArg is the type named in a generic call, as in `Body.As<string>()`.
+	// Empty for an ordinary member.
+	typeArg string
 }
 
 type indexExpr struct {
@@ -357,7 +360,11 @@ func (p *parser) postfix() (Expr, error) {
 			if p.peek().Kind != TokenIdent {
 				return nil, fmt.Errorf("expected member name")
 			}
-			expr = memberExpr{recv: expr, name: p.take().Lexeme}
+			name := p.take().Lexeme
+			// `As<string>()` is a generic call; `a.b < c` is a comparison. They
+			// are distinguishable only by looking past the `<`, so the attempt
+			// rewinds rather than committing.
+			expr = memberExpr{recv: expr, name: name, typeArg: p.typeArgument()}
 		case TokenLBracket:
 			p.take()
 			key, err := p.ternary()
@@ -464,7 +471,20 @@ func (e memberExpr) eval(env *Env) (Value, error) {
 	if err != nil {
 		return Null(), err
 	}
+	if e.typeArg != "" {
+		generic, ok := recv.obj.(genericHost)
+		if !ok {
+			return Null(), fmt.Errorf("%s is not a generic member", e.name)
+		}
+		return generic.genericMember(e.name, e.typeArg)
+	}
 	return recv.member(e.name)
+}
+
+// genericHost is implemented by the few hosts with a generic member. Optional,
+// so the other fifteen hosts are untouched by a feature only one of them has.
+type genericHost interface {
+	genericMember(name, typeArg string) (Value, error)
 }
 
 func (e indexExpr) eval(env *Env) (Value, error) {
@@ -752,4 +772,35 @@ func castNumber(value Value) (float64, bool) {
 		return 0, false
 	}
 	return number, true
+}
+
+// typeArgument reads `<TypeName>` when it introduces a generic CALL.
+//
+// The `<` of `Body.As<string>()` and the `<` of `a.Count < 3` are the same
+// token, and C# resolves the ambiguity with type information a policy
+// expression does not carry. The rule here is narrower and decidable: a type
+// argument is only recognised when the very next tokens are `< identifier > (`.
+// Anything else rewinds and the `<` is left for the comparison parser, so no
+// existing expression changes meaning.
+func (p *parser) typeArgument() string {
+	start := p.pos
+	if p.peek().Kind != TokenLt {
+		return ""
+	}
+	p.take()
+	if p.peek().Kind != TokenIdent {
+		p.pos = start
+		return ""
+	}
+	name := p.take().Lexeme
+	if p.peek().Kind != TokenGt {
+		p.pos = start
+		return ""
+	}
+	p.take()
+	if p.peek().Kind != TokenLParen {
+		p.pos = start
+		return ""
+	}
+	return name
 }
