@@ -1,19 +1,15 @@
 {
   "note": "Corpus expressions that EVALUATE, not merely parse. See policy-corpus.json for the parse measure.",
   "parsed": 298,
-  "evaluated": 173,
+  "evaluated": 182,
   "gaps": [
     {
       "reason": "member access on null",
-      "count": 31
-    },
-    {
-      "reason": "GetValueOrDefault is not a generic member",
-      "count": 22
+      "count": 32
     },
     {
       "reason": "value is not indexable",
-      "count": 16
+      "count": 27
     },
     {
       "reason": "unbound identifier Guid",
@@ -36,16 +32,16 @@
       "count": 4
     },
     {
+      "reason": "\"\" is not an integer",
+      "count": 3
+    },
+    {
       "reason": "unbound identifier System",
       "count": 3
     },
     {
       "reason": "value is not callable",
       "count": 3
-    },
-    {
-      "reason": "\"\" is not an integer",
-      "count": 2
     },
     {
       "reason": "unknown member Length",
@@ -108,114 +104,9 @@
       "excerpt": "@(int.Parse((string)context.Variables[\"SAPOAuthRefreshExpiry\"]) - (int)context.V"
     },
     {
-      "digest": "0a4b7e9c8f8e",
-      "reason": "GetValueOrDefault is not a generic member",
-      "excerpt": "@(context.Variables.GetValueOrDefault\u003cJArray\u003e(\"Request\")[0])"
-    },
-    {
-      "digest": "13c15cffdbfe",
-      "reason": "GetValueOrDefault is not a generic member",
-      "excerpt": "@(context.Variables.GetValueOrDefault\u003cJObject\u003e(\"Event\")[\"id\"].ToString())"
-    },
-    {
-      "digest": "16823c3e93f9",
-      "reason": "GetValueOrDefault is not a generic member",
-      "excerpt": "@(context.Variables.GetValueOrDefault\u003cJObject\u003e(\"Event\")[\"subject\"].ToString())"
-    },
-    {
-      "digest": "3256fce30ac8",
-      "reason": "GetValueOrDefault is not a generic member",
-      "excerpt": "@{ return context.Variables.GetValueOrDefault\u003cstring\u003e(\"originalXForwardedForValu"
-    },
-    {
-      "digest": "3a60b6edf798",
-      "reason": "GetValueOrDefault is not a generic member",
-      "excerpt": "@(context.Variables.GetValueOrDefault\u003cJObject\u003e(\"Event\")[\"dataVersion\"].ToString("
-    },
-    {
-      "digest": "50b7f8fcb2c7",
-      "reason": "GetValueOrDefault is not a generic member",
-      "excerpt": "@(context.Variables.GetValueOrDefault\u003cstring\u003e(\"original-error-source\"))"
-    },
-    {
-      "digest": "51518542b452",
-      "reason": "GetValueOrDefault is not a generic member",
-      "excerpt": "@(context.Variables.GetValueOrDefault\u003cint\u003e(\"urlId\") == 2)"
-    },
-    {
-      "digest": "5ba8bda48ca5",
-      "reason": "GetValueOrDefault is not a generic member",
-      "excerpt": "@(context.Variables.GetValueOrDefault\u003cint\u003e(\"urlId\") == 1)"
-    },
-    {
-      "digest": "699e11b15983",
-      "reason": "GetValueOrDefault is not a generic member",
-      "excerpt": "@(context.Variables.GetValueOrDefault\u003cstring\u003e(\"original-error-reason\"))"
-    },
-    {
-      "digest": "6d1c8a7d75c6",
-      "reason": "GetValueOrDefault is not a generic member",
-      "excerpt": "@(context.Variables.GetValueOrDefault\u003cJObject\u003e(\"Event\")[\"metadataVersion\"].ToStr"
-    },
-    {
-      "digest": "6fcd68b936ea",
-      "reason": "GetValueOrDefault is not a generic member",
-      "excerpt": "@(context.Variables.GetValueOrDefault\u003cstring\u003e(\"replay-url\"))"
-    },
-    {
-      "digest": "79c210ac54ce",
-      "reason": "GetValueOrDefault is not a generic member",
-      "excerpt": "@(context.Variables.GetValueOrDefault\u003cJObject\u003e(\"Event\")[\"eventType\"].ToString() "
-    },
-    {
-      "digest": "7b06b2beb323",
-      "reason": "GetValueOrDefault is not a generic member",
-      "excerpt": "@(context.Variables.GetValueOrDefault\u003cJArray\u003e(\"Request\").Count != 1)"
-    },
-    {
-      "digest": "8c0a97678a11",
-      "reason": "GetValueOrDefault is not a generic member",
-      "excerpt": "@(context.Variables.GetValueOrDefault\u003cbool\u003e(\"is-weu-down\"))"
-    },
-    {
-      "digest": "a39e59f09e4c",
-      "reason": "GetValueOrDefault is not a generic member",
-      "excerpt": "@(context.Variables.GetValueOrDefault\u003cstring\u003e(\"requestDateString\"))"
-    },
-    {
-      "digest": "a645bd051784",
-      "reason": "GetValueOrDefault is not a generic member",
-      "excerpt": "@{ var validationResponse = new JObject(new JProperty(\"validationResponse\",conte"
-    },
-    {
-      "digest": "b9de30a48d3a",
-      "reason": "GetValueOrDefault is not a generic member",
-      "excerpt": "@(context.Variables.GetValueOrDefault\u003cJObject\u003e(\"Event\")[\"eventTime\"].ToString())"
-    },
-    {
-      "digest": "cc2688a61f85",
-      "reason": "GetValueOrDefault is not a generic member",
-      "excerpt": "@(context.Variables.GetValueOrDefault\u003cJObject\u003e(\"Event\")[\"topic\"].ToString())"
-    },
-    {
       "digest": "ea9abfcb3a3f",
-      "reason": "GetValueOrDefault is not a generic member",
+      "reason": "\"\" is not an integer",
       "excerpt": "@(int.Parse(context.Variables.GetValueOrDefault\u003cstring\u003e(\"bodySize\"))\u003c256000)"
-    },
-    {
-      "digest": "ee98e3f90520",
-      "reason": "GetValueOrDefault is not a generic member",
-      "excerpt": "@(context.Variables.GetValueOrDefault\u003cbool\u003e(\"is-eus-down\"))"
-    },
-    {
-      "digest": "f43386960c5a",
-      "reason": "GetValueOrDefault is not a generic member",
-      "excerpt": "@(context.Variables.GetValueOrDefault\u003cJObject\u003e(\"Event\")[\"eventType\"].ToString())"
-    },
-    {
-      "digest": "fcbaa0e38026",
-      "reason": "GetValueOrDefault is not a generic member",
-      "excerpt": "@(context.Variables.GetValueOrDefault\u003cJObject\u003e(\"Event\")[\"data\"].ToString())"
     },
     {
       "digest": "092e20f974cb",
@@ -326,6 +217,11 @@
       "digest": "73ab504f05cf",
       "reason": "member access on null",
       "excerpt": "@(((IResponse)context.Variables[\"result\"]).Headers.GetValueOrDefault(\"x-ms-meta-"
+    },
+    {
+      "digest": "7b06b2beb323",
+      "reason": "member access on null",
+      "excerpt": "@(context.Variables.GetValueOrDefault\u003cJArray\u003e(\"Request\").Count != 1)"
     },
     {
       "digest": "8b899e869d40",
@@ -643,9 +539,24 @@
       "excerpt": "@{ return \"https://1.blob.core.windows.net/\" + (string)context.Request.MatchedPa"
     },
     {
+      "digest": "0a4b7e9c8f8e",
+      "reason": "value is not indexable",
+      "excerpt": "@(context.Variables.GetValueOrDefault\u003cJArray\u003e(\"Request\")[0])"
+    },
+    {
       "digest": "107488cd6c16",
       "reason": "value is not indexable",
       "excerpt": "@((bool)((JObject)context.Variables[\"jsonResponse\"])[\"conditionValue\"])"
+    },
+    {
+      "digest": "13c15cffdbfe",
+      "reason": "value is not indexable",
+      "excerpt": "@(context.Variables.GetValueOrDefault\u003cJObject\u003e(\"Event\")[\"id\"].ToString())"
+    },
+    {
+      "digest": "16823c3e93f9",
+      "reason": "value is not indexable",
+      "excerpt": "@(context.Variables.GetValueOrDefault\u003cJObject\u003e(\"Event\")[\"subject\"].ToString())"
     },
     {
       "digest": "1843e853bd8e",
@@ -656,6 +567,11 @@
       "digest": "1b4af1e62891",
       "reason": "value is not indexable",
       "excerpt": "@(context.Request.Headers[\"Content-Length\"][0])"
+    },
+    {
+      "digest": "3a60b6edf798",
+      "reason": "value is not indexable",
+      "excerpt": "@(context.Variables.GetValueOrDefault\u003cJObject\u003e(\"Event\")[\"dataVersion\"].ToString("
     },
     {
       "digest": "3ee9b31437e8",
@@ -678,6 +594,11 @@
       "excerpt": "@(context.Response.Headers[\"location\"][0])"
     },
     {
+      "digest": "6d1c8a7d75c6",
+      "reason": "value is not indexable",
+      "excerpt": "@(context.Variables.GetValueOrDefault\u003cJObject\u003e(\"Event\")[\"metadataVersion\"].ToStr"
+    },
+    {
       "digest": "6fcfec3b0a8f",
       "reason": "value is not indexable",
       "excerpt": "@(((JObject)context.Variables[\"SAPResponseObject\"])[\"refresh_token\"].ToString())"
@@ -688,9 +609,24 @@
       "excerpt": "@((string)((JObject)context.Variables[\"tokenResponse\"] )[\"id_token\"])"
     },
     {
+      "digest": "79c210ac54ce",
+      "reason": "value is not indexable",
+      "excerpt": "@(context.Variables.GetValueOrDefault\u003cJObject\u003e(\"Event\")[\"eventType\"].ToString() "
+    },
+    {
       "digest": "99bf0400f00d",
       "reason": "value is not indexable",
       "excerpt": "@( ((JObject)context.Variables[\"tokenResponse\"])[\"id_token\"].ToString())"
+    },
+    {
+      "digest": "a645bd051784",
+      "reason": "value is not indexable",
+      "excerpt": "@{ var validationResponse = new JObject(new JProperty(\"validationResponse\",conte"
+    },
+    {
+      "digest": "b9de30a48d3a",
+      "reason": "value is not indexable",
+      "excerpt": "@(context.Variables.GetValueOrDefault\u003cJObject\u003e(\"Event\")[\"eventTime\"].ToString())"
     },
     {
       "digest": "bb75af8bcc74",
@@ -708,14 +644,29 @@
       "excerpt": "@(((JObject)context.Variables[\"SAPRefreshedResponseObject\"])[\"access_token\"].ToS"
     },
     {
+      "digest": "cc2688a61f85",
+      "reason": "value is not indexable",
+      "excerpt": "@(context.Variables.GetValueOrDefault\u003cJObject\u003e(\"Event\")[\"topic\"].ToString())"
+    },
+    {
       "digest": "d5d842afaaf8",
       "reason": "value is not indexable",
       "excerpt": "@( ((JObject)context.Variables[\"tokenResponse\"])[\"refresh_token\"].ToString())"
     },
     {
+      "digest": "f43386960c5a",
+      "reason": "value is not indexable",
+      "excerpt": "@(context.Variables.GetValueOrDefault\u003cJObject\u003e(\"Event\")[\"eventType\"].ToString())"
+    },
+    {
       "digest": "f7d0b666cef4",
       "reason": "value is not indexable",
       "excerpt": "@(((JObject)context.Variables[\"SAPRefreshedResponseObject\"])[\"expires_in\"].ToStr"
+    },
+    {
+      "digest": "fcbaa0e38026",
+      "reason": "value is not indexable",
+      "excerpt": "@(context.Variables.GetValueOrDefault\u003cJObject\u003e(\"Event\")[\"data\"].ToString())"
     },
     {
       "digest": "fec70c314430",

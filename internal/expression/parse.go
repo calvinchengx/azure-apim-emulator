@@ -1193,7 +1193,17 @@ func (e castExpr) eval(env *Env) (Value, error) {
 	if err != nil {
 		return Null(), err
 	}
-	switch e.typeName {
+	return castTo(e.typeName, value)
+}
+
+// castTo converts a value to a named type.
+//
+// Shared with the generic `GetValueOrDefault<T>`, because `(int)x` and
+// `GetValueOrDefault<int>(name)` must agree about what an int is: two
+// conversion rules for one language would differ eventually, and the difference
+// would show up as a policy that works one way round and not the other.
+func castTo(typeName string, value Value) (Value, error) {
+	switch typeName {
 	case "string":
 		if value.IsNull() {
 			return String(""), nil
@@ -1202,7 +1212,7 @@ func (e castExpr) eval(env *Env) (Value, error) {
 	case "int", "long":
 		number, ok := castNumber(value)
 		if !ok {
-			return Null(), fmt.Errorf("cannot cast %v to %s", value.Kind(), e.typeName)
+			return Null(), fmt.Errorf("cannot cast %v to %s", value.Kind(), typeName)
 		}
 		return Int(int64(number)), nil
 	case "double":

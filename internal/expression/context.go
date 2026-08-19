@@ -1010,6 +1010,48 @@ func (m *mapHost) getValueOrDefault(args []Value) (Value, error) {
 	return Null(), nil
 }
 
+// genericMember binds `GetValueOrDefault<T>`, which is how every one of the
+// corpus's twenty-four generic calls is written: `Variables.GetValueOrDefault
+// <JObject>("body")`. The type argument is what makes it useful -- a variable
+// holding a parsed body is read back as an object, not as its rendering.
+func (m *mapHost) genericMember(name, typeArg string) (Value, error) {
+	if name != "GetValueOrDefault" {
+		return Null(), fmt.Errorf("%s is not a generic member", name)
+	}
+	if !castTypes[typeArg] {
+		return Null(), fmt.Errorf("GetValueOrDefault<%s> is not supported; this emulator converts to the same types a cast does", typeArg)
+	}
+	return Object(funcValue{fn: func(args []Value) (Value, error) {
+		if len(args) == 0 || len(args) > 2 || args[0].kind != KindString {
+			return Null(), fmt.Errorf("GetValueOrDefault requires a variable name")
+		}
+		value := m.lookup(args[0].str)
+		if !value.IsNull() {
+			return castTo(typeArg, value)
+		}
+		if len(args) == 2 {
+			return castTo(typeArg, args[1])
+		}
+		return zeroOf(typeArg), nil
+	}}), nil
+}
+
+// zeroOf is C#'s `default(T)`: zero for a number, false for a bool, null for
+// everything else. Answering null for an absent `GetValueOrDefault<int>` would
+// make `... + 1` fail here and give 1 in a tenant.
+func zeroOf(typeArg string) Value {
+	switch typeArg {
+	case "int", "long":
+		return Int(0)
+	case "double":
+		return Double(0)
+	case "bool":
+		return Bool(false)
+	default:
+		return Null()
+	}
+}
+
 func (m *mapHost) index(key Value) (Value, error) {
 	if key.kind != KindString {
 		return Null(), fmt.Errorf("index requires a string")
