@@ -253,6 +253,19 @@ func TestCorpusEvaluatesWhatItEvaluatedBefore(t *testing.T) {
 			t.Errorf("%s no longer evaluates (%s): %s", blocker.Digest, blocker.Reason, blocker.Excerpt)
 		}
 	}
+	// And a blocker whose REASON changed while its digest did not. The counts
+	// can be identical while the ranked list names gaps that no longer exist,
+	// and that list is what the next slice of work is chosen from.
+	reasons := map[string]string{}
+	for _, blocker := range baseline.Blockers {
+		reasons[blocker.Digest] = blocker.Reason
+	}
+	for _, blocker := range record.Blockers {
+		if before, known := reasons[blocker.Digest]; known && before != blocker.Reason {
+			t.Fatalf("%s now fails with %q, recorded as %q; regenerate with APIM_UPDATE_EVALUATION=1",
+				blocker.Digest, blocker.Reason, before)
+		}
+	}
 	if record.Evaluated > baseline.Evaluated {
 		t.Fatalf("%d expressions evaluate, up from %d; regenerate with APIM_UPDATE_EVALUATION=1", record.Evaluated, baseline.Evaluated)
 	}
