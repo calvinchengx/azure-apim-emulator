@@ -1689,5 +1689,19 @@
   "System.Xml.Linq.XProcessingInstruction",
   "System.Xml.Linq.XText",
   "System.Xml.XmlNodeType"
+ ],
+ "parameterNames": [
+  "alg",
+  "claimName",
+  "defaultValue",
+  "headerName",
+  "input",
+  "iv",
+  "key",
+  "message",
+  "preserveContent",
+  "queryParameterName",
+  "result",
+  "variableName"
  ]
 }

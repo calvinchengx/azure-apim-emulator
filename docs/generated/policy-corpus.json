@@ -2,11 +2,11 @@
   "source": "Azure/api-management-policy-snippets, MIT",
   "commit": "87225c2090e45add095919e8767c37d9ece42e0c",
   "total": 322,
-  "parsed": 298,
+  "parsed": 300,
   "gaps": [
     {
       "reason": "expected ')'",
-      "count": 6
+      "count": 4
     },
     {
       "reason": "new HMACSHA256 is not implemented",
@@ -77,12 +77,6 @@
       "excerpt": "@(context.Request.Headers.GetValueOrDefault(\"Ocp-Apim-Subscription-Key=\"\"\",\"sche"
     },
     {
-      "digest": "4941ed983f64",
-      "reason": "expected ')'",
-      "file": "Route_requests_based_on_size.policy.xml",
-      "excerpt": "@(context.Request.Body.As\u003cstring\u003e(preserveContent: true).Length\u003c256000)"
-    },
-    {
       "digest": "5aab640eb762",
       "reason": "expected ')'",
       "file": "Call_out_to_an_HTTP_endpoint_and_cache_the_response.policy.xml",
@@ -93,12 +87,6 @@
       "reason": "expected ')'",
       "file": "Call_out_to_an_HTTP_endpoint_and_cache_the_response.policy.xml",
       "excerpt": "@(context.Request.MatchedParameters.GetValueOrDefault(\"latlong=\"\"\"))"
-    },
-    {
-      "digest": "b350b68bebc8",
-      "reason": "expected ')'",
-      "file": "oauth-proxy-callback.xml",
-      "excerpt": "@(context.Request.Body.AsFormUrlEncodedContent(preserveContent: true)[\"code\"].Si"
     },
     {
       "digest": "dd9df4e66b11",

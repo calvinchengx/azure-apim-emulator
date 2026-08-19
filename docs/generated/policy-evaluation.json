@@ -1,12 +1,16 @@
 {
   "note": "Corpus expressions that EVALUATE, not merely parse. See policy-corpus.json for the parse measure.",
-  "parsed": 298,
-  "evaluated": 191,
-  "blockedByCapability": 10,
+  "parsed": 300,
+  "evaluated": 192,
+  "blockedByCapability": 11,
   "blockedByFixture": 97,
   "gaps": [
     {
       "reason": "index on null",
+      "count": 2
+    },
+    {
+      "reason": "member access on null",
       "count": 2
     },
     {
@@ -16,10 +20,6 @@
     {
       "reason": "unknown member ToString",
       "count": 2
-    },
-    {
-      "reason": "member access on null",
-      "count": 1
     },
     {
       "reason": "unknown member First",
@@ -472,6 +472,12 @@
       "kind": "fixture",
       "reason": "member access on null",
       "excerpt": "@(((IResponse)context.Variables[\"response\"]).Body.As\u003cJObject\u003e()[\"status\"].ToStri"
+    },
+    {
+      "digest": "b350b68bebc8",
+      "kind": "capability",
+      "reason": "member access on null",
+      "excerpt": "@(context.Request.Body.AsFormUrlEncodedContent(preserveContent: true)[\"code\"].Si"
     },
     {
       "digest": "b9de932cd461",

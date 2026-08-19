@@ -648,7 +648,9 @@ func TestQueryStringIsADictionary(t *testing.T) {
 		{"@(context.Request.Url.Query[0])", "indexed by parameter name"},
 		{"@(context.Request.Url.Query.ContainsKey(1))", "requires a query parameter name"},
 		{"@(context.Request.Url.Query.GetValueOrDefault())", "requires a query parameter name"},
-		{"@(context.Request.Body.As<string>('extra'))", "takes no arguments"},
+		// One argument is the documented `preserveContent`; two is not a form
+		// that exists.
+		{"@(context.Request.Body.As<string>('a', 'b'))", "at most one argument"},
 	} {
 		if _, err := EvalEnv(test.source, env); err == nil {
 			t.Fatalf("accepted %s", test.source)

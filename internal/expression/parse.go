@@ -3,6 +3,7 @@ package expression
 import (
 	"fmt"
 	"math"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -41,8 +42,10 @@ type indexExpr struct {
 }
 
 type callExpr struct {
-	recv    Expr
-	args    []Expr
+	recv Expr
+	args []Expr
+	// names are the argument names a caller wrote, empty where positional.
+	names   []string
 	guarded bool
 }
 
@@ -226,8 +229,11 @@ func (p *parser) construction() (Expr, error) {
 		return nil, fmt.Errorf("expected '(' after 'new %s'", name)
 	}
 	p.take()
-	args, err := p.arguments()
+	args, names, err := p.arguments()
 	if err != nil {
+		return nil, err
+	}
+	if err := checkArgumentNames(names, len(args)); err != nil {
 		return nil, err
 	}
 	return newExpr{construct: construct, args: args}, nil
@@ -845,27 +851,36 @@ func (p *parser) postfix() (Expr, error) {
 			expr = indexExpr{recv: expr, key: key, guarded: guarded}
 		case TokenLParen:
 			p.take()
-			args, err := p.arguments()
+			args, names, err := p.arguments()
 			if err != nil {
 				return nil, err
 			}
-			expr = callExpr{recv: expr, args: args, guarded: guarded}
+			expr = callExpr{recv: expr, args: args, names: names, guarded: guarded}
 		default:
 			return expr, nil
 		}
 	}
 }
 
-func (p *parser) arguments() ([]Expr, error) {
+// arguments reads a call's arguments, each optionally NAMED as C# allows:
+// `As<string>(preserveContent: true)`.
+func (p *parser) arguments() ([]Expr, []string, error) {
 	if p.peek().Kind == TokenRParen {
 		p.take()
-		return nil, nil
+		return nil, nil, nil
 	}
 	var args []Expr
+	var names []string
 	for {
+		name := ""
+		if p.peek().Kind == TokenIdent && p.peekAt(1).Kind == TokenColon {
+			name = p.take().Lexeme
+			p.take()
+		}
+		names = append(names, name)
 		arg, err := p.ternary()
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		args = append(args, arg)
 		switch p.peek().Kind {
@@ -873,9 +888,9 @@ func (p *parser) arguments() ([]Expr, error) {
 			p.take()
 		case TokenRParen:
 			p.take()
-			return args, nil
+			return args, names, nil
 		default:
-			return nil, fmt.Errorf("expected ')'")
+			return nil, nil, fmt.Errorf("expected ')'")
 		}
 	}
 }
@@ -955,6 +970,30 @@ func (e memberExpr) eval(env *Env) (Value, error) {
 	return recv.member(e.name)
 }
 
+// checkArgumentNames validates named arguments.
+//
+// A name must be one Microsoft's own signatures spell, so a typo says so rather
+// than being accepted and ignored. And a named argument is only accepted where
+// there is exactly ONE: C# lets a caller reorder them, and resolving that needs
+// per-callee parameter metadata this evaluator does not carry, so passing them
+// positionally would silently bind the wrong value to the wrong parameter.
+func checkArgumentNames(names []string, count int) error {
+	named := 0
+	for _, name := range names {
+		if name == "" {
+			continue
+		}
+		named++
+		if !slices.Contains(DocumentedParameterNames(), name) {
+			return fmt.Errorf("%s is not a documented parameter name", name)
+		}
+	}
+	if named > 0 && count > 1 {
+		return fmt.Errorf("a named argument is only supported where a call takes one argument")
+	}
+	return nil
+}
+
 // genericHost is implemented by the few hosts with a generic member. Optional,
 // so the other fifteen hosts are untouched by a feature only one of them has.
 type genericHost interface {
@@ -983,6 +1022,9 @@ func (e callExpr) eval(env *Env) (Value, error) {
 	}
 	if e.guarded && recv.IsNull() {
 		return Null(), nil
+	}
+	if err := checkArgumentNames(e.names, len(e.args)); err != nil {
+		return Null(), err
 	}
 	args := make([]Value, len(e.args))
 	for i, arg := range e.args {

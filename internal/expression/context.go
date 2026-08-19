@@ -1200,9 +1200,16 @@ func (f *formHost) index(key Value) (Value, error) {
 	return value, nil
 }
 
+// asString reads the body as text.
+//
+// It accepts the documented `preserveContent` argument and IGNORES it: this
+// gateway captures a body so it can be replayed, so the content is preserved
+// either way. Azure consumes it when the flag is false, so a policy relying on
+// consumption would see a difference; the lenient direction is the safe one
+// here, and it is stated rather than left to be discovered.
 func (b *bodyHost) asString(args []Value) (Value, error) {
-	if len(args) != 0 {
-		return Null(), fmt.Errorf("AsString takes no arguments")
+	if len(args) > 1 {
+		return Null(), fmt.Errorf("As takes at most one argument")
 	}
 	value, err := b.read()
 	if err != nil {

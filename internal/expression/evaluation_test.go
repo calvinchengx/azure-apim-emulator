@@ -242,6 +242,15 @@ func TestCorpusEvaluatesWhatItEvaluatedBefore(t *testing.T) {
 	}
 	record := measureEvaluation(t)
 
+	// The POPULATION must match first. When the corpus gate starts parsing more
+	// expressions, those arrive here as new blockers, and comparing digests
+	// across two different populations reports them as regressions they are
+	// not. Named arguments landed exactly that way: two expressions began
+	// parsing and one of them blocks, which is progress, not a break.
+	if record.Parsed != baseline.Parsed {
+		t.Fatalf("%d expressions parse, the baseline was measured over %d; regenerate with APIM_UPDATE_EVALUATION=1",
+			record.Parsed, baseline.Parsed)
+	}
 	// A REGRESSION: an expression that used to evaluate and now does not. The
 	// count alone would miss it, because one can break while another is fixed.
 	was := map[string]bool{}
