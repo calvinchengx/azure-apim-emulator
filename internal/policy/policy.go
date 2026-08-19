@@ -212,16 +212,19 @@ type State struct {
 	// Backends is the service's backend catalogue, and Backend is the one this
 	// request routed to. Resolved from the catalogue when a policy names a
 	// backend, so `context.Backend` reports the backend actually chosen.
-	Backends   map[string]expr.BackendContext
-	Backend    *expr.BackendContext
-	Path       string
-	Returned   bool
-	StatusCode int
-	Reason     string
-	Body       string
-	BodySet    bool
-	Headers    http.Header
-	Variables  map[string]string
+	Backends map[string]expr.BackendContext
+	Backend  *expr.BackendContext
+	// VariableObjects holds variables whose value has MEMBERS, beside the text
+	// rendering that Variables keeps for every consumer reading them as text.
+	VariableObjects map[string]expr.Value
+	Path            string
+	Returned        bool
+	StatusCode      int
+	Reason          string
+	Body            string
+	BodySet         bool
+	Headers         http.Header
+	Variables       map[string]string
 	// AuthorizationContexts holds credentials fetched by
 	// get-authorization-context, keyed by the variable name the policy chose.
 	// Separate from Variables because a credential is an object and Variables
@@ -1622,14 +1625,21 @@ func compileValue(value string) (string, error) {
 }
 
 func evalValue(value string, state *State) (string, error) {
-	if !expression(value) {
-		return value, nil
-	}
-	got, err := expr.EvalEnv(value, stateEnv(state))
+	got, err := evalRaw(value, state)
 	if err != nil {
 		return "", err
 	}
 	return got.String(), nil
+}
+
+// evalRaw keeps the VALUE rather than its rendering, which set-variable needs:
+// a policy storing a parsed token expects to read members off it later, and
+// rendering it first would leave only text.
+func evalRaw(value string, state *State) (expr.Value, error) {
+	if !expression(value) {
+		return expr.String(value), nil
+	}
+	return expr.EvalEnv(value, stateEnv(state))
 }
 func childText(item node, name string) string {
 	for _, child := range item.Children {
@@ -1727,14 +1737,27 @@ func executeActions(actions []Action, state *State) error {
 			}
 			state.AuthorizationContexts[action.Variable] = credential
 		case ActionSetVariable:
-			value, err := evalValue(action.Value, state)
+			value, err := evalRaw(action.Value, state)
 			if err != nil {
 				return err
 			}
 			if state.Variables == nil {
 				state.Variables = map[string]string{}
 			}
-			state.Variables[action.Variable] = value
+			// The RENDERING goes in the text map either way, so every consumer
+			// that reads variables as text -- cache keys, headers, rate-limit
+			// keys -- keeps working exactly as before.
+			state.Variables[action.Variable] = value.String()
+			// An object is kept alongside it, because a rendering has no
+			// members and reading members is the point of storing one.
+			if value.Kind() == expr.KindObject {
+				if state.VariableObjects == nil {
+					state.VariableObjects = map[string]expr.Value{}
+				}
+				state.VariableObjects[action.Variable] = value
+			} else {
+				delete(state.VariableObjects, action.Variable)
+			}
 		case ActionSetBody:
 			body, err := evalValue(action.Body, state)
 			if err != nil {
@@ -2589,6 +2612,7 @@ func stateEnv(state *State) *expr.Env {
 		Deployment:            state.Deployment,
 		GraphQL:               state.GraphQL,
 		AuthorizationContexts: state.AuthorizationContexts,
+		VariableObjects:       state.VariableObjects,
 		Timestamp:             state.Timestamp,
 		Elapsed:               state.Elapsed,
 		RequestId:             state.RequestId,
