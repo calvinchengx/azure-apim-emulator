@@ -48,6 +48,13 @@ type DocumentedMember struct {
 	Type    string   `json:"type"`
 	Name    string   `json:"name"`
 	Sources []string `json:"sources"`
+	// Declared is the C# type each source gives the member, keyed by source.
+	// This is what makes a SHAPE gate possible: a member inventory checks that
+	// a name exists, and every type-level defect this package has shipped --
+	// `Url.Query` returning text where Microsoft types a dictionary, headers
+	// answering one string where Microsoft types an array -- passed that check
+	// while returning the wrong thing.
+	Declared map[string]string `json:"declared,omitempty"`
 }
 
 type documentedFile struct {
@@ -117,4 +124,18 @@ func documentedIndex() map[string]map[string]bool {
 		index[member.Type][member.Name] = true
 	}
 	return index
+}
+
+// DocumentedTypes returns the C# type each vendored source declares for a
+// member, keyed by source. Empty when neither names one.
+//
+// The two can disagree -- `IUrl.Port` is `int` in the reference and `string` in
+// the toolkit -- so both are returned rather than one being chosen here.
+func DocumentedTypes(typ, name string) map[string]string {
+	for _, member := range loadDocumented().Members {
+		if member.Type == typ && member.Name == name {
+			return member.Declared
+		}
+	}
+	return nil
 }

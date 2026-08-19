@@ -70,7 +70,8 @@ func TestBinderCasesMatchAllowlist(t *testing.T) {
 	}
 }
 
-func TestAllowlistBoundMembersEvaluate(t *testing.T) {
+func evaluationCases(t *testing.T) (*Env, map[string]string) {
+	t.Helper()
 	env := Bind(Context{
 		Request:      httptest.NewRequest(http.MethodGet, "https://api.example/pets?x=1", nil),
 		Response:     &http.Response{StatusCode: http.StatusOK},
@@ -191,7 +192,7 @@ func TestAllowlistBoundMembersEvaluate(t *testing.T) {
 		"Url.Path":                       "@(context.Request.Url.Path)",
 		"Url.Host":                       "@(context.Request.Url.Host)",
 		"Url.Scheme":                     "@(context.Request.Url.Scheme)",
-		"Url.Query":                      "@(context.Request.Url.Query.Count)",
+		"Url.Query":                      "@(context.Request.Url.Query)",
 		"Query.GetValueOrDefault":        `@(context.Request.Url.Query.GetValueOrDefault("x", ""))`,
 		"Query.ContainsKey":              `@(context.Request.Url.Query.ContainsKey("x"))`,
 		"Query.Count":                    "@(context.Request.Url.Query.Count)",
@@ -201,6 +202,8 @@ func TestAllowlistBoundMembersEvaluate(t *testing.T) {
 		"Variables.GetValueOrDefault":    `@(context.Variables.GetValueOrDefault("v", ""))`,
 		"Url.QueryString":                "@(context.Request.Url.QueryString)",
 		"Url.Port":                       "@(context.Request.Url.Port)",
+		"Headers.ContainsKey":            `@(context.Request.Headers.ContainsKey("X-Test"))`,
+		"Headers.Count":                  "@(context.Request.Headers.Count)",
 		"Headers.Get":                    "@(context.Request.Headers.Get('X'))",
 		"Headers.GetValueOrDefault":      "@(context.Request.Headers.GetValueOrDefault('X', 'n'))",
 		"Variables.ContainsKey":          "@(context.Variables.ContainsKey('route'))",
@@ -237,12 +240,17 @@ func TestAllowlistBoundMembersEvaluate(t *testing.T) {
 		"Claims.Count":                   `@("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiJpZC0xIiwiaXNzIjoiaXNzdWVyIiwic3ViIjoic3ViamVjdCIsImF1ZCI6WyJhIiwiYiJdLCJleHAiOjIwMDAwMDAwMDAsIm5iZiI6MTAwMDAwMDAwMCwiaWF0IjoxMDAwMDAwMDAwLCJyb2xlcyI6WyJhZG1pbiJdfQ.sig".AsJwt().Claims.Count)`,
 		"BasicAuthCredentials.Username":  `@('Basic YWRhOnMzY3JldA=='.AsBasic().Username)`,
 		"BasicAuthCredentials.Password":  `@('Basic YWRhOnMzY3JldA=='.AsBasic().Password)`,
-		"context.Backend":                "@(context.Backend == null)",
+		"context.Backend":                "@(context.Backend)",
 		"Backend.Id":                     "@(context.Backend.Id)",
 		"Backend.Type":                   "@(context.Backend.Type)",
 		"value.ToString":                 "@(1.ToString())",
 		"string.Length":                  "@('ab'.Length)",
 	}
+	return env, cases
+}
+
+func TestAllowlistBoundMembersEvaluate(t *testing.T) {
+	env, cases := evaluationCases(t)
 	for _, member := range Allowlist() {
 		// Framework members are Microsoft-backed claims that sit on the binder,
 		// so they must evaluate for the same reason bound members must. Only
