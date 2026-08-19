@@ -137,6 +137,18 @@ func Allowlist() []Member {
 		{Type: "Url", Name: "Scheme", Status: MemberBound},
 		{Type: "Backend", Name: "Id", Status: MemberBound},
 		{Type: "Backend", Name: "Type", Status: MemberBound},
+		{Type: "Random", Name: "Next", Status: MemberFramework},
+		{Type: "Uri", Name: "AbsolutePath", Status: MemberFramework},
+		{Type: "Uri", Name: "AbsoluteUri", Status: MemberFramework},
+		{Type: "Uri", Name: "Host", Status: MemberFramework},
+		{Type: "Uri", Name: "Scheme", Status: MemberFramework},
+		{Type: "Uri", Name: "Query", Status: MemberFramework},
+		{Type: "Uri", Name: "Port", Status: MemberFramework},
+		{Type: "JProperty", Name: "Name", Status: MemberFramework},
+		{Type: "JProperty", Name: "Value", Status: MemberFramework},
+		{Type: "JObject", Name: "Count", Status: MemberFramework},
+		{Type: "JObject", Name: "ContainsKey", Status: MemberFramework},
+		{Type: "JObject", Name: "ToString", Status: MemberFramework},
 		{Type: "Body", Name: "As", Status: MemberBound},
 		{Type: "Body", Name: "AsFormUrlEncodedContent", Status: MemberBound},
 		{Type: "GraphQL", Name: "GraphQLArguments", Status: MemberBound},
@@ -189,6 +201,14 @@ func frameworkTypeOf(typ string) (string, bool) {
 	switch typ {
 	case "Certificate":
 		return "System.Security.Cryptography.X509Certificates.X509Certificate2", true
+	case "Random":
+		return "System.Random", true
+	case "Uri":
+		return "System.Uri", true
+	case "JObject":
+		return "Newtonsoft.Json.Linq.JObject", true
+	case "JProperty":
+		return "Newtonsoft.Json.Linq.JProperty", true
 	case "Query", "Claims", "Headers":
 		// Microsoft types `IUrl.Query` and `Jwt.Claims` as
 		// IReadOnlyDictionary<string, string[]>,

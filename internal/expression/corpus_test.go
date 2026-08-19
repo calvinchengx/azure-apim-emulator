@@ -7,6 +7,7 @@ import (
 	"html"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"testing"
@@ -28,6 +29,10 @@ import (
 // It is a RATCHET rather than a threshold. An expression that parses today must
 // keep parsing, which no percentage floor would catch: a floor lets one
 // expression regress while another improves and reports the same number.
+
+// namedValueReference matches APIM's `{{Name}}`, the same shape the gateway
+// resolves at activation.
+var namedValueReference = regexp.MustCompile(`\{\{[^{}]+\}\}`)
 
 const (
 	corpusBaseline = "policy-corpus.json"
@@ -91,6 +96,14 @@ func corpusExpressions(t *testing.T) map[string]corpusEntry {
 		// bytes would differ between machines for the same expression -- which
 		// would read as a regression that nobody caused.
 		text := strings.ReplaceAll(string(raw), "\r\n", "\n")
+		// Named values are substituted NEXT, because the gateway substitutes
+		// them into the document before an expression is ever compiled. Left in,
+		// a bare `var key = {{TokenEncryptionKey}};` fails to parse and the gate
+		// reports a language gap that does not exist -- which is how nine
+		// failures came to be filed as object initialisers when not one of them
+		// was. The stand-in is a literal, since only the placeholder's ABSENCE
+		// matters to whether the expression parses.
+		text = namedValueReference.ReplaceAllString(text, "1")
 		// XML entities are unescaped next. A policy writes `As&lt;string&gt;()`
 		// and `&amp;&amp;`, so parsing the raw markup would measure the escaping
 		// rather than the expression.

@@ -243,6 +243,18 @@ func evaluationCases(t *testing.T) (*Env, map[string]string) {
 		"context.Backend":                "@(context.Backend)",
 		"Backend.Id":                     "@(context.Backend.Id)",
 		"Backend.Type":                   "@(context.Backend.Type)",
+		"Random.Next":                    "@(new Random(1).Next(1, 3))",
+		"Uri.AbsolutePath":               `@(new Uri("https://host.test/a").AbsolutePath)`,
+		"Uri.AbsoluteUri":                `@(new Uri("https://host.test/a").AbsoluteUri)`,
+		"Uri.Host":                       `@(new Uri("https://host.test/a").Host)`,
+		"Uri.Scheme":                     `@(new Uri("https://host.test/a").Scheme)`,
+		"Uri.Query":                      `@(new Uri("https://host.test/a?x=1").Query)`,
+		"Uri.Port":                       `@(new Uri("https://host.test/a").Port)`,
+		"JProperty.Name":                 `@(new JProperty("a", 1).Name)`,
+		"JProperty.Value":                `@(new JProperty("a", 1).Value)`,
+		"JObject.Count":                  `@(new JObject(new JProperty("a", 1)).Count)`,
+		"JObject.ContainsKey":            `@(new JObject(new JProperty("a", 1)).ContainsKey("a"))`,
+		"JObject.ToString":               `@(new JObject(new JProperty("a", 1)).ToString())`,
 		"value.ToString":                 "@(1.ToString())",
 		"string.Length":                  "@('ab'.Length)",
 	}
@@ -343,6 +355,10 @@ func binderCases(t *testing.T) map[string]map[string]bool {
 		"queryHost":            {"Query"},
 		"backendHost":          {"Backend"},
 		"jwtHost":              {"Jwt"},
+		"randomHost":           {"Random"},
+		"uriHost":              {"Uri"},
+		"propertyHost":         {"JProperty"},
+		"objectHost":           {"JObject"},
 		"claimsHost":           {"Claims"},
 		"basicCredentialsHost": {"BasicAuthCredentials"},
 		"authorizationHost":    {"Authorization"},
@@ -388,7 +404,7 @@ func binderCases(t *testing.T) map[string]map[string]bool {
 		}
 		return true
 	}
-	for _, name := range []string{"context.go", "graphql.go", "collections.go", "jwt.go"} {
+	for _, name := range []string{"context.go", "graphql.go", "collections.go", "jwt.go", "construct.go"} {
 		file, err := goparser.ParseFile(token.NewFileSet(), name, nil, 0)
 		if err != nil {
 			t.Fatal(err)

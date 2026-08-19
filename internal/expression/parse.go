@@ -152,6 +152,112 @@ func parseHole(source string) (Expr, error) {
 	return hole, nil
 }
 
+// newExpr is `new Type(args)` or an anonymous `new { a = x, b = y }`.
+type newExpr struct {
+	// construct is resolved at PARSE time, so evaluation has no lookup that
+	// could fail: an unknown type is already a parse error naming it.
+	construct func([]Value) (Value, error)
+	args      []Expr
+	// fields are the members of an anonymous object, in source order, because
+	// an anonymous object is a record and its field order is how a policy reads
+	// it back out.
+	fields []newField
+}
+
+type newField struct {
+	name  string
+	value Expr
+}
+
+func (e newExpr) eval(env *Env) (Value, error) {
+	if e.construct == nil {
+		fields := make([]jsonField, 0, len(e.fields))
+		for _, field := range e.fields {
+			value, err := field.value.eval(env)
+			if err != nil {
+				return Null(), err
+			}
+			fields = append(fields, jsonField{name: field.name, value: value})
+		}
+		return anonymousObject(fields), nil
+	}
+	args := make([]Value, len(e.args))
+	for i, arg := range e.args {
+		value, err := arg.eval(env)
+		if err != nil {
+			return Null(), err
+		}
+		args[i] = value
+	}
+	return e.construct(args)
+}
+
+// construction parses `new`.
+//
+// Only a KNOWN type is accepted, the same way a cast only accepts a known type.
+// `new XDocument(...)` is a parse error naming the type rather than something
+// that compiles and then fails at request time: a policy author finds out when
+// they save the policy, and the corpus gate keeps measuring what actually works
+// rather than what merely parses.
+func (p *parser) construction() (Expr, error) {
+	// An anonymous object: `new { typ = "JWT", alg = "RS256" }`.
+	if p.peek().Kind == TokenLBrace {
+		return p.anonymousObject()
+	}
+	if p.peek().Kind != TokenIdent {
+		return nil, fmt.Errorf("expected a type name after 'new'")
+	}
+	name := p.take().Lexeme
+	// A namespace-qualified name, `new System.Random()`, names the same type.
+	for p.peek().Kind == TokenDot && p.peekAt(1).Kind == TokenIdent {
+		p.take()
+		name = p.take().Lexeme
+	}
+	construct, ok := constructors[name]
+	if !ok {
+		return nil, fmt.Errorf("new %s is not implemented", name)
+	}
+	if p.peek().Kind != TokenLParen {
+		return nil, fmt.Errorf("expected '(' after 'new %s'", name)
+	}
+	p.take()
+	args, err := p.arguments()
+	if err != nil {
+		return nil, err
+	}
+	return newExpr{construct: construct, args: args}, nil
+}
+
+func (p *parser) anonymousObject() (Expr, error) {
+	p.take()
+	expr := newExpr{}
+	for p.peek().Kind != TokenRBrace {
+		if p.peek().Kind != TokenIdent {
+			return nil, fmt.Errorf("expected a field name in an anonymous object")
+		}
+		name := p.take().Lexeme
+		if p.peek().Kind != TokenAssign {
+			return nil, fmt.Errorf("expected '=' after field %s", name)
+		}
+		p.take()
+		value, err := p.ternary()
+		if err != nil {
+			return nil, err
+		}
+		expr.fields = append(expr.fields, newField{name: name, value: value})
+		if p.peek().Kind == TokenComma {
+			p.take()
+			continue
+		}
+		break
+	}
+	if p.peek().Kind != TokenRBrace {
+		return nil, fmt.Errorf("expected '}' to close an anonymous object")
+	}
+	p.take()
+	return expr, nil
+}
+
 type ternaryExpr struct {
 	cond, then, els Expr
 }
@@ -524,6 +630,8 @@ func (p *parser) atom() (Expr, error) {
 		return literalExpr{value: token.Literal}, nil
 	case TokenInterpolated:
 		return p.interpolation(token)
+	case TokenNew:
+		return p.construction()
 	case TokenIdent:
 		return identExpr{name: token.Lexeme}, nil
 	case TokenLParen:

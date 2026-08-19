@@ -2,18 +2,10 @@
   "source": "Azure/api-management-policy-snippets, MIT",
   "commit": "87225c2090e45add095919e8767c37d9ece42e0c",
   "total": 322,
-  "parsed": 266,
+  "parsed": 281,
   "gaps": [
     {
-      "reason": "unexpected token \"new\"",
-      "count": 12
-    },
-    {
       "reason": "expected ')'",
-      "count": 9
-    },
-    {
-      "reason": "unexpected token \"{\"",
       "count": 9
     },
     {
@@ -34,6 +26,26 @@
     },
     {
       "reason": "expected '",
+      "count": 1
+    },
+    {
+      "reason": "expected a type name after 'new'",
+      "count": 1
+    },
+    {
+      "reason": "new DateTimeOffset is not implemented",
+      "count": 1
+    },
+    {
+      "reason": "new HMACSHA256 is not implemented",
+      "count": 1
+    },
+    {
+      "reason": "new JArray is not implemented",
+      "count": 1
+    },
+    {
+      "reason": "new byte is not implemented",
       "count": 1
     },
     {
@@ -58,6 +70,10 @@
     },
     {
       "reason": "statement \"foreach\" is not implemented",
+      "count": 1
+    },
+    {
+      "reason": "statement \"obj\" is not implemented",
       "count": 1
     },
     {
@@ -151,6 +167,36 @@
       "excerpt": "@(((IResponse)context.Variables[\"response=\"\"\"]).Body.As\u003cJObject\u003e ()[\"results\"][0"
     },
     {
+      "digest": "5e2dbdfde791",
+      "reason": "expected a type name after 'new'",
+      "file": "Pre-authorize_requests_based_on_HTTP_method_with_validate-jwt.policy.xml",
+      "excerpt": "@(new [] {\"post=\"\"\", \"put=\"\"\"}.Contains(context.Request.Method,StringComparer.Or"
+    },
+    {
+      "digest": "50221fa9ca79",
+      "reason": "new DateTimeOffset is not implemented",
+      "file": "Create_HMAC_SHA256-Signed_JWT.policy.xml",
+      "excerpt": "@{ // 1) Construct the Base64Url-encoded header var header = new { typ = \"JWT\", "
+    },
+    {
+      "digest": "7742fc05342e",
+      "reason": "new HMACSHA256 is not implemented",
+      "file": "Query_CosmosDB.policy.xml",
+      "excerpt": "@{ var verb = \"post\"; var resourceType = \"docs\"; var resourceLink = \"\"; var key "
+    },
+    {
+      "digest": "65dfcf23c88a",
+      "reason": "new JArray is not implemented",
+      "file": "Log_errors_to_Stackify.policy.xml",
+      "excerpt": "@{ return new JObject( new JProperty(\"Environment\",\"1\"), new JProperty(\"ServerNa"
+    },
+    {
+      "digest": "d5fa3e0bd308",
+      "reason": "new byte is not implemented",
+      "file": "Add_correlation_id_to_inbound_request.policy.xml",
+      "excerpt": "@{ var guidBinary = new byte[16]; Array.Copy(Guid.NewGuid().ToByteArray(), 0, gu"
+    },
+    {
       "digest": "0f7ad5cb3547",
       "reason": "statement \"JObject\" is not implemented",
       "file": "Backend_for_Frontend_or_curated_API_policy.xml",
@@ -187,6 +233,12 @@
       "excerpt": "@{ var response = context.Response.Body.As\u003cJObject\u003e(); foreach (var key in new ["
     },
     {
+      "digest": "dcd923d09869",
+      "reason": "statement \"obj\" is not implemented",
+      "file": "Extracting_multiple_values_from_xml_documents.policy.xml",
+      "excerpt": "@{ var doc = XDocument.Parse(((IResponse)context.Variables[\"sendRequestResponse\""
+    },
+    {
       "digest": "012c5e916498",
       "reason": "statement \"string\" is not implemented",
       "file": "Encrypt_data_using_expressions.policy.xml",
@@ -197,12 +249,6 @@
       "reason": "statement \"string\" is not implemented",
       "file": "Get_X-CSRF_token_from_SAP_gateway_using_send_request.policy.xml",
       "excerpt": "@{ string rawcookie = ((IResponse)context.Variables[\"SAPCSRFToken\"]).Headers.Get"
-    },
-    {
-      "digest": "5b6dd9059498",
-      "reason": "statement \"string\" is not implemented",
-      "file": "Get_OAuth2_access_token_from_AAD_using_client_id_and_certificate_using_key_vault_manage_identity.xml",
-      "excerpt": "@{ //below code is to get claims string aud = (string)context.Variables[\"authori"
     },
     {
       "digest": "b16f5c0a35c6",
@@ -217,7 +263,13 @@
       "excerpt": "@{ string rawcookie = ((IResponse)context.Variables[\"SAPCSRFToken\"]).Headers.Get"
     },
     {
-      "digest": "6c39e402d2c3",
+      "digest": "f64c4e7c3b7d",
+      "reason": "statement \"string\" is not implemented",
+      "file": "Get_OAuth2_access_token_from_AAD_using_client_id_and_certificate_using_key_vault_manage_identity.xml",
+      "excerpt": "@{ //below code is to get claims string aud = (string)context.Variables[\"authori"
+    },
+    {
+      "digest": "3a7921adf790",
       "reason": "statement \"try\" is not implemented",
       "file": "oauth-proxy-session-fragment.xml",
       "excerpt": "@{ try { var cookieBytes = Convert.FromBase64String(((string)context.Variables[\""
@@ -229,7 +281,7 @@
       "excerpt": "@{ // The XML from which you want to extract information may come from various p"
     },
     {
-      "digest": "b7a1a3b4c168",
+      "digest": "02993a22fd3c",
       "reason": "unexpected character \"\u0026\"",
       "file": "Filter_on_IP_Address_when_using_Application_Gateway.policy.xml",
       "excerpt": "@{ int HostToNetworkOrder(int host) { return (((int)HostToNetworkOrderShort((sho"
@@ -271,7 +323,7 @@
       "excerpt": "@(\"SAPSFPrincipal\" + context.Request.Headers.GetValueOrDefault(\"Authorization\",\""
     },
     {
-      "digest": "24a18be45df2",
+      "digest": "3fb11089217b",
       "reason": "unexpected token \"[\"",
       "file": "oauth-proxy-session-fragment.xml",
       "excerpt": "@(context.Request.Headers.ContainsKey(\"cookie\") ? context.Request.Headers.GetVal"
@@ -283,133 +335,7 @@
       "excerpt": "@(context.Request.Headers.ContainsKey(\"cookie\") ? context.Request.Headers[\"cooki"
     },
     {
-      "digest": "0737c158764f",
-      "reason": "unexpected token \"new\"",
-      "file": "Random_load_balancer_simpler.policy.xml",
-      "excerpt": "@(new System.Random().Next(1,100) \u003c= {{MyTrafficSplitApp_TrafficSplitWeight}})"
-    },
-    {
-      "digest": "092e20f974cb",
-      "reason": "unexpected token \"new\"",
-      "file": "Request_OAuth2_access_token_from_SAP_using_AAD_JWT_token.xml",
-      "excerpt": "@(new Random().Next(0,(int)context.Variables[\"iSAPBearerTokenExpiry\"]/3))"
-    },
-    {
-      "digest": "32358cbc0e60",
-      "reason": "unexpected token \"new\"",
-      "file": "Random_load_balancer.policy.xml",
-      "excerpt": "@(new Random(context.RequestId.GetHashCode()).Next(1, 3))"
-    },
-    {
-      "digest": "5e2dbdfde791",
-      "reason": "unexpected token \"new\"",
-      "file": "Pre-authorize_requests_based_on_HTTP_method_with_validate-jwt.policy.xml",
-      "excerpt": "@(new [] {\"post=\"\"\", \"put=\"\"\"}.Contains(context.Request.Method,StringComparer.Or"
-    },
-    {
-      "digest": "65afa82535f6",
-      "reason": "unexpected token \"new\"",
-      "file": "Return_HTTP_405_if_the_HTTP_Method_of_the_request_is_not_defined.xml",
-      "excerpt": "@{ return new JObject( new JProperty(\"status\", \"HTTP 405\"), new JProperty(\"messa"
-    },
-    {
-      "digest": "7742fc05342e",
-      "reason": "unexpected token \"new\"",
-      "file": "Query_CosmosDB.policy.xml",
-      "excerpt": "@{ var verb = \"post\"; var resourceType = \"docs\"; var resourceLink = \"\"; var key "
-    },
-    {
-      "digest": "82a30ba0c23e",
-      "reason": "unexpected token \"new\"",
-      "file": "Create_HMAC_SHA256-Signed_JWT.policy.xml",
-      "excerpt": "@{ // 1) Construct the Base64Url-encoded header var header = new { typ = \"JWT\", "
-    },
-    {
-      "digest": "a645bd051784",
-      "reason": "unexpected token \"new\"",
-      "file": "Forward_Azure_Event_Grid_Event.xml",
-      "excerpt": "@{ var validationResponse = new JObject(new JProperty(\"validationResponse\",conte"
-    },
-    {
-      "digest": "d115b609c9ab",
-      "reason": "unexpected token \"new\"",
-      "file": "oauth-proxy-sign-out.xml",
-      "excerpt": "@(new Uri((string)context.Variables[\"redirect\"]).AbsolutePath.StartsWith(\"/oauth"
-    },
-    {
-      "digest": "d5fa3e0bd308",
-      "reason": "unexpected token \"new\"",
-      "file": "Add_correlation_id_to_inbound_request.policy.xml",
-      "excerpt": "@{ var guidBinary = new byte[16]; Array.Copy(Guid.NewGuid().ToByteArray(), 0, gu"
-    },
-    {
-      "digest": "dcd923d09869",
-      "reason": "unexpected token \"new\"",
-      "file": "Extracting_multiple_values_from_xml_documents.policy.xml",
-      "excerpt": "@{ var doc = XDocument.Parse(((IResponse)context.Variables[\"sendRequestResponse\""
-    },
-    {
-      "digest": "ef666622df5b",
-      "reason": "unexpected token \"new\"",
-      "file": "Log_errors_to_Stackify.policy.xml",
-      "excerpt": "@{ return new JObject( new JProperty(\"Environment\",\"{{environment-name}}\"), new "
-    },
-    {
-      "digest": "2d36394df15f",
-      "reason": "unexpected token \"{\"",
-      "file": "oauth-proxy-session-fragment.xml",
-      "excerpt": "@{ var token = Encoding.UTF8.GetBytes((string)context.Variables[\"refreshToken\"])"
-    },
-    {
-      "digest": "41a3b8ae039b",
-      "reason": "unexpected token \"{\"",
-      "file": "oauth-proxy-callback.xml",
-      "excerpt": "@{ var token = Encoding.UTF8.GetBytes((string)context.Variables[\"idtoken\"]); var"
-    },
-    {
-      "digest": "6fa50e431c71",
-      "reason": "unexpected token \"{\"",
-      "file": "oauth-proxy-callback.xml",
-      "excerpt": "@{ var token = Encoding.UTF8.GetBytes((string)context.Variables[\"refreshToken\"])"
-    },
-    {
-      "digest": "83842577405e",
-      "reason": "unexpected token \"{\"",
-      "file": "oauth-proxy-slide-session-fragment.xml",
-      "excerpt": "@{ var cookie = Encoding.UTF8.GetBytes((string)context.Variables[\"cookie-prefix\""
-    },
-    {
-      "digest": "ad2e20759333",
-      "reason": "unexpected token \"{\"",
-      "file": "oauth-proxy-callback.xml",
-      "excerpt": "@{ var cookie = Encoding.UTF8.GetBytes((string)context.Variables[\"cookie-prefix\""
-    },
-    {
-      "digest": "c834f23b880d",
-      "reason": "unexpected token \"{\"",
-      "file": "oauth-proxy-session-fragment.xml",
-      "excerpt": "@{ var token = Encoding.UTF8.GetBytes((string)context.Variables[\"accessToken\"]);"
-    },
-    {
-      "digest": "ca8456b8ddaf",
-      "reason": "unexpected token \"{\"",
-      "file": "oauth-proxy-callback.xml",
-      "excerpt": "@(DateTimeOffset.UtcNow.AddSeconds({{SessionCookieExpirationInSeconds}}).ToUnixT"
-    },
-    {
-      "digest": "cbab8b0c7dd7",
-      "reason": "unexpected token \"{\"",
-      "file": "oauth-proxy-session-fragment.xml",
-      "excerpt": "@{ var token = Encoding.UTF8.GetBytes((string)context.Variables[\"idtoken\"]); var"
-    },
-    {
-      "digest": "cbb98d959a62",
-      "reason": "unexpected token \"{\"",
-      "file": "oauth-proxy-callback.xml",
-      "excerpt": "@{ var token = Encoding.UTF8.GetBytes((string)context.Variables[\"accessToken\"]);"
-    },
-    {
-      "digest": "d261fb8146cb",
+      "digest": "9226ca1a2e58",
       "reason": "unterminated string",
       "file": "Call_out_to_an_HTTP_endpoint_and_cache_the_response.policy.xml",
       "excerpt": "@{ var loc = JObject.Parse((string)context.Variables[\"latlong=\"\" lat=\"\" lng=\"\" f"
