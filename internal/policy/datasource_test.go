@@ -62,14 +62,14 @@ func TestCompileHTTPDataSourceRefusesResponseMappingRatherThanIgnoringIt(t *test
 	}
 }
 
-// The argument reaches the URL through context.GraphQL.Arguments, which is the
+// The argument reaches the URL through context.GraphQL.GraphQLArguments, which is the
 // documented Azure member and the reason resolvers needed it.
 func TestBuildRequestEvaluatesGraphQLArguments(t *testing.T) {
 	source, err := CompileHTTPDataSource(`<http-data-source><http-request>
 	    <set-method>POST</set-method>
-	    <set-url>@("https://data.test/orders/" + context.GraphQL.Arguments["ref"])</set-url>
+	    <set-url>@("https://data.test/orders/" + context.GraphQL.GraphQLArguments["ref"])</set-url>
 	    <set-header name="X-Parent" exists-action="override"><value>@(context.GraphQL.Parent["customerId"])</value></set-header>
-	    <set-body>@(context.GraphQL.Arguments["ref"])</set-body>
+	    <set-body>@(context.GraphQL.GraphQLArguments["ref"])</set-body>
 	  </http-request></http-data-source>`)
 	if err != nil {
 		t.Fatal(err)
@@ -102,7 +102,7 @@ func TestBuildRequestReportsEvaluationFailures(t *testing.T) {
 	// rather than quietly yielding an empty argument set.
 	source, err := CompileHTTPDataSource(`<http-data-source><http-request>
 	    <set-method>GET</set-method>
-	    <set-url>@("https://x/" + context.GraphQL.Arguments["ref"])</set-url>
+	    <set-url>@("https://x/" + context.GraphQL.GraphQLArguments["ref"])</set-url>
 	  </http-request></http-data-source>`)
 	if err != nil {
 		t.Fatal(err)
@@ -112,9 +112,9 @@ func TestBuildRequestReportsEvaluationFailures(t *testing.T) {
 	}
 
 	for name, document := range map[string]string{
-		"method": `<http-data-source><http-request><set-method>@(context.GraphQL.Arguments["m"])</set-method><set-url>https://x</set-url></http-request></http-data-source>`,
-		"body":   `<http-data-source><http-request><set-method>GET</set-method><set-url>https://x</set-url><set-body>@(context.GraphQL.Arguments["b"])</set-body></http-request></http-data-source>`,
-		"header": `<http-data-source><http-request><set-method>GET</set-method><set-url>https://x</set-url><set-header name="H" exists-action="override"><value>@(context.GraphQL.Arguments["h"])</value></set-header></http-request></http-data-source>`,
+		"method": `<http-data-source><http-request><set-method>@(context.GraphQL.GraphQLArguments["m"])</set-method><set-url>https://x</set-url></http-request></http-data-source>`,
+		"body":   `<http-data-source><http-request><set-method>GET</set-method><set-url>https://x</set-url><set-body>@(context.GraphQL.GraphQLArguments["b"])</set-body></http-request></http-data-source>`,
+		"header": `<http-data-source><http-request><set-method>GET</set-method><set-url>https://x</set-url><set-header name="H" exists-action="override"><value>@(context.GraphQL.GraphQLArguments["h"])</value></set-header></http-request></http-data-source>`,
 	} {
 		compiled, compileErr := CompileHTTPDataSource(document)
 		if compileErr != nil {

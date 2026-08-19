@@ -55,7 +55,6 @@ type GatewayContext struct {
 	Id         string
 	InstanceId string
 	IsManaged  bool
-	RegionName string
 }
 
 // ProductContext is the documented product identity.
@@ -85,7 +84,6 @@ type ProductContext struct {
 // carrying all of them lets a policy read a product field off a user.
 type UserContext struct {
 	Id               string
-	Name             string
 	Email            string
 	FirstName        string
 	LastName         string
@@ -315,8 +313,6 @@ func (h *userHost) member(name string) (Value, error) {
 	switch name {
 	case "Id":
 		return String(h.ctx.Id), nil
-	case "Name":
-		return String(h.ctx.Name), nil
 	case "Email":
 		return String(h.ctx.Email), nil
 	case "FirstName":
@@ -375,8 +371,6 @@ func (h *gatewayHost) member(name string) (Value, error) {
 		return String(h.ctx.InstanceId), nil
 	case "IsManaged":
 		return Bool(h.ctx.IsManaged), nil
-	case "RegionName":
-		return String(h.ctx.RegionName), nil
 	default:
 		return Null(), fmt.Errorf("unknown member %s", name)
 	}
@@ -572,18 +566,17 @@ type ErrorLocation interface {
 	Section() string
 	Scope() string
 	Reason() string
-	ElementPath() string
 }
 
 func (e *lastErrorHost) member(name string) (Value, error) {
 	switch name {
 	case "Message":
 		return String(e.err.Error()), nil
-	case "Element", "Source":
-		// Azure exposes the failing element under both names.
+	case "Source":
+		// Microsoft defines Source as "name of the element where the error
+		// occurred", which is exactly this. An `Element` alias sat here too,
+		// under a comment claiming Azure exposed both names. It does not.
 		return String(locatedValue(e.located, ErrorLocation.Element)), nil
-	case "ElementPath":
-		return String(locatedValue(e.located, ErrorLocation.ElementPath)), nil
 	case "Section":
 		return String(locatedValue(e.located, ErrorLocation.Section)), nil
 	case "Scope":
@@ -808,8 +801,6 @@ type bodyHost struct {
 
 func (b *bodyHost) member(name string) (Value, error) {
 	switch name {
-	case "AsString":
-		return Object(funcValue{fn: b.asString}), nil
 	case "As":
 		// `As` without a type argument is not a member Azure has: the only
 		// legal spelling is `As<T>()`. Saying so is more useful than "unknown

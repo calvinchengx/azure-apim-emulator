@@ -66,7 +66,7 @@ func userContext(user model.User, groups []model.Group) expression.UserContext {
 		registered = time.Unix(user.RegistrationAt, 0).UTC().Format(time.RFC3339)
 	}
 	return expression.UserContext{
-		Id: user.Name, Name: displayName(strings.TrimSpace(user.FirstName+" "+user.LastName), user.Name),
+		Id:    user.Name,
 		Email: user.Email, FirstName: user.FirstName, LastName: user.LastName,
 		Note: user.Note, RegistrationDate: registered,
 		Groups: groupContexts(groups), Identities: identities,

@@ -31,7 +31,7 @@ type graphQLHost struct {
 
 func (h *graphQLHost) member(name string) (Value, error) {
 	switch name {
-	case "Arguments":
+	case "GraphQLArguments":
 		return Object(&jsonMapHost{values: h.ctx.Arguments}), nil
 	case "Parent":
 		if h.ctx.Parent == nil {

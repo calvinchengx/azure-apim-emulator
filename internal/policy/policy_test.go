@@ -254,7 +254,7 @@ func TestSetBodyPolicy(t *testing.T) {
 	if err := Execute(unsupportedBody.Inbound, &State{Request: httptest.NewRequest(http.MethodGet, "/", nil)}); err == nil {
 		t.Fatal("unknown set-body member accepted")
 	}
-	copied, err := Compile(`<policies><inbound><set-variable name="copy"><value>@(context.Request.Body.AsString())</value></set-variable></inbound></policies>`, true)
+	copied, err := Compile(`<policies><inbound><set-variable name="copy"><value>@(context.Request.Body.As&lt;string&gt;())</value></set-variable></inbound></policies>`, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1313,7 +1313,7 @@ func TestChoosePolicy(t *testing.T) {
 	if err := Execute(portPlan.Inbound, state); err != nil || state.Variables["picked"] != "port" {
 		t.Fatalf("url port choose = %+v, %v", state, err)
 	}
-	bodyPlan, err := Compile(`<policies><inbound><set-variable name="payload"><value>@(context.Request.Body.AsString())</value></set-variable></inbound></policies>`, true)
+	bodyPlan, err := Compile(`<policies><inbound><set-variable name="payload"><value>@(context.Request.Body.As&lt;string&gt;())</value></set-variable></inbound></policies>`, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1355,11 +1355,11 @@ func TestChoosePolicy(t *testing.T) {
 	if err := Execute([]Action{{Kind: ActionChoose, Branches: []ChooseBranch{{Condition: "@(context.Api.Nonexistent == '1')"}}}}, state); err == nil {
 		t.Fatal("unknown API member accepted")
 	}
-	identPlan, err := Compile(`<policies><inbound><set-variable name="who"><value>@(context.User.Name + context.Subscription.Name + context.Deployment.Region)</value></set-variable></inbound></policies>`, true)
+	identPlan, err := Compile(`<policies><inbound><set-variable name="who"><value>@(context.User.FirstName + context.Subscription.Name + context.Deployment.Region)</value></set-variable></inbound></policies>`, true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	state = &State{User: &expr.UserContext{Name: "Ada"}, Subscription: &expr.SubscriptionContext{Name: "Dev"}, Deployment: &expr.DeploymentContext{Region: "local"}}
+	state = &State{User: &expr.UserContext{FirstName: "Ada"}, Subscription: &expr.SubscriptionContext{Name: "Dev"}, Deployment: &expr.DeploymentContext{Region: "local"}}
 	if err := Execute(identPlan.Inbound, state); err != nil || state.Variables["who"] != "AdaDevlocal" {
 		t.Fatalf("identity variables = %+v %v", state, err)
 	}

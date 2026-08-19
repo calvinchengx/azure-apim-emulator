@@ -5,24 +5,6 @@ import (
 	"testing"
 )
 
-// ElementPath composes what it has. A failure that knows only its section, or
-// only its element, still says something rather than rendering a bare slash.
-func TestPolicyErrorElementPath(t *testing.T) {
-	for _, test := range []struct {
-		section, element, want string
-	}{
-		{"inbound", "validate-jwt", "inbound/validate-jwt"},
-		{"", "validate-jwt", "validate-jwt"},
-		{"inbound", "", "inbound"},
-		{"", "", ""},
-	} {
-		got := (&PolicyError{Err: errors.New("x"), section: test.section, element: test.element}).ElementPath()
-		if got != test.want {
-			t.Fatalf("path(%q,%q) = %q, want %q", test.section, test.element, got, test.want)
-		}
-	}
-}
-
 // The reason vocabulary is deliberately narrow: only expression failures are
 // classified, because that is the one cause this engine can identify. Sorting
 // anything else into a bucket would put a code an on-error policy might switch

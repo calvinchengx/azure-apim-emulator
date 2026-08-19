@@ -133,11 +133,6 @@
       "status": "bound"
     },
     {
-      "type": "Body",
-      "name": "AsString",
-      "status": "extension"
-    },
-    {
       "type": "Certificate",
       "name": "Issuer",
       "status": "framework"
@@ -173,6 +168,11 @@
       "status": "framework"
     },
     {
+      "type": "Certificate",
+      "name": "VerifyNoRevocation",
+      "status": "planned"
+    },
+    {
       "type": "Certificates",
       "name": "ContainsKey",
       "status": "bound"
@@ -181,6 +181,11 @@
       "type": "Certificates",
       "name": "Count",
       "status": "bound"
+    },
+    {
+      "type": "Claims",
+      "name": "GetValueOrDefault",
+      "status": "planned"
     },
     {
       "type": "Deployment",
@@ -238,19 +243,9 @@
       "status": "bound"
     },
     {
-      "type": "Gateway",
-      "name": "RegionName",
-      "status": "extension"
-    },
-    {
-      "type": "GraphQL",
-      "name": "Arguments",
-      "status": "extension"
-    },
-    {
       "type": "GraphQL",
       "name": "GraphQLArguments",
-      "status": "planned"
+      "status": "bound"
     },
     {
       "type": "GraphQL",
@@ -326,16 +321,6 @@
       "type": "Jwt",
       "name": "Type",
       "status": "planned"
-    },
-    {
-      "type": "LastError",
-      "name": "Element",
-      "status": "extension"
-    },
-    {
-      "type": "LastError",
-      "name": "ElementPath",
-      "status": "extension"
     },
     {
       "type": "LastError",
@@ -456,6 +441,11 @@
       "type": "Product",
       "name": "SubscriptionsLimit",
       "status": "bound"
+    },
+    {
+      "type": "Query",
+      "name": "GetValueOrDefault",
+      "status": "planned"
     },
     {
       "type": "Request",
@@ -649,11 +639,6 @@
     },
     {
       "type": "User",
-      "name": "Name",
-      "status": "extension"
-    },
-    {
-      "type": "User",
       "name": "Note",
       "status": "bound"
     },
@@ -678,6 +663,11 @@
       "status": "bound"
     },
     {
+      "type": "Variables",
+      "name": "GetValueOrDefault",
+      "status": "planned"
+    },
+    {
       "type": "Workspace",
       "name": "Id",
       "status": "planned"
@@ -685,6 +675,16 @@
     {
       "type": "Workspace",
       "name": "Name",
+      "status": "planned"
+    },
+    {
+      "type": "byte[]",
+      "name": "Decrypt",
+      "status": "planned"
+    },
+    {
+      "type": "byte[]",
+      "name": "Encrypt",
       "status": "planned"
     },
     {
@@ -779,8 +779,28 @@
     },
     {
       "type": "string",
+      "name": "AsBasic",
+      "status": "planned"
+    },
+    {
+      "type": "string",
+      "name": "AsJwt",
+      "status": "planned"
+    },
+    {
+      "type": "string",
       "name": "Length",
       "status": "bound"
+    },
+    {
+      "type": "string",
+      "name": "TryParseBasic",
+      "status": "planned"
+    },
+    {
+      "type": "string",
+      "name": "TryParseJwt",
+      "status": "planned"
     },
     {
       "type": "value",

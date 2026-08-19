@@ -151,6 +151,20 @@
    ]
   },
   {
+   "type": "Certificate",
+   "name": "VerifyNoRevocation",
+   "sources": [
+    "reference"
+   ]
+  },
+  {
+   "type": "Claims",
+   "name": "GetValueOrDefault",
+   "sources": [
+    "reference"
+   ]
+  },
+  {
    "type": "Deployment",
    "name": "Certificates",
    "sources": [
@@ -260,6 +274,13 @@
    "sources": [
     "reference",
     "toolkit"
+   ]
+  },
+  {
+   "type": "Headers",
+   "name": "GetValueOrDefault",
+   "sources": [
+    "reference"
    ]
   },
   {
@@ -516,6 +537,13 @@
   {
    "type": "Product",
    "name": "SubscriptionsLimit",
+   "sources": [
+    "reference"
+   ]
+  },
+  {
+   "type": "Query",
+   "name": "GetValueOrDefault",
    "sources": [
     "reference"
    ]
@@ -854,6 +882,13 @@
    ]
   },
   {
+   "type": "Variables",
+   "name": "GetValueOrDefault",
+   "sources": [
+    "reference"
+   ]
+  },
+  {
    "type": "Workspace",
    "name": "Id",
    "sources": [
@@ -863,6 +898,20 @@
   {
    "type": "Workspace",
    "name": "Name",
+   "sources": [
+    "reference"
+   ]
+  },
+  {
+   "type": "byte[]",
+   "name": "Decrypt",
+   "sources": [
+    "reference"
+   ]
+  },
+  {
+   "type": "byte[]",
+   "name": "Encrypt",
    "sources": [
     "reference"
    ]
@@ -1002,6 +1051,34 @@
   {
    "type": "context",
    "name": "Workspace",
+   "sources": [
+    "reference"
+   ]
+  },
+  {
+   "type": "string",
+   "name": "AsBasic",
+   "sources": [
+    "reference"
+   ]
+  },
+  {
+   "type": "string",
+   "name": "AsJwt",
+   "sources": [
+    "reference"
+   ]
+  },
+  {
+   "type": "string",
+   "name": "TryParseBasic",
+   "sources": [
+    "reference"
+   ]
+  },
+  {
+   "type": "string",
+   "name": "TryParseJwt",
    "sources": [
     "reference"
    ]

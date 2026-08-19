@@ -34,27 +34,27 @@ func TestArgumentsKeepTheirJSONTypes(t *testing.T) {
 		"loose":  json.Number("1.25"),
 	}, nil)
 	cases := map[string]string{
-		`@(context.GraphQL.Arguments["ref"])`:             "A-1",
-		`@(context.GraphQL.Arguments["first"])`:           "10",
-		`@(context.GraphQL.Arguments["ratio"])`:           "1.5",
-		`@(context.GraphQL.Arguments["active"])`:          "True",
-		`@(context.GraphQL.Arguments["tags"])`:            `["x","y"]`,
-		`@(context.GraphQL.Arguments["nested"])`:          `{"k":"v"}`,
-		`@(context.GraphQL.Arguments["big"])`:             "9007199254740993",
-		`@(context.GraphQL.Arguments["loose"])`:           "1.25",
-		`@(context.GraphQL.Arguments["first"] > 5)`:       "True",
-		`@(context.GraphQL.Arguments.ContainsKey('ref'))`: "True",
+		`@(context.GraphQL.GraphQLArguments["ref"])`:             "A-1",
+		`@(context.GraphQL.GraphQLArguments["first"])`:           "10",
+		`@(context.GraphQL.GraphQLArguments["ratio"])`:           "1.5",
+		`@(context.GraphQL.GraphQLArguments["active"])`:          "True",
+		`@(context.GraphQL.GraphQLArguments["tags"])`:            `["x","y"]`,
+		`@(context.GraphQL.GraphQLArguments["nested"])`:          `{"k":"v"}`,
+		`@(context.GraphQL.GraphQLArguments["big"])`:             "9007199254740993",
+		`@(context.GraphQL.GraphQLArguments["loose"])`:           "1.25",
+		`@(context.GraphQL.GraphQLArguments["first"] > 5)`:       "True",
+		`@(context.GraphQL.GraphQLArguments.ContainsKey('ref'))`: "True",
 	}
 	for source, want := range cases {
 		if got := evalString(t, env, source); got != want {
 			t.Errorf("%s = %q, want %q", source, got, want)
 		}
 	}
-	if got := evalString(t, env, "@(context.GraphQL.Arguments.Count)"); got != "9" {
+	if got := evalString(t, env, "@(context.GraphQL.GraphQLArguments.Count)"); got != "9" {
 		t.Errorf("Count = %q", got)
 	}
 	// An explicit JSON null is null, not the string "null".
-	value, err := EvalEnv(`@(context.GraphQL.Arguments["absent"] == null)`, env)
+	value, err := EvalEnv(`@(context.GraphQL.GraphQLArguments["absent"] == null)`, env)
 	if err != nil || value.String() != "True" {
 		t.Errorf("explicit null = %v %v", value.String(), err)
 	}
@@ -64,14 +64,14 @@ func TestArgumentsKeepTheirJSONTypes(t *testing.T) {
 // a resolver on a nullable argument requires.
 func TestMissingArgumentIsNullNotAnError(t *testing.T) {
 	env := graphQLEnv(map[string]any{"ref": "A-1"}, nil)
-	value, err := EvalEnv(`@(context.GraphQL.Arguments["nope"] == null)`, env)
+	value, err := EvalEnv(`@(context.GraphQL.GraphQLArguments["nope"] == null)`, env)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if value.String() != "True" {
 		t.Fatalf("a missing key must be null, got %q", value.String())
 	}
-	if got := evalString(t, env, "@(context.GraphQL.Arguments.ContainsKey('nope'))"); got != "False" {
+	if got := evalString(t, env, "@(context.GraphQL.GraphQLArguments.ContainsKey('nope'))"); got != "False" {
 		t.Fatalf("ContainsKey on a missing key = %q", got)
 	}
 }
@@ -99,7 +99,7 @@ func TestGraphQLIsNullOutsideAResolver(t *testing.T) {
 	if value.String() != "True" {
 		t.Fatalf("context.GraphQL outside a resolver = %q", value.String())
 	}
-	if _, err := EvalEnv(`@(context.GraphQL.Arguments["x"])`, env); err == nil {
+	if _, err := EvalEnv(`@(context.GraphQL.GraphQLArguments["x"])`, env); err == nil {
 		t.Fatal("member access on a null context.GraphQL must fail rather than yield empty")
 	}
 }
@@ -108,10 +108,10 @@ func TestGraphQLRejectsUnknownMembersAndBadKeys(t *testing.T) {
 	env := graphQLEnv(map[string]any{"ref": "A-1"}, map[string]any{"id": "p"})
 	for _, source := range []string{
 		"@(context.GraphQL.Nonsense)",
-		"@(context.GraphQL.Arguments.Nonsense)",
-		"@(context.GraphQL.Arguments[1])",
-		"@(context.GraphQL.Arguments.ContainsKey(1))",
-		"@(context.GraphQL.Arguments.ContainsKey())",
+		"@(context.GraphQL.GraphQLArguments.Nonsense)",
+		"@(context.GraphQL.GraphQLArguments[1])",
+		"@(context.GraphQL.GraphQLArguments.ContainsKey(1))",
+		"@(context.GraphQL.GraphQLArguments.ContainsKey())",
 	} {
 		if _, err := EvalEnv(source, env); err == nil {
 			t.Errorf("%s must fail closed", source)
