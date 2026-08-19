@@ -1,6 +1,7 @@
 packages:
   - website
   - e2e/javascript
+  - e2e/arm-documents
   - e2e/graphql
   - e2e/grpc
   - e2e/soap

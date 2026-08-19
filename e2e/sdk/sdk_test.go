@@ -48,6 +48,7 @@ func TestOfficialManagementSDKs(t *testing.T) {
 		dir     string
 	}{
 		{"javascript", "pnpm", []string{"test"}, filepath.Join(root, "e2e", "javascript")},
+		{"arm-documents", "pnpm", []string{"test"}, filepath.Join(root, "e2e", "arm-documents")},
 		{"graphql", "pnpm", []string{"test"}, filepath.Join(root, "e2e", "graphql")},
 		{"grpc", "pnpm", []string{"test"}, filepath.Join(root, "e2e", "grpc")},
 		{"soap", "pnpm", []string{"test"}, filepath.Join(root, "e2e", "soap")},
