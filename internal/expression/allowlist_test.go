@@ -275,6 +275,24 @@ func evaluationCases(t *testing.T) (*Env, map[string]string) {
 		"StringComparison.InvariantCultureIgnoreCase": "@(StringComparison.InvariantCultureIgnoreCase)",
 		"StringComparison.CurrentCulture":             "@(StringComparison.CurrentCulture)",
 		"StringComparison.CurrentCultureIgnoreCase":   "@(StringComparison.CurrentCultureIgnoreCase)",
+		"Convert.FromBase64String":                    `@(Convert.FromBase64String("aGk="))`,
+		"Convert.ToBase64String":                      `@(Convert.ToBase64String(Encoding.UTF8.GetBytes("hi")))`,
+		"Convert.ToString":                            "@(Convert.ToString(1))",
+		"Encoding.UTF8":                               "@(Encoding.UTF8)",
+		"UTF8.GetBytes":                               `@(Encoding.UTF8.GetBytes("hi"))`,
+		"UTF8.GetString":                              `@(Encoding.UTF8.GetString(Encoding.UTF8.GetBytes("hi")))`,
+		"byte[].Length":                               `@(Encoding.UTF8.GetBytes("hi").Length)`,
+		"Uri.EscapeDataString":                        `@(Uri.EscapeDataString("a b"))`,
+		"Uri.UnescapeDataString":                      `@(Uri.UnescapeDataString("a%20b"))`,
+		"int.Parse":                                   `@(int.Parse("1"))`,
+		"int.MaxValue":                                "@(int.MaxValue)",
+		"int.MinValue":                                "@(int.MinValue)",
+		"string.Empty":                                "@(string.Empty)",
+		"string.IsNullOrEmpty":                        `@(string.IsNullOrEmpty(""))`,
+		"string.IsNullOrWhiteSpace":                   `@(string.IsNullOrWhiteSpace(" "))`,
+		"string.Concat":                               `@(string.Concat("a", "b"))`,
+		"string.Join":                                 `@(string.Join("-", "a", "b"))`,
+		"string.Format":                               `@(string.Format("{0}", "a"))`,
 		"value.ToString":                              "@(1.ToString())",
 		"string.Length":                               "@('ab'.Length)",
 	}
@@ -377,6 +395,13 @@ func binderCases(t *testing.T) map[string]map[string]bool {
 		"jwtHost":              {"Jwt"},
 		"randomHost":           {"Random"},
 		"stringHost":           {"string"},
+		"stringStaticHost":     {"string"},
+		"convertHost":          {"Convert"},
+		"encodingHost":         {"Encoding"},
+		"utf8Host":             {"UTF8"},
+		"uriStaticHost":        {"Uri"},
+		"intStaticHost":        {"int"},
+		"bytesHost":            {"byte[]"},
 		"comparisonHost":       {"StringComparison"},
 		"uriHost":              {"Uri"},
 		"propertyHost":         {"JProperty"},
@@ -426,7 +451,7 @@ func binderCases(t *testing.T) map[string]map[string]bool {
 		}
 		return true
 	}
-	for _, name := range []string{"context.go", "graphql.go", "collections.go", "jwt.go", "construct.go", "stringmembers.go"} {
+	for _, name := range []string{"context.go", "graphql.go", "collections.go", "jwt.go", "construct.go", "stringmembers.go", "statics.go"} {
 		file, err := goparser.ParseFile(token.NewFileSet(), name, nil, 0)
 		if err != nil {
 			t.Fatal(err)

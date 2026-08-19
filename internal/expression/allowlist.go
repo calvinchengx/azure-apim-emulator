@@ -191,6 +191,24 @@ func Allowlist() []Member {
 		{Type: "StringComparison", Name: "InvariantCultureIgnoreCase", Status: MemberFramework},
 		{Type: "StringComparison", Name: "CurrentCulture", Status: MemberFramework},
 		{Type: "StringComparison", Name: "CurrentCultureIgnoreCase", Status: MemberFramework},
+		{Type: "Convert", Name: "FromBase64String", Status: MemberFramework},
+		{Type: "Convert", Name: "ToBase64String", Status: MemberFramework},
+		{Type: "Convert", Name: "ToString", Status: MemberFramework},
+		{Type: "Encoding", Name: "UTF8", Status: MemberFramework},
+		{Type: "UTF8", Name: "GetBytes", Status: MemberFramework},
+		{Type: "UTF8", Name: "GetString", Status: MemberFramework},
+		{Type: "Uri", Name: "EscapeDataString", Status: MemberFramework},
+		{Type: "Uri", Name: "UnescapeDataString", Status: MemberFramework},
+		{Type: "string", Name: "Empty", Status: MemberFramework},
+		{Type: "string", Name: "IsNullOrEmpty", Status: MemberFramework},
+		{Type: "string", Name: "IsNullOrWhiteSpace", Status: MemberFramework},
+		{Type: "string", Name: "Concat", Status: MemberFramework},
+		{Type: "string", Name: "Join", Status: MemberFramework},
+		{Type: "string", Name: "Format", Status: MemberFramework},
+		{Type: "int", Name: "Parse", Status: MemberFramework},
+		{Type: "int", Name: "MaxValue", Status: MemberFramework},
+		{Type: "int", Name: "MinValue", Status: MemberFramework},
+		{Type: "byte[]", Name: "Length", Status: MemberFramework},
 		{Type: "string", Name: "Length", Status: MemberFramework},
 		{Type: "string", Name: "AsJwt", Status: MemberBound},
 		{Type: "string", Name: "AsBasic", Status: MemberBound},
@@ -223,6 +241,14 @@ func frameworkTypeOf(typ string) (string, bool) {
 		return "System.Security.Cryptography.X509Certificates.X509Certificate2", true
 	case "string":
 		return "System.String", true
+	case "Convert":
+		return "System.Convert", true
+	case "Encoding", "UTF8":
+		return "System.Text.Encoding", true
+	case "int":
+		return "System.Int32", true
+	case "byte[]":
+		return "System.Byte", true
 	case "StringComparison":
 		return "System.StringComparison", true
 	case "Random":
