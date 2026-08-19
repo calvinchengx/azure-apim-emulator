@@ -27,6 +27,8 @@ type ApiContext struct {
 	Version           string
 	IsCurrentRevision bool
 	ServiceUrl        string
+	// Protocols are the schemes the api accepts, `http` and `https`.
+	Protocols []string
 }
 
 // OperationContext is the documented scalar operation identity.
@@ -134,6 +136,10 @@ type Context struct {
 	RequestId string
 	// Tracing reports whether the caller asked for a trace.
 	Tracing bool
+	// Trace records a message from an expression. Nil when nothing is
+	// collecting, in which case `context.Trace(...)` is a no-op rather than a
+	// failure: a policy that traces should not break where tracing is off.
+	Trace func(string)
 	// LastErrorLocation is where LastError happened, when the failure came from
 	// the policy engine. Nil for any other error, which is why every member but
 	// Message reads empty rather than inventing a position.
@@ -240,6 +246,16 @@ func (c *contextHost) member(name string) (Value, error) {
 		return String(c.ctx.RequestId), nil
 	case "Tracing":
 		return Bool(c.ctx.Tracing), nil
+	case "Trace":
+		return Object(funcValue{fn: func(args []Value) (Value, error) {
+			if len(args) != 1 || args[0].kind != KindString {
+				return Null(), fmt.Errorf("Trace requires a message")
+			}
+			if c.ctx.Trace != nil {
+				c.ctx.Trace(args[0].str)
+			}
+			return Null(), nil
+		}}), nil
 	case "GraphQL":
 		if c.ctx.GraphQL == nil {
 			return Null(), nil
@@ -270,6 +286,12 @@ func (h *apiHost) member(name string) (Value, error) {
 		return Bool(h.ctx.IsCurrentRevision), nil
 	case "ServiceUrl":
 		return String(h.ctx.ServiceUrl), nil
+	case "Protocols":
+		items := make([]Value, 0, len(h.ctx.Protocols))
+		for _, protocol := range h.ctx.Protocols {
+			items = append(items, String(protocol))
+		}
+		return Object(&listHost{items: items, what: "protocols"}), nil
 	default:
 		return Null(), fmt.Errorf("unknown member %s", name)
 	}

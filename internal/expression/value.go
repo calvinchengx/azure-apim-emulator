@@ -203,6 +203,28 @@ func (v Value) member(name string) (Value, error) {
 			return Null(), fmt.Errorf("Length requires a string")
 		}
 		return Int(int64(len(v.str))), nil
+	// AsJwt and AsBasic are extension methods on `string`, so they hang off the
+	// value rather than off a context type.
+	case "AsJwt":
+		if v.kind != KindString {
+			return Null(), fmt.Errorf("AsJwt requires a string")
+		}
+		return Object(funcValue{fn: func(args []Value) (Value, error) {
+			if len(args) != 0 {
+				return Null(), fmt.Errorf("AsJwt takes no arguments")
+			}
+			return asJwt(v.str), nil
+		}}), nil
+	case "AsBasic":
+		if v.kind != KindString {
+			return Null(), fmt.Errorf("AsBasic requires a string")
+		}
+		return Object(funcValue{fn: func(args []Value) (Value, error) {
+			if len(args) != 0 {
+				return Null(), fmt.Errorf("AsBasic takes no arguments")
+			}
+			return asBasic(v.str), nil
+		}}), nil
 	default:
 		if v.IsNull() {
 			return Null(), fmt.Errorf("member access on null")

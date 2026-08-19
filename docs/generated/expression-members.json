@@ -25,7 +25,7 @@
     {
       "type": "Api",
       "name": "Protocols",
-      "status": "planned"
+      "status": "bound"
     },
     {
       "type": "Api",
@@ -115,12 +115,12 @@
     {
       "type": "BasicAuthCredentials",
       "name": "Password",
-      "status": "planned"
+      "status": "bound"
     },
     {
       "type": "BasicAuthCredentials",
       "name": "Username",
-      "status": "planned"
+      "status": "bound"
     },
     {
       "type": "Body",
@@ -184,8 +184,18 @@
     },
     {
       "type": "Claims",
+      "name": "ContainsKey",
+      "status": "framework"
+    },
+    {
+      "type": "Claims",
+      "name": "Count",
+      "status": "framework"
+    },
+    {
+      "type": "Claims",
       "name": "GetValueOrDefault",
-      "status": "planned"
+      "status": "bound"
     },
     {
       "type": "Deployment",
@@ -275,52 +285,52 @@
     {
       "type": "Jwt",
       "name": "Algorithm",
-      "status": "planned"
+      "status": "bound"
     },
     {
       "type": "Jwt",
       "name": "Audiences",
-      "status": "planned"
+      "status": "bound"
     },
     {
       "type": "Jwt",
       "name": "Claims",
-      "status": "planned"
+      "status": "bound"
     },
     {
       "type": "Jwt",
       "name": "ExpirationTime",
-      "status": "planned"
+      "status": "bound"
     },
     {
       "type": "Jwt",
       "name": "Id",
-      "status": "planned"
+      "status": "bound"
     },
     {
       "type": "Jwt",
       "name": "IssuedAt",
-      "status": "planned"
+      "status": "bound"
     },
     {
       "type": "Jwt",
       "name": "Issuer",
-      "status": "planned"
+      "status": "bound"
     },
     {
       "type": "Jwt",
       "name": "NotBefore",
-      "status": "planned"
+      "status": "bound"
     },
     {
       "type": "Jwt",
       "name": "Subject",
-      "status": "planned"
+      "status": "bound"
     },
     {
       "type": "Jwt",
       "name": "Type",
-      "status": "planned"
+      "status": "bound"
     },
     {
       "type": "LastError",
@@ -765,7 +775,7 @@
     {
       "type": "context",
       "name": "Trace",
-      "status": "planned"
+      "status": "bound"
     },
     {
       "type": "context",
@@ -790,12 +800,12 @@
     {
       "type": "string",
       "name": "AsBasic",
-      "status": "planned"
+      "status": "bound"
     },
     {
       "type": "string",
       "name": "AsJwt",
-      "status": "planned"
+      "status": "bound"
     },
     {
       "type": "string",

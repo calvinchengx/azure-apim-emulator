@@ -1471,22 +1471,8 @@ func enforceTokenConstraints(action Action, token string) bool {
 }
 
 func jwtPayload(token string) (map[string]any, error) {
-	parts := strings.Split(token, ".")
-	if len(parts) < 2 {
-		return nil, fmt.Errorf("invalid jwt")
-	}
-	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
-	if err != nil {
-		payload, err = base64.URLEncoding.DecodeString(parts[1])
-		if err != nil {
-			return nil, err
-		}
-	}
-	var claims map[string]any
-	if err := json.Unmarshal(payload, &claims); err != nil {
-		return nil, err
-	}
-	return claims, nil
+	_, payload, err := expr.DecodeJWT(token)
+	return payload, err
 }
 
 func claimStrings(value any, separator string) []string {
@@ -2599,10 +2585,21 @@ func stateEnv(state *State) *expr.Env {
 		Elapsed:               state.Elapsed,
 		RequestId:             state.RequestId,
 		Tracing:               state.Tracing,
+		Trace:                 traceFromState(state),
 		OriginalUrl:           state.OriginalUrl,
 		MatchedParameters:     state.MatchedParameters,
 		Certificates:          state.Certificates,
 	})
+}
+
+// traceFromState adapts the engine's two-argument trace to the one-argument
+// `context.Trace(message)`. The source is "expression" so a reader can tell an
+// expression wrote the entry rather than a <trace> element.
+func traceFromState(state *State) func(string) {
+	if state.Trace == nil {
+		return nil
+	}
+	return func(message string) { state.Trace("expression", message) }
 }
 
 func evaluateCondition(condition string, state *State) (bool, error) {
