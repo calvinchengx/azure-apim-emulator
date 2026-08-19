@@ -1,0 +1,35 @@
+<!-- The policy defined in this file demonstrates how to filter data elements from the response payload based on the product associated with the request.
+<!-- The snippet assumes that response content is formatted as JSON and contains root-level properties named "current", "minutely", "hourly", "daily", "alerts". -->
+
+<!-- The example backend response includes root-level properties similar to the https://openweathermap.org/api/one-call-api/ API. -->
+
+<!-- Copy this snippet into the outbound section. -->
+
+<policies>
+  <inbound>
+    <base />
+  </inbound>
+  <backend>
+    <base />
+  </backend>
+  <outbound>
+    <base />
+    <choose>
+      <when condition="@(context.Response.StatusCode == 200 && context.Product.Name.Equals("Starter"))">
+        <!-- NOTE that we are not using preserveContent=true when deserializing response body stream into a JSON object since we don't intend to access it again. See details on https://docs.microsoft.com/en-us/azure/api-management/api-management-transformation-policies#SetBody -->
+      	<set-body>
+          @{
+            var response = context.Response.Body.As<JObject>();
+            foreach (var key in new [] {"current", "minutely", "hourly", "daily", "alerts"}) {
+            response.Property (key).Remove ();
+           }
+          return response.ToString();
+          }
+	</set-body>
+      </when>
+    </choose>    
+  </outbound>
+  <on-error>
+    <base />
+  </on-error>
+</policies>
