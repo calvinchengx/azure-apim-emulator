@@ -1,4 +1,4 @@
-# 09 - Implementation roadmap
+# 11 - Implementation roadmap
 
 Each phase is independently useful, SDK-witnessed, documented, and reflected in
 the parity ledger. Full parity is a moving target; upstream audits append work

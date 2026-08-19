@@ -1,4 +1,4 @@
-# 10 - Risk register
+# 12 - Risk register
 
 ## R1 - Scope and moving target
 

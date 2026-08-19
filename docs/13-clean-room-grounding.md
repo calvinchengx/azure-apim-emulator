@@ -1,4 +1,4 @@
-# 11 - Clean-room grounding
+# 13 - Clean-room grounding
 
 ## Rules
 

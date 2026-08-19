@@ -88,6 +88,7 @@ test-operation-inventory:
 	APIM_RUN_OPERATION_INVENTORY=1 go test -count=1 -timeout 20m ./e2e/inventory/...
 
 check-inventory:
+	python3 scripts/check_docs_links.py --strict
 	python3 scripts/check_policy_inventory.py --strict
 	python3 scripts/check_operation_inventory.py --strict
 	python3 scripts/derive_expression_surface.py --check

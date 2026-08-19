@@ -14,5 +14,9 @@ verified, partial, and planned capability in the live parity ledger.
 - XML policy compilation and immutable gateway snapshots
 - 100% aggregate statement coverage for committed Go code
 
-Start with the [charter](01-charter-and-parity.md), then use the
-[roadmap](09-roadmap.md) and [parity ledger](parity.md) for current scope.
+Start with the [quickstart](01-quickstart.md), which publishes an API and calls
+it through the gateway. [Installation](02-installation.md) covers the other ways
+to run it and [configuration](04-configuration.md) documents every setting.
+
+For scope rather than use, read the [charter](00-charter-and-parity.md), then
+the [roadmap](11-roadmap.md) and the [parity ledger](parity.md).

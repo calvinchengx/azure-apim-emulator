@@ -92,17 +92,20 @@ stable contract.
 
 ## Documentation
 
-- [Charter and parity definition](docs/01-charter-and-parity.md)
-- [System architecture](docs/02-architecture.md)
-- [Management plane and resource model](docs/03-management-plane.md)
-- [Gateway and protocol runtime](docs/04-gateway-and-protocols.md)
-- [Policy and expression engine](docs/05-policy-and-expressions.md)
-- [Portal, workspaces, and platform features](docs/06-portal-workspaces-platform.md)
-- [Identity, networking, and observability](docs/07-identity-networking-observability.md)
-- [Testing and SDK matrix](docs/08-testing-and-sdk-matrix.md)
-- [Implementation roadmap](docs/09-roadmap.md)
-- [Risk register](docs/10-risk-register.md)
-- [Clean-room grounding](docs/11-clean-room-grounding.md)
+- [Quickstart](docs/01-quickstart.md) - publish an API and call it, in a minute
+- [Installation](docs/02-installation.md) - container, binary, or the Entra pair
+- [Configuration](docs/04-configuration.md) - every flag and variable
+- [Charter and parity definition](docs/00-charter-and-parity.md)
+- [System architecture](docs/03-architecture.md)
+- [Management plane and resource model](docs/05-management-plane.md)
+- [Gateway and protocol runtime](docs/06-gateway-and-protocols.md)
+- [Policy and expression engine](docs/07-policy-and-expressions.md)
+- [Portal, workspaces, and platform features](docs/08-portal-workspaces-platform.md)
+- [Identity, networking, and observability](docs/09-identity-networking-observability.md)
+- [Testing and SDK matrix](docs/10-testing-and-sdk-matrix.md)
+- [Implementation roadmap](docs/11-roadmap.md)
+- [Risk register](docs/12-risk-register.md)
+- [Clean-room grounding](docs/13-clean-room-grounding.md)
 - [Live parity ledger](docs/parity.md)
 
 ## Emulator family

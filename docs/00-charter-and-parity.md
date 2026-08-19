@@ -1,4 +1,4 @@
-# 01 - Charter and parity definition
+# 00 - Charter and parity definition
 
 ## Mission
 

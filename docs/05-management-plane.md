@@ -1,4 +1,4 @@
-# 03 - Management plane and resource model
+# 05 - Management plane and resource model
 
 ## Contract source
 
