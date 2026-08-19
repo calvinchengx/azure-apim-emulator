@@ -9,23 +9,19 @@
       "count": 6
     },
     {
+      "reason": "new HMACSHA256 is not implemented",
+      "count": 3
+    },
+    {
       "reason": "expected ']'",
       "count": 2
     },
     {
-      "reason": "new HMACSHA256 is not implemented",
-      "count": 2
+      "reason": "expected '=' after field exp",
+      "count": 1
     },
     {
       "reason": "expected a type name after 'new'",
-      "count": 1
-    },
-    {
-      "reason": "new DateTime is not implemented",
-      "count": 1
-    },
-    {
-      "reason": "new DateTimeOffset is not implemented",
       "count": 1
     },
     {
@@ -111,6 +107,12 @@
       "excerpt": "@(context.Request.Method.Equals(\"patch=\"\"\",StringComparison.OrdinalIgnoreCase))"
     },
     {
+      "digest": "50221fa9ca79",
+      "reason": "expected '=' after field exp",
+      "file": "Create_HMAC_SHA256-Signed_JWT.policy.xml",
+      "excerpt": "@{ // 1) Construct the Base64Url-encoded header var header = new { typ = \"JWT\", "
+    },
+    {
       "digest": "ddf62f2373f8",
       "reason": "expected ']'",
       "file": "Call_out_to_an_HTTP_endpoint_and_cache_the_response.policy.xml",
@@ -129,18 +131,6 @@
       "excerpt": "@(new [] {\"post=\"\"\", \"put=\"\"\"}.Contains(context.Request.Method,StringComparer.Or"
     },
     {
-      "digest": "edd07057161e",
-      "reason": "new DateTime is not implemented",
-      "file": "Generate_Azure_Relay_Token.policy.xml",
-      "excerpt": "@{ TimeSpan sinceEpoch = DateTime.UtcNow - new DateTime(1970, 1, 1); string expi"
-    },
-    {
-      "digest": "50221fa9ca79",
-      "reason": "new DateTimeOffset is not implemented",
-      "file": "Create_HMAC_SHA256-Signed_JWT.policy.xml",
-      "excerpt": "@{ // 1) Construct the Base64Url-encoded header var header = new { typ = \"JWT\", "
-    },
-    {
       "digest": "3f764605edc6",
       "reason": "new HMACSHA256 is not implemented",
       "file": "Generate_Shared_Access_Signature_and_forward_request_to_Azure_storage.policy.xml",
@@ -151,6 +141,12 @@
       "reason": "new HMACSHA256 is not implemented",
       "file": "Query_CosmosDB.policy.xml",
       "excerpt": "@{ var verb = \"post\"; var resourceType = \"docs\"; var resourceLink = \"\"; var key "
+    },
+    {
+      "digest": "edd07057161e",
+      "reason": "new HMACSHA256 is not implemented",
+      "file": "Generate_Azure_Relay_Token.policy.xml",
+      "excerpt": "@{ TimeSpan sinceEpoch = DateTime.UtcNow - new DateTime(1970, 1, 1); string expi"
     },
     {
       "digest": "65dfcf23c88a",

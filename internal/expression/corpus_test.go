@@ -256,6 +256,22 @@ func TestCorpusParsesWhatItParsedBefore(t *testing.T) {
 	}
 	// And the other direction: expressions that now parse are progress the
 	// baseline must record, so the ratchet cannot slip back later.
+	// A blocker whose REASON changed while its digest did not. The counts and
+	// the digest set can both be identical while every recorded reason has gone
+	// stale: implementing `new DateTime` moved one expression on to its next
+	// blocker without changing whether it parsed, and the ranked gap list kept
+	// naming a gap that no longer existed. That ranking is what the next slice
+	// of work is chosen from, so it has to be true.
+	recorded := map[string]string{}
+	for _, failure := range baseline.Failures {
+		recorded[failure.Digest] = failure.Reason
+	}
+	for _, failure := range record.Failures {
+		if before, known := recorded[failure.Digest]; known && before != failure.Reason {
+			t.Fatalf("%s now fails with %q, recorded as %q; regenerate with APIM_UPDATE_CORPUS=1",
+				failure.Digest, failure.Reason, before)
+		}
+	}
 	if record.Parsed > baseline.Parsed {
 		t.Fatalf("%d expressions parse, up from %d; regenerate with APIM_UPDATE_CORPUS=1", record.Parsed, baseline.Parsed)
 	}
