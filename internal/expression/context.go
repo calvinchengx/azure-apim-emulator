@@ -166,6 +166,11 @@ type Context struct {
 	// and a credential is an object: `context.Variables["x"].AccessToken` has
 	// to resolve a member, which a string cannot answer.
 	AuthorizationContexts map[string]AuthorizationContext
+	// VariableObjects are variables holding something with MEMBERS rather than
+	// text. Azure types a variable `object`, so a policy stores a parsed token
+	// and later writes `((Jwt)context.Variables["token"]).Claims`; keeping only
+	// the rendering would lose exactly what that expression reads.
+	VariableObjects map[string]Value
 	// GraphQL is bound only while a GraphQL resolver's policy is running. It
 	// is null everywhere else, so `context.GraphQL` in an inbound policy
 	// evaluates to null rather than to an empty argument set that would read
@@ -205,7 +210,7 @@ func (c *contextHost) member(name string) (Value, error) {
 		}
 		return Object(&responseHost{response: c.ctx.Response}), nil
 	case "Variables":
-		return Object(&mapHost{values: c.ctx.Variables, objects: c.ctx.AuthorizationContexts}), nil
+		return Object(&mapHost{values: c.ctx.Variables, objects: variableObjects(c.ctx)}), nil
 	case "LastError":
 		if c.ctx.LastError == nil {
 			return Null(), nil
@@ -926,10 +931,34 @@ func (m *certificateMapHost) index(key Value) (Value, error) {
 	return Object(&certificateHost{certificate: certificate}), nil
 }
 
+// variableObjects merges the two sources of object-valued variables. A
+// credential is one; anything set-variable stored with members is another, and
+// they share one namespace because a policy reads both through
+// `context.Variables`.
+func variableObjects(ctx Context) map[string]Value {
+	if len(ctx.AuthorizationContexts) == 0 && len(ctx.VariableObjects) == 0 {
+		return nil
+	}
+	objects := make(map[string]Value, len(ctx.AuthorizationContexts)+len(ctx.VariableObjects))
+	for name, credential := range ctx.AuthorizationContexts {
+		objects[name] = Object(&authorizationHost{context: credential})
+	}
+	// A stored object wins over a credential of the same name, because it was
+	// written later by an explicit set-variable.
+	for name, value := range ctx.VariableObjects {
+		objects[name] = value
+	}
+	return objects
+}
+
 type mapHost struct {
 	values map[string]string
-	// objects are variables whose value is a credential rather than text.
-	objects map[string]AuthorizationContext
+	// objects are variables whose value is not text: a credential from
+	// get-authorization-context, or anything a policy stored with set-variable
+	// that has members to read. Azure types a variable `object`, so a policy
+	// writes `((Jwt)context.Variables["token"]).Claims` and expects the object
+	// back rather than its rendering.
+	objects map[string]Value
 }
 
 func (m *mapHost) member(name string) (Value, error) {
@@ -940,6 +969,11 @@ func (m *mapHost) member(name string) (Value, error) {
 		return Object(funcValue{fn: func(args []Value) (Value, error) {
 			if len(args) != 1 || args[0].kind != KindString {
 				return Null(), fmt.Errorf("ContainsKey requires a string")
+			}
+			// Both maps are consulted: a variable holding an object is present
+			// even where the text map has no entry for it.
+			if _, ok := m.objects[args[0].str]; ok {
+				return Bool(true), nil
 			}
 			if m.values == nil {
 				return Bool(false), nil
@@ -982,12 +1016,12 @@ func (m *mapHost) index(key Value) (Value, error) {
 // through index would leave an error path that the name check has already made
 // unreachable.
 func (m *mapHost) lookup(name string) Value {
-	// An object variable is checked FIRST: get-authorization-context stores a
-	// credential, and the documented expression reads a member off it. Falling
-	// through to the string map would answer null and make `.AccessToken` fail
-	// on a variable that is genuinely present.
-	if credential, ok := m.objects[name]; ok {
-		return Object(&authorizationHost{context: credential})
+	// An object variable is checked FIRST. The string map also holds the
+	// object's RENDERING, so that every consumer reading variables as text
+	// still works; reading the text here would lose the members, which is the
+	// whole reason the object was stored.
+	if object, ok := m.objects[name]; ok {
+		return object
 	}
 	if m.values == nil {
 		return Null()
