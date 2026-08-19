@@ -2,7 +2,7 @@
   "source": "Azure/api-management-policy-snippets, MIT",
   "commit": "87225c2090e45add095919e8767c37d9ece42e0c",
   "total": 322,
-  "parsed": 281,
+  "parsed": 284,
   "gaps": [
     {
       "reason": "expected ')'",
@@ -13,11 +13,15 @@
       "count": 6
     },
     {
-      "reason": "statement \"string\" is not implemented",
-      "count": 5
+      "reason": "expected ']'",
+      "count": 2
     },
     {
-      "reason": "expected ']'",
+      "reason": "new HMACSHA256 is not implemented",
+      "count": 2
+    },
+    {
+      "reason": "statement \"xsrftoken\" is not implemented",
       "count": 2
     },
     {
@@ -33,11 +37,11 @@
       "count": 1
     },
     {
-      "reason": "new DateTimeOffset is not implemented",
+      "reason": "new DateTime is not implemented",
       "count": 1
     },
     {
-      "reason": "new HMACSHA256 is not implemented",
+      "reason": "new DateTimeOffset is not implemented",
       "count": 1
     },
     {
@@ -45,27 +49,15 @@
       "count": 1
     },
     {
+      "reason": "new XmlDocument is not implemented",
+      "count": 1
+    },
+    {
       "reason": "new byte is not implemented",
       "count": 1
     },
     {
-      "reason": "statement \"JObject\" is not implemented",
-      "count": 1
-    },
-    {
-      "reason": "statement \"System\" is not implemented",
-      "count": 1
-    },
-    {
-      "reason": "statement \"TimeSpan\" is not implemented",
-      "count": 1
-    },
-    {
-      "reason": "statement \"XmlDocument\" is not implemented",
-      "count": 1
-    },
-    {
-      "reason": "statement \"byte\" is not implemented",
+      "reason": "statement \"const\" is not implemented",
       "count": 1
     },
     {
@@ -82,6 +74,10 @@
     },
     {
       "reason": "statement \"using\" is not implemented",
+      "count": 1
+    },
+    {
+      "reason": "statement \"void\" is not implemented",
       "count": 1
     },
     {
@@ -173,10 +169,22 @@
       "excerpt": "@(new [] {\"post=\"\"\", \"put=\"\"\"}.Contains(context.Request.Method,StringComparer.Or"
     },
     {
+      "digest": "edd07057161e",
+      "reason": "new DateTime is not implemented",
+      "file": "Generate_Azure_Relay_Token.policy.xml",
+      "excerpt": "@{ TimeSpan sinceEpoch = DateTime.UtcNow - new DateTime(1970, 1, 1); string expi"
+    },
+    {
       "digest": "50221fa9ca79",
       "reason": "new DateTimeOffset is not implemented",
       "file": "Create_HMAC_SHA256-Signed_JWT.policy.xml",
       "excerpt": "@{ // 1) Construct the Base64Url-encoded header var header = new { typ = \"JWT\", "
+    },
+    {
+      "digest": "3f764605edc6",
+      "reason": "new HMACSHA256 is not implemented",
+      "file": "Generate_Shared_Access_Signature_and_forward_request_to_Azure_storage.policy.xml",
+      "excerpt": "@{ // https://docs.microsoft.com/en-us/rest/api/storageservices/fileservices/aut"
     },
     {
       "digest": "7742fc05342e",
@@ -191,40 +199,22 @@
       "excerpt": "@{ return new JObject( new JProperty(\"Environment\",\"1\"), new JProperty(\"ServerNa"
     },
     {
+      "digest": "16eb09ae7a5a",
+      "reason": "new XmlDocument is not implemented",
+      "file": "Return_a_blob_URL_signed_with_a_user_delegation_SAS_token.xml",
+      "excerpt": "@{ XmlDocument xml = new XmlDocument(); string userDelegationKeyResponse = ((IRe"
+    },
+    {
       "digest": "d5fa3e0bd308",
       "reason": "new byte is not implemented",
       "file": "Add_correlation_id_to_inbound_request.policy.xml",
       "excerpt": "@{ var guidBinary = new byte[16]; Array.Copy(Guid.NewGuid().ToByteArray(), 0, gu"
     },
     {
-      "digest": "0f7ad5cb3547",
-      "reason": "statement \"JObject\" is not implemented",
-      "file": "Backend_for_Frontend_or_curated_API_policy.xml",
-      "excerpt": "@{ JObject finalResponse = new JObject(); int finalStatus = 200; // This assumes"
-    },
-    {
-      "digest": "3f764605edc6",
-      "reason": "statement \"System\" is not implemented",
-      "file": "Generate_Shared_Access_Signature_and_forward_request_to_Azure_storage.policy.xml",
-      "excerpt": "@{ // https://docs.microsoft.com/en-us/rest/api/storageservices/fileservices/aut"
-    },
-    {
-      "digest": "edd07057161e",
-      "reason": "statement \"TimeSpan\" is not implemented",
-      "file": "Generate_Azure_Relay_Token.policy.xml",
-      "excerpt": "@{ TimeSpan sinceEpoch = DateTime.UtcNow - new DateTime(1970, 1, 1); string expi"
-    },
-    {
-      "digest": "16eb09ae7a5a",
-      "reason": "statement \"XmlDocument\" is not implemented",
-      "file": "Return_a_blob_URL_signed_with_a_user_delegation_SAS_token.xml",
-      "excerpt": "@{ XmlDocument xml = new XmlDocument(); string userDelegationKeyResponse = ((IRe"
-    },
-    {
-      "digest": "a57620f625e1",
-      "reason": "statement \"byte\" is not implemented",
-      "file": "Decrypt_AES_Data_using_policy_expressions.xml",
-      "excerpt": "@{ byte[] inBytes = Convert.FromBase64String(context.Request.Body.As\u003cJObject\u003e()."
+      "digest": "f64c4e7c3b7d",
+      "reason": "statement \"const\" is not implemented",
+      "file": "Get_OAuth2_access_token_from_AAD_using_client_id_and_certificate_using_key_vault_manage_identity.xml",
+      "excerpt": "@{ //below code is to get claims string aud = (string)context.Variables[\"authori"
     },
     {
       "digest": "97938f1f478d",
@@ -239,36 +229,6 @@
       "excerpt": "@{ var doc = XDocument.Parse(((IResponse)context.Variables[\"sendRequestResponse\""
     },
     {
-      "digest": "012c5e916498",
-      "reason": "statement \"string\" is not implemented",
-      "file": "Encrypt_data_using_expressions.policy.xml",
-      "excerpt": "@{ string goober = (string)context.Request.MatchedParameters[\"Goober\"]; byte[] g"
-    },
-    {
-      "digest": "4d8f75042053",
-      "reason": "statement \"string\" is not implemented",
-      "file": "Get_X-CSRF_token_from_SAP_gateway_using_send_request.policy.xml",
-      "excerpt": "@{ string rawcookie = ((IResponse)context.Variables[\"SAPCSRFToken\"]).Headers.Get"
-    },
-    {
-      "digest": "b16f5c0a35c6",
-      "reason": "statement \"string\" is not implemented",
-      "file": "Decrypt_AES_Data_using_policy_expressions.xml",
-      "excerpt": "@{ string inBody = (string)context.Variables[\"plainText\"]; return inBody; }"
-    },
-    {
-      "digest": "b9de932cd461",
-      "reason": "statement \"string\" is not implemented",
-      "file": "Request_OAuth2_access_token_from_SAP_using_AAD_JWT_token.xml",
-      "excerpt": "@{ string rawcookie = ((IResponse)context.Variables[\"SAPCSRFToken\"]).Headers.Get"
-    },
-    {
-      "digest": "f64c4e7c3b7d",
-      "reason": "statement \"string\" is not implemented",
-      "file": "Get_OAuth2_access_token_from_AAD_using_client_id_and_certificate_using_key_vault_manage_identity.xml",
-      "excerpt": "@{ //below code is to get claims string aud = (string)context.Variables[\"authori"
-    },
-    {
       "digest": "3a7921adf790",
       "reason": "statement \"try\" is not implemented",
       "file": "oauth-proxy-session-fragment.xml",
@@ -279,6 +239,24 @@
       "reason": "statement \"using\" is not implemented",
       "file": "Extract_value_from_XML.xml",
       "excerpt": "@{ // The XML from which you want to extract information may come from various p"
+    },
+    {
+      "digest": "0f7ad5cb3547",
+      "reason": "statement \"void\" is not implemented",
+      "file": "Backend_for_Frontend_or_curated_API_policy.xml",
+      "excerpt": "@{ JObject finalResponse = new JObject(); int finalStatus = 200; // This assumes"
+    },
+    {
+      "digest": "4d8f75042053",
+      "reason": "statement \"xsrftoken\" is not implemented",
+      "file": "Get_X-CSRF_token_from_SAP_gateway_using_send_request.policy.xml",
+      "excerpt": "@{ string rawcookie = ((IResponse)context.Variables[\"SAPCSRFToken\"]).Headers.Get"
+    },
+    {
+      "digest": "b9de932cd461",
+      "reason": "statement \"xsrftoken\" is not implemented",
+      "file": "Request_OAuth2_access_token_from_SAP_using_AAD_JWT_token.xml",
+      "excerpt": "@{ string rawcookie = ((IResponse)context.Variables[\"SAPCSRFToken\"]).Headers.Get"
     },
     {
       "digest": "02993a22fd3c",

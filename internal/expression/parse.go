@@ -369,8 +369,12 @@ func (p *parser) block() (Expr, error) {
 
 func (p *parser) blockBody() (Expr, error) {
 	var vars []varDecl
-	for p.peek().Kind == TokenVar {
-		decl, err := p.varDecl()
+	for {
+		typed := p.typedLocal()
+		if p.peek().Kind != TokenVar && !typed {
+			break
+		}
+		decl, err := p.varDecl(typed)
 		if err != nil {
 			return nil, err
 		}
@@ -457,8 +461,49 @@ func (p *parser) bracedBlock() (Expr, error) {
 	return expr, nil
 }
 
-func (p *parser) varDecl() (varDecl, error) {
+// typedLocal reports whether a declaration with an EXPLICIT type starts here,
+// as in `string raw = ...` or `byte[] bytes = ...`, and consumes the type when
+// it does.
+//
+// The shape is self-disambiguating: a C# expression statement cannot be two
+// identifiers in a row, so `Ident Ident =` is always a declaration and never an
+// expression. That is why no allowlist of type names is needed here, unlike a
+// cast or a `new`, where the same text really is ambiguous.
+//
+// The declared type is then DISCARDED. This evaluator has no type system, so
+// `string x = 5;` is accepted here and rejected by Azure -- a divergence in the
+// permissive direction, recorded rather than hidden. Checking it properly means
+// C#'s conversion rules, and guessing at them would reject valid policies, which
+// is the worse failure.
+func (p *parser) typedLocal() bool {
+	start := p.pos
+	if p.peek().Kind != TokenIdent {
+		return false
+	}
 	p.take()
+	// A namespace-qualified type, `System.Net.WebUtility name = ...`.
+	for p.peek().Kind == TokenDot && p.peekAt(1).Kind == TokenIdent {
+		p.take()
+		p.take()
+	}
+	// An array type, `byte[] name = ...`.
+	if p.peek().Kind == TokenLBracket && p.peekAt(1).Kind == TokenRBracket {
+		p.take()
+		p.take()
+	}
+	if p.peek().Kind == TokenIdent && p.peekAt(1).Kind == TokenAssign {
+		return true
+	}
+	p.pos = start
+	return false
+}
+
+// varDecl parses a local declaration. The type, if one was written, has already
+// been consumed by typedLocal; `var` has not.
+func (p *parser) varDecl(typed bool) (varDecl, error) {
+	if !typed {
+		p.take()
+	}
 	if p.peek().Kind != TokenIdent {
 		return varDecl{}, fmt.Errorf("var requires a name")
 	}
