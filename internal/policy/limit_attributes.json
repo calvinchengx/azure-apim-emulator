@@ -1,0 +1,75 @@
+{
+  "commit": "f31ac8723a622ba3950df57ba0389d8347f546ab",
+  "policies": {
+    "quota": {
+      "api": [
+        "bandwidth",
+        "calls",
+        "id",
+        "name",
+        "renewal-period"
+      ],
+      "attributes": [
+        "bandwidth",
+        "calls",
+        "renewal-period"
+      ],
+      "operation": [
+        "bandwidth",
+        "calls",
+        "id",
+        "name",
+        "renewal-period"
+      ]
+    },
+    "quota-by-key": {
+      "attributes": [
+        "bandwidth",
+        "calls",
+        "counter-key",
+        "first-period-start",
+        "increment-condition",
+        "increment-count",
+        "renewal-period"
+      ]
+    },
+    "rate-limit": {
+      "api": [
+        "calls",
+        "id",
+        "name",
+        "renewal-period"
+      ],
+      "attributes": [
+        "calls",
+        "remaining-calls-header-name",
+        "remaining-calls-variable-name",
+        "renewal-period",
+        "retry-after-header-name",
+        "retry-after-variable-name",
+        "total-calls-header-name"
+      ],
+      "operation": [
+        "calls",
+        "id",
+        "name",
+        "renewal-period"
+      ]
+    },
+    "rate-limit-by-key": {
+      "attributes": [
+        "calls",
+        "counter-key",
+        "increment-condition",
+        "increment-count",
+        "remaining-calls-header-name",
+        "remaining-calls-variable-name",
+        "renewal-period",
+        "retry-after-header-name",
+        "retry-after-variable-name",
+        "total-calls-header-name"
+      ]
+    }
+  },
+  "source": "MicrosoftDocs/azure-docs articles/api-management"
+}

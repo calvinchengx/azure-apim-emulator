@@ -47,6 +47,7 @@ jobs:
       # refresh of third_party/microsoft that nobody regenerated from fails here
       # rather than leaving the ledger measuring against a stale denominator.
       - run: ./scripts/derive_expression_surface.py --check
+      - run: ./scripts/derive_limit_attributes.py --check
       # Binds the parity ledger's operation-surface figures to the committed
       # probe results. The probe itself runs in the `go` job, since it needs a
       # running emulator; this only checks that nothing drifted from it.
