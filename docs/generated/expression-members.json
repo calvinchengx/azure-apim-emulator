@@ -293,6 +293,31 @@
       "status": "bound"
     },
     {
+      "type": "JObject",
+      "name": "ContainsKey",
+      "status": "framework"
+    },
+    {
+      "type": "JObject",
+      "name": "Count",
+      "status": "framework"
+    },
+    {
+      "type": "JObject",
+      "name": "ToString",
+      "status": "framework"
+    },
+    {
+      "type": "JProperty",
+      "name": "Name",
+      "status": "framework"
+    },
+    {
+      "type": "JProperty",
+      "name": "Value",
+      "status": "framework"
+    },
+    {
       "type": "Jwt",
       "name": "Algorithm",
       "status": "bound"
@@ -478,6 +503,11 @@
       "status": "bound"
     },
     {
+      "type": "Random",
+      "name": "Next",
+      "status": "framework"
+    },
+    {
       "type": "Request",
       "name": "AzureVnetInfo",
       "status": "planned"
@@ -606,6 +636,36 @@
       "type": "SustainabilityInfo",
       "name": "CurrentCarbonIntensity",
       "status": "planned"
+    },
+    {
+      "type": "Uri",
+      "name": "AbsolutePath",
+      "status": "framework"
+    },
+    {
+      "type": "Uri",
+      "name": "AbsoluteUri",
+      "status": "framework"
+    },
+    {
+      "type": "Uri",
+      "name": "Host",
+      "status": "framework"
+    },
+    {
+      "type": "Uri",
+      "name": "Port",
+      "status": "framework"
+    },
+    {
+      "type": "Uri",
+      "name": "Query",
+      "status": "framework"
+    },
+    {
+      "type": "Uri",
+      "name": "Scheme",
+      "status": "framework"
     },
     {
       "type": "Url",
