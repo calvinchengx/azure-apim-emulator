@@ -2,6 +2,7 @@ package expression
 
 import (
 	"math"
+	"strings"
 	"testing"
 )
 
@@ -73,5 +74,22 @@ func TestFormatDoubleAndEquality(t *testing.T) {
 	}
 	if !equal(String("a"), String("a")) || equal(String("a"), String("b")) || !equal(Object("same"), Object("same")) || equal(Object("left"), Object("right")) {
 		t.Fatal("string/object equality failed")
+	}
+}
+
+// Indexing a null says so. It used to share the message a number gets, which
+// sent an author looking for a type problem they did not have.
+func TestIndexOnNullSaysSo(t *testing.T) {
+	env := Bind(Context{})
+	if _, err := EvalEnv(`@(context.Variables["absent"]["k"])`, env); err == nil {
+		t.Fatal("indexing null was accepted")
+	} else if !strings.Contains(err.Error(), "index on null") {
+		t.Fatalf("indexing null said %q", err)
+	}
+	// A value that is present but not indexable keeps its own message.
+	if _, err := EvalEnv(`@(1["k"])`, env); err == nil {
+		t.Fatal("indexing a number was accepted")
+	} else if !strings.Contains(err.Error(), "not indexable") {
+		t.Fatalf("indexing a number said %q", err)
 	}
 }
