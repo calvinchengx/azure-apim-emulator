@@ -37,6 +37,7 @@ type Member struct {
 func Allowlist() []Member {
 	return []Member{
 		{Type: "context", Name: "Api", Status: MemberBound},
+		{Type: "context", Name: "Backend", Status: MemberBound},
 		{Type: "context", Name: "Deployment", Status: MemberBound},
 		{Type: "context", Name: "Elapsed", Status: MemberBound},
 		{Type: "context", Name: "GraphQL", Status: MemberBound},
@@ -134,6 +135,8 @@ func Allowlist() []Member {
 		{Type: "Url", Name: "Query", Status: MemberBound},
 		{Type: "Url", Name: "QueryString", Status: MemberBound},
 		{Type: "Url", Name: "Scheme", Status: MemberBound},
+		{Type: "Backend", Name: "Id", Status: MemberBound},
+		{Type: "Backend", Name: "Type", Status: MemberBound},
 		{Type: "Body", Name: "As", Status: MemberBound},
 		{Type: "Body", Name: "AsFormUrlEncodedContent", Status: MemberBound},
 		{Type: "GraphQL", Name: "GraphQLArguments", Status: MemberBound},

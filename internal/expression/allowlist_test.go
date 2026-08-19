@@ -80,6 +80,7 @@ func TestAllowlistBoundMembersEvaluate(t *testing.T) {
 		Operation:    &OperationContext{Id: "list", Name: "List", Method: http.MethodGet, UrlTemplate: "/"},
 		Product:      &ProductContext{Id: "starter", Name: "Starter", Groups: []GroupContext{{Id: "devs", Name: "Developers"}}, Apis: []ApiContext{{Id: "pets", Name: "Pets"}}},
 		Subscription: &SubscriptionContext{Id: "dev", Name: "Dev"},
+		Backend:      &BackendContext{Id: "orders-backend", Type: "Single"},
 		User:         &UserContext{Id: "ada", Email: "ada@example.test", FirstName: "Ada", LastName: "L", Note: "vip", RegistrationDate: "2026-01-01T00:00:00Z", Groups: []GroupContext{{Id: "devs", Name: "Developers"}}, Identities: []UserIdentityContext{{Id: "ada@example.test", Provider: "Basic"}}},
 		Deployment: &DeploymentContext{
 			ServiceName: "emulator", Region: "local", ServiceId: "/subscriptions/s/service/emulator",
@@ -236,6 +237,9 @@ func TestAllowlistBoundMembersEvaluate(t *testing.T) {
 		"Claims.Count":                   `@("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiJpZC0xIiwiaXNzIjoiaXNzdWVyIiwic3ViIjoic3ViamVjdCIsImF1ZCI6WyJhIiwiYiJdLCJleHAiOjIwMDAwMDAwMDAsIm5iZiI6MTAwMDAwMDAwMCwiaWF0IjoxMDAwMDAwMDAwLCJyb2xlcyI6WyJhZG1pbiJdfQ.sig".AsJwt().Claims.Count)`,
 		"BasicAuthCredentials.Username":  `@('Basic YWRhOnMzY3JldA=='.AsBasic().Username)`,
 		"BasicAuthCredentials.Password":  `@('Basic YWRhOnMzY3JldA=='.AsBasic().Password)`,
+		"context.Backend":                "@(context.Backend == null)",
+		"Backend.Id":                     "@(context.Backend.Id)",
+		"Backend.Type":                   "@(context.Backend.Type)",
 		"value.ToString":                 "@(1.ToString())",
 		"string.Length":                  "@('ab'.Length)",
 	}
@@ -329,6 +333,7 @@ func binderCases(t *testing.T) map[string]map[string]bool {
 		"graphQLHost":          {"GraphQL"},
 		"jsonMapHost":          {"Arguments"},
 		"queryHost":            {"Query"},
+		"backendHost":          {"Backend"},
 		"jwtHost":              {"Jwt"},
 		"claimsHost":           {"Claims"},
 		"basicCredentialsHost": {"BasicAuthCredentials"},

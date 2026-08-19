@@ -2142,3 +2142,75 @@ func TestLastErrorScopeFollowsTheDocument(t *testing.T) {
 		t.Fatalf("product scope = %q", got)
 	}
 }
+
+// context.Backend reports the backend a policy actually routed to. Asserted
+// through a real request rather than off a hand-built state, because the
+// failure mode this guards is the gateway never supplying the catalogue at all,
+// which leaves the member bound and permanently null.
+func TestBackendContextReportsTheChosenBackend(t *testing.T) {
+	st, err := store.Open("", clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	service, _ := st.UpsertService(model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "emulator", Location: "local"})
+	api, _ := st.UpsertAPI(model.API{ServiceID: service.ID(), Name: "orders", Path: "orders", ServiceURL: "https://backend.test", IsCurrent: true})
+	_, _ = st.UpsertOperation(model.Operation{APIID: api.ID(), Name: "get", Method: http.MethodGet, URLTemplate: "/"})
+	if _, err := st.UpsertBackend(model.Backend{ServiceID: service.ID(), Name: "primary", URL: "https://selected", Protocol: "http", Document: map[string]any{}}); err != nil {
+		t.Fatal(err)
+	}
+	// A pool backend is reported as a Pool even though this emulator does not
+	// implement pools: the type is read from the document, not assumed.
+	if _, err := st.UpsertBackend(model.Backend{ServiceID: service.ID(), Name: "pooled", URL: "https://pool", Protocol: "http",
+		Document: map[string]any{"properties": map[string]any{"pool": map[string]any{"services": []any{}}}}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.UpsertPolicy(model.Policy{ScopeID: api.ID(), Value: `<policies><inbound>` +
+		`<set-backend-service backend-id="primary"/>` +
+		`<return-response><set-status code="200"/><set-body>@(context.Backend.Id + "|" + context.Backend.Type)</set-body></return-response>` +
+		`</inbound></policies>`}); err != nil {
+		t.Fatal(err)
+	}
+	runtime := New("emulator", nil)
+	if err := runtime.Activate(st, true); err != nil {
+		t.Fatal(err)
+	}
+	recorder := httptest.NewRecorder()
+	runtime.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/orders", nil))
+	if body := recorder.Body.String(); body != "primary|Single" {
+		t.Fatalf("context.Backend = %q", body)
+	}
+	// A pool backend reports Pool, read from its document. This emulator does
+	// not implement pools, so assuming Single would be wrong in exactly the
+	// case a policy is asking about.
+	if _, err := st.UpsertPolicy(model.Policy{ScopeID: api.ID(), Value: `<policies><inbound>` +
+		`<set-backend-service backend-id="pooled"/>` +
+		`<return-response><set-status code="200"/><set-body>@(context.Backend.Id + "|" + context.Backend.Type)</set-body></return-response>` +
+		`</inbound></policies>`}); err != nil {
+		t.Fatal(err)
+	}
+	if err := runtime.Activate(st, true); err != nil {
+		t.Fatal(err)
+	}
+	pooled := httptest.NewRecorder()
+	runtime.ServeHTTP(pooled, httptest.NewRequest(http.MethodGet, "/orders", nil))
+	if body := pooled.Body.String(); body != "pooled|Pool" {
+		t.Fatalf("pool backend = %q", body)
+	}
+	// Until a policy names one there is no backend resource, and the member is
+	// null rather than invented: `context.Backend == null` is the question a
+	// policy asks to find out whether a backend was chosen.
+	if _, err := st.UpsertPolicy(model.Policy{ScopeID: api.ID(), Value: `<policies><inbound>` +
+		`<return-response><set-status code="200"/><set-body>@(context.Backend == null ? "none" : "set")</set-body></return-response>` +
+		`</inbound></policies>`}); err != nil {
+		t.Fatal(err)
+	}
+	if err := runtime.Activate(st, true); err != nil {
+		t.Fatal(err)
+	}
+	unset := httptest.NewRecorder()
+	runtime.ServeHTTP(unset, httptest.NewRequest(http.MethodGet, "/orders", nil))
+	if body := unset.Body.String(); body != "none" {
+		t.Fatalf("unset backend = %q", body)
+	}
+}

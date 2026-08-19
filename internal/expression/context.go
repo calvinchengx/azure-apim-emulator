@@ -134,6 +134,11 @@ type Context struct {
 	Elapsed func() time.Duration
 	// RequestId is the gateway's own correlation id for this request.
 	RequestId string
+	// Backend is the named backend the request is routed to, and is NIL until a
+	// policy names one: an api served straight from its serviceUrl has no
+	// backend resource, and inventing one would answer a question a policy asks
+	// precisely to find out whether a backend was chosen.
+	Backend *BackendContext
 	// Tracing reports whether the caller asked for a trace.
 	Tracing bool
 	// Trace records a message from an expression. Nil when nothing is
@@ -256,6 +261,11 @@ func (c *contextHost) member(name string) (Value, error) {
 			}
 			return Null(), nil
 		}}), nil
+	case "Backend":
+		if c.ctx.Backend == nil {
+			return Null(), nil
+		}
+		return Object(&backendHost{ctx: c.ctx.Backend}), nil
 	case "GraphQL":
 		if c.ctx.GraphQL == nil {
 			return Null(), nil
@@ -510,6 +520,34 @@ func (r *requestHost) member(name string) (Value, error) {
 		return Object(&certificateHost{certificate: r.request.TLS.PeerCertificates[0]}), nil
 	default:
 		return Null(), fmt.Errorf("unknown member %s", name)
+	}
+}
+
+// BackendContext is the backend resource a policy routed to.
+type BackendContext struct {
+	Id string
+	// Type is "Single" or "Pool", read from the backend's own document rather
+	// than assumed: this emulator does not implement pools, but a pool backend
+	// can still be created through ARM, and reporting it as Single would be
+	// wrong in exactly the case a policy is asking about.
+	Type string
+}
+
+type backendHost struct {
+	ctx *BackendContext
+}
+
+func (b *backendHost) member(name string) (Value, error) {
+	switch name {
+	case "Id":
+		return String(b.ctx.Id), nil
+	case "Type":
+		return String(b.ctx.Type), nil
+	default:
+		// AzureRegion is documented and NOT bound: nothing here records a
+		// backend's region, and answering the service's own would be a guess a
+		// policy could route on.
+		return Null(), fmt.Errorf("unknown member %s on a backend", name)
 	}
 }
 

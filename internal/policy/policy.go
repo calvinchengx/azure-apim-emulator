@@ -209,6 +209,11 @@ type State struct {
 	Response   *http.Response
 	BackendURL string
 	BackendID  string
+	// Backends is the service's backend catalogue, and Backend is the one this
+	// request routed to. Resolved from the catalogue when a policy names a
+	// backend, so `context.Backend` reports the backend actually chosen.
+	Backends   map[string]expr.BackendContext
+	Backend    *expr.BackendContext
 	Path       string
 	Returned   bool
 	StatusCode int
@@ -2404,6 +2409,9 @@ func executeActions(actions []Action, state *State) error {
 			}
 			state.BackendURL = value
 			state.BackendID = backendID
+			if backend, ok := state.Backends[strings.ToLower(backendID)]; ok {
+				state.Backend = &backend
+			}
 		case ActionRewriteURI:
 			value, err := evalValue(action.Value, state)
 			if err != nil {
@@ -2584,6 +2592,7 @@ func stateEnv(state *State) *expr.Env {
 		Timestamp:             state.Timestamp,
 		Elapsed:               state.Elapsed,
 		RequestId:             state.RequestId,
+		Backend:               state.Backend,
 		Tracing:               state.Tracing,
 		Trace:                 traceFromState(state),
 		OriginalUrl:           state.OriginalUrl,
