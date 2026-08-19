@@ -28,6 +28,10 @@ const (
 	TokenIdent
 	TokenNumber
 	TokenString
+	// TokenInterpolated is a `$"..."` string. Its Lexeme carries the whole
+	// literal, holes included, because the parser splits it with the same
+	// scanner the lexer used to find its end.
+	TokenInterpolated
 	TokenTrue
 	TokenFalse
 	TokenNull
@@ -142,6 +146,16 @@ func matchingCloser(source string, open int, left, right byte) (int, error) {
 				return 0, err
 			}
 			i = next
+		case '$':
+			if i+1 < len(source) && source[i+1] == '"' {
+				_, closeAt, err := splitInterpolation(source[i+2:])
+				if err != nil {
+					return 0, err
+				}
+				i = i + 2 + closeAt + 1
+				continue
+			}
+			i++
 		case '@':
 			if i+1 < len(source) && source[i+1] == '"' {
 				next, err := skipString(source, i+1, '"', true)
@@ -383,6 +397,11 @@ func (s *scanner) next() (Token, error) {
 			return s.scanString('"', true)
 		}
 		return Token{}, fmt.Errorf("unexpected character %q", "@")
+	case '$':
+		if s.peekAt(1) == '"' {
+			return s.scanInterpolated()
+		}
+		return Token{}, fmt.Errorf("unexpected character %q", "$")
 	default:
 		if r >= '0' && r <= '9' {
 			return s.scanNumber()
@@ -501,6 +520,92 @@ func (s *scanner) scanString(quote byte, verbatim bool) (Token, error) {
 		s.pos += width
 	}
 	return Token{}, fmt.Errorf("unterminated string")
+}
+
+// interpolationPart is one piece of a `$"..."` string: either literal text or
+// the source of a hole.
+type interpolationPart struct {
+	text   string
+	isHole bool
+}
+
+// splitInterpolation reads the body of an interpolated string -- everything
+// after `$"` -- and returns its parts with the index of the closing quote.
+//
+// ONE function serves the lexer, which needs the end, and the parser, which
+// needs the parts. Two scanners over the same syntax would be two chances to
+// disagree about where a hole stops.
+//
+// A hole may contain strings, and those strings may contain braces and quotes:
+// Microsoft's own policies write `$"{x.ToString("R")}"` and
+// `$"{context.Variables["state"]}"`. So a hole is scanned with brace depth AND
+// string awareness, not by finding the next `}`.
+func splitInterpolation(body string) ([]interpolationPart, int, error) {
+	var parts []interpolationPart
+	var literal strings.Builder
+	flush := func() {
+		if literal.Len() > 0 {
+			parts = append(parts, interpolationPart{text: literal.String()})
+			literal.Reset()
+		}
+	}
+	for i := 0; i < len(body); {
+		switch body[i] {
+		case '"':
+			flush()
+			return parts, i, nil
+		// `{{` and `}}` are literal braces. APIM's own named values are already
+		// substituted into the document before this runs, so a doubled brace
+		// here is C#'s escape and nothing else.
+		case '{':
+			if i+1 < len(body) && body[i+1] == '{' {
+				literal.WriteByte('{')
+				i += 2
+				continue
+			}
+			closeAt, err := matchingCloser(body, i, '{', '}')
+			if err != nil {
+				return nil, 0, fmt.Errorf("unclosed hole in an interpolated string")
+			}
+			flush()
+			parts = append(parts, interpolationPart{text: body[i+1 : closeAt], isHole: true})
+			i = closeAt + 1
+		case '}':
+			if i+1 < len(body) && body[i+1] == '}' {
+				literal.WriteByte('}')
+				i += 2
+				continue
+			}
+			return nil, 0, fmt.Errorf("unmatched '}' in an interpolated string")
+		case '\\':
+			if i+1 >= len(body) {
+				return nil, 0, fmt.Errorf("unterminated string")
+			}
+			escaped, width, err := decodeEscape(body[i+1:])
+			if err != nil {
+				return nil, 0, err
+			}
+			literal.WriteString(escaped)
+			i += 1 + width
+		case '\n', '\r':
+			return nil, 0, fmt.Errorf("unterminated string")
+		default:
+			literal.WriteByte(body[i])
+			i++
+		}
+	}
+	return nil, 0, fmt.Errorf("unterminated string")
+}
+
+func (s *scanner) scanInterpolated() (Token, error) {
+	start := s.pos
+	body := s.source[s.pos+2:]
+	_, closeAt, err := splitInterpolation(body)
+	if err != nil {
+		return Token{}, err
+	}
+	s.pos = s.pos + 2 + closeAt + 1
+	return Token{Kind: TokenInterpolated, Lexeme: s.source[start:s.pos], Offset: start}, nil
 }
 
 func decodeEscape(source string) (string, int, error) {
