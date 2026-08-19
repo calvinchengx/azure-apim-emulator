@@ -40,6 +40,15 @@ setup-sdks:
 test-sdks:
 	APIM_RUN_EXTERNAL_SDK_TESTS=1 go test -count=1 -v ./e2e/sdk
 
+# The ARM-document witness: Microsoft's packaged JavaScript client round-tripping
+# every ARM resource family. Go and pnpm only, and its own job so a break in the
+# management-plane documents cannot hide inside the broader SDK suite.
+setup-arm-documents:
+	pnpm install --frozen-lockfile
+
+test-arm-documents:
+	APIM_RUN_EXTERNAL_SDK_TESTS=1 go test -count=1 -v -run 'TestOfficialManagementSDKs/arm-documents' ./e2e/sdk
+
 # The GraphQL witness needs only Go and pnpm, so it runs as its own job rather
 # than behind setup-sdks' dotnet and python installs. Keeping it separate also
 # means a break in one of those suites cannot hide a GraphQL regression.

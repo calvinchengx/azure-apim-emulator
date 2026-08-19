@@ -97,6 +97,28 @@ jobs:
       - run: make setup-sdks
       - run: make test-sdks
 
+  arm-documents-witness:
+    name: ARM documents witness (packaged @azure/arm-apimanagement, every family)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: 1.26.6
+          cache: true
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+      # ITS OWN JOB, like every other witness here. A `ci:` witness resolves to
+      # a workflow job, so the job name is the finest thing a parity row can
+      # cite; hanging the ARM document families off the broad SDK job would say
+      # less about each of them and would let a break in one hide in the other.
+      - run: make setup-arm-documents
+      - run: make test-arm-documents
+
   graphql-witness:
     name: GraphQL witness (reference graphql implementation, both ends)
     runs-on: ubuntu-latest

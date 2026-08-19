@@ -8,6 +8,12 @@ importers:
 
   .: {}
 
+  e2e/arm-documents:
+    dependencies:
+      '@azure/arm-apimanagement':
+        specifier: 10.0.0
+        version: 10.0.0
+
   e2e/credential:
     dependencies:
       oidc-provider:
