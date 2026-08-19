@@ -60,6 +60,7 @@ type DocumentedMember struct {
 type documentedFile struct {
 	Members        []DocumentedMember `json:"members"`
 	FrameworkTypes []string           `json:"frameworkTypes"`
+	ParameterNames []string           `json:"parameterNames"`
 }
 
 func loadDocumented() documentedFile {
@@ -138,4 +139,16 @@ func DocumentedTypes(typ, name string) map[string]string {
 		}
 	}
 	return nil
+}
+
+// DocumentedParameterNames returns the parameter names Microsoft's signatures
+// spell, which are the only names a caller may use as a named argument.
+//
+// Derived rather than listed, like everything else here: a name nobody
+// documents is a typo, and `As<string>(preserveContnet: true)` should say so
+// instead of being accepted and ignored.
+func DocumentedParameterNames() []string {
+	names := append([]string(nil), loadDocumented().ParameterNames...)
+	sort.Strings(names)
+	return names
 }

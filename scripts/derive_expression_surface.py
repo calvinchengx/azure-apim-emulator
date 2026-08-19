@@ -73,6 +73,14 @@ def canonical(name):
     return INTERFACE_TO_TYPE.get(name, name)
 
 
+# A signature row spells its parameters, `(headerName: string, defaultValue:
+# string)` or `(preserveContent = false)`. Those names are what a caller may use
+# as a named argument, so they are derived here rather than listed by hand.
+PARAMETER = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)\s*[:=]")
+
+parameter_names = set()
+
+
 def parse_signature(head, surface):
     """Record a member documented as a method signature.
 
@@ -84,6 +92,11 @@ def parse_signature(head, surface):
     if not match:
         return
     qualified, arguments = match.group(1), match.group(2)
+    for parameter in PARAMETER.findall(arguments):
+        # `this` marks an extension method's receiver, not a parameter a caller
+        # may name.
+        if parameter != "this":
+            parameter_names.add(parameter)
     name = qualified.split(".")[-1]
     # A method's declared type is its RETURN type, which is what a policy sees.
     returns = head.split(None, 1)[0]
@@ -121,6 +134,14 @@ def parse_docs(path):
             fragment = re.sub(r"\[[^\]]*\]\([^)]*\)", "", fragment).strip()
             if not fragment:
                 continue
+            # Only the PARENTHESISED part of a member cell holds parameters:
+            # `As<T>(preserveContent = false)` does, while `Elapsed: TimeSpan`
+            # is a member and its type, and scanning the whole fragment
+            # collected member names as though they were parameters.
+            for call in re.findall(r"\(([^()]*)\)", fragment):
+                for parameter in PARAMETER.findall(call):
+                    if parameter != "this":
+                        parameter_names.add(parameter)
             match = IDENT.match(fragment)
             # `IGraphQLDataObject` has a single cell reading "TBD": Microsoft
             # documents the type without documenting its members. Recording TBD
@@ -209,6 +230,7 @@ def main():
         "note": "DERIVED by scripts/derive_expression_surface.py from third_party/microsoft/. Do not edit by hand.",
         "members": members,
         "frameworkTypes": parse_framework_types(VENDOR / "policy-expressions.md"),
+        "parameterNames": sorted(parameter_names),
     }
     rendered = json.dumps(payload, indent=1) + "\n"
     if "--check" in sys.argv:
