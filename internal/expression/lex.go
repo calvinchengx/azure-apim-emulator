@@ -53,8 +53,12 @@ const (
 	TokenComma
 	TokenColon
 	TokenQuestion
-	// TokenQuestionDot is `?.`, the null-conditional access.
+	// TokenQuestionDot is `?.`, the null-conditional access, and
+	// TokenQuestionBracket is `?[`, the null-conditional index. TokenCoalesce
+	// is `??`.
 	TokenQuestionDot
+	TokenQuestionBracket
+	TokenCoalesce
 	TokenAssign
 	TokenArrow
 	TokenInc
@@ -374,6 +378,14 @@ func (s *scanner) next() (Token, error) {
 		if s.peekAt(1) == '.' {
 			s.pos += 2
 			return Token{Kind: TokenQuestionDot, Lexeme: "?.", Offset: start}, nil
+		}
+		if s.peekAt(1) == '[' {
+			s.pos += 2
+			return Token{Kind: TokenQuestionBracket, Lexeme: "?[", Offset: start}, nil
+		}
+		if s.peekAt(1) == '?' {
+			s.pos += 2
+			return Token{Kind: TokenCoalesce, Lexeme: "??", Offset: start}, nil
 		}
 		s.pos += width
 		return Token{Kind: TokenQuestion, Lexeme: "?", Offset: start}, nil
