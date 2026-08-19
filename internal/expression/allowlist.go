@@ -147,6 +147,8 @@ func Allowlist() []Member {
 		{Type: "Authorization", Name: "ClientId", Status: MemberBound},
 		{Type: "Authorization", Name: "Scopes", Status: MemberBound},
 		{Type: "Authorization", Name: "ExpiresIn", Status: MemberBound},
+		{Type: "Headers", Name: "ContainsKey", Status: MemberFramework},
+		{Type: "Headers", Name: "Count", Status: MemberFramework},
 		{Type: "Headers", Name: "Get", Status: MemberBound},
 		{Type: "Headers", Name: "GetValueOrDefault", Status: MemberBound},
 		{Type: "Certificates", Name: "ContainsKey", Status: MemberBound},
@@ -187,7 +189,7 @@ func frameworkTypeOf(typ string) (string, bool) {
 	switch typ {
 	case "Certificate":
 		return "System.Security.Cryptography.X509Certificates.X509Certificate2", true
-	case "Query", "Claims":
+	case "Query", "Claims", "Headers":
 		// Microsoft types `IUrl.Query` and `Jwt.Claims` as
 		// IReadOnlyDictionary<string, string[]>,
 		// so its dictionary members come from .NET rather than from an APIM

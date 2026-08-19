@@ -85,12 +85,14 @@ def parse_signature(head, surface):
         return
     qualified, arguments = match.group(1), match.group(2)
     name = qualified.split(".")[-1]
+    # A method's declared type is its RETURN type, which is what a policy sees.
+    returns = head.split(None, 1)[0]
     if "." in qualified:
-        surface.setdefault(canonical(qualified.split(".")[-2]), set()).add(name)
+        surface.setdefault(canonical(qualified.split(".")[-2]), {})[name] = returns
         return
     receiver = re.search(r":\s*this\s+([\w\.\[\]]+)", arguments)
     if receiver and receiver.group(1) in RECEIVER_TO_TYPE:
-        surface.setdefault(RECEIVER_TO_TYPE[receiver.group(1)], set()).add(name)
+        surface.setdefault(RECEIVER_TO_TYPE[receiver.group(1)], {})[name] = returns
 
 
 def parse_docs(path):
@@ -124,8 +126,21 @@ def parse_docs(path):
             # documents the type without documenting its members. Recording TBD
             # as a member would invent one.
             if match and match.group(1) != "TBD":
-                surface.setdefault(typ, set()).add(match.group(1))
+                surface.setdefault(typ, {})[match.group(1)] = declared_type(fragment)
     return surface
+
+
+# `Id`: `string` -- and sometimes `Elapsed: `TimeSpan` - prose about it`, so the
+# type is what sits between the colon and any trailing prose.
+DECLARED = re.compile(r"^[^:]*:\s*`?([^`\n]+?)`?(?:\s+-\s.*)?$")
+
+
+def declared_type(fragment):
+    """The C# type a reference fragment declares, or "" when it names none."""
+    match = DECLARED.match(fragment.strip())
+    if not match:
+        return ""
+    return match.group(1).strip().strip("`").strip()
 
 
 DOTTED_TYPE = re.compile(r"^(System|Newtonsoft)\.[A-Za-z0-9_.<>, \[\]]+$")
@@ -154,7 +169,7 @@ def parse_framework_types(path):
     return sorted(types)
 
 
-PROPERTY = re.compile(r"^\s*(?:public\s+)?[\w<>,\[\]\?\. ]+?\s+([A-Za-z_][A-Za-z0-9_]*)\s*\{\s*get;")
+PROPERTY = re.compile(r"^\s*(?:public\s+)?([\w<>,\[\]\?\. ]+?)\s+([A-Za-z_][A-Za-z0-9_]*)\s*\{\s*get;")
 
 
 def parse_toolkit(directory):
@@ -168,7 +183,7 @@ def parse_toolkit(directory):
         for line in path.read_text().splitlines():
             match = PROPERTY.match(line)
             if match:
-                surface.setdefault(typ, set()).add(match.group(1))
+                surface.setdefault(typ, {})[match.group(2)] = match.group(1).strip()
     return surface
 
 
@@ -177,13 +192,19 @@ def main():
     toolkit = parse_toolkit(VENDOR / "toolkit")
     members = []
     for typ in sorted(set(docs) | set(toolkit)):
-        for name in sorted(docs.get(typ, set()) | toolkit.get(typ, set())):
-            sources = []
-            if name in docs.get(typ, set()):
-                sources.append("reference")
-            if name in toolkit.get(typ, set()):
-                sources.append("toolkit")
-            members.append({"type": typ, "name": name, "sources": sources})
+        for name in sorted(set(docs.get(typ, {})) | set(toolkit.get(typ, {}))):
+            sources, declared = [], {}
+            for label, surface in (("reference", docs), ("toolkit", toolkit)):
+                if name in surface.get(typ, {}):
+                    sources.append(label)
+                    # A source can name a member without naming its type, and an
+                    # empty declaration is recorded as absent rather than as "".
+                    if surface[typ][name]:
+                        declared[label] = surface[typ][name]
+            member = {"type": typ, "name": name, "sources": sources}
+            if declared:
+                member["declared"] = declared
+            members.append(member)
     payload = {
         "note": "DERIVED by scripts/derive_expression_surface.py from third_party/microsoft/. Do not edit by hand.",
         "members": members,

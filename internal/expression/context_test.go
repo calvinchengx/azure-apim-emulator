@@ -724,4 +724,48 @@ func TestHeadersAnswerEveryValue(t *testing.T) {
 	if _, err := EvalEnv("@(context.Request.Headers[0])", env); err == nil {
 		t.Fatal("a header indexed by position was accepted")
 	}
+	// The dictionary members an IReadOnlyDictionary carries, and their refusals.
+	for _, test := range []struct {
+		source string
+		want   any
+	}{
+		{"@(context.Request.Headers.ContainsKey('X-Single'))", true},
+		{"@(context.Request.Headers.ContainsKey('X-Absent'))", false},
+		{"@(context.Request.Headers.Count)", float64(2)},
+	} {
+		got, err := EvalEnv(test.source, env)
+		if err != nil {
+			t.Fatalf("%s: %v", test.source, err)
+		}
+		if got.Interface() != test.want {
+			t.Fatalf("%s = %#v, want %#v", test.source, got.Interface(), test.want)
+		}
+	}
+	if _, err := EvalEnv("@(context.Request.Headers.ContainsKey(1))", env); err == nil {
+		t.Fatal("ContainsKey accepted a non-string header name")
+	}
+}
+
+// Api.ServiceUrl is an IUrl in both Microsoft sources, not a string. It used to
+// answer the raw text, which read fine until a policy wrote `ServiceUrl.Host`.
+func TestApiServiceUrlIsAUrl(t *testing.T) {
+	env := Bind(Context{Api: &ApiContext{Id: "orders", ServiceUrl: "https://backend.test:8443/v1?x=1"}})
+	for _, test := range []struct{ source, want string }{
+		{"@(context.Api.ServiceUrl.Host)", "backend.test:8443"},
+		{"@(context.Api.ServiceUrl.Scheme)", "https"},
+		{"@(context.Api.ServiceUrl.Path)", "/v1"},
+		{"@(context.Api.ServiceUrl.Port.ToString())", "8443"},
+		{"@(context.Api.ServiceUrl.QueryString)", "?x=1"},
+	} {
+		got, err := EvalEnv(test.source, env)
+		if err != nil || got.String() != test.want {
+			t.Fatalf("%s = %q, %v; want %q", test.source, got.String(), err, test.want)
+		}
+	}
+	// A serviceUrl that will not parse reports rather than answering an empty
+	// url a policy would then read members off.
+	broken := Bind(Context{Api: &ApiContext{Id: "orders", ServiceUrl: "://nonsense"}})
+	if _, err := EvalEnv("@(context.Api.ServiceUrl.Host)", broken); err == nil {
+		t.Fatal("an unparsable service url was accepted")
+	}
 }

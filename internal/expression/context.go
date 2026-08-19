@@ -296,7 +296,13 @@ func (h *apiHost) member(name string) (Value, error) {
 	case "IsCurrentRevision":
 		return Bool(h.ctx.IsCurrentRevision), nil
 	case "ServiceUrl":
-		return String(h.ctx.ServiceUrl), nil
+		// Microsoft types this IUrl, not a string. It answered the raw text,
+		// which read fine until a policy wrote `ServiceUrl.Host`.
+		parsed, err := url.Parse(h.ctx.ServiceUrl)
+		if err != nil {
+			return Null(), fmt.Errorf("service url %q is unparsable: %w", h.ctx.ServiceUrl, err)
+		}
+		return Object(&urlHost{request: &http.Request{URL: parsed, Host: parsed.Host}}), nil
 	case "Protocols":
 		items := make([]Value, 0, len(h.ctx.Protocols))
 		for _, protocol := range h.ctx.Protocols {
@@ -755,6 +761,19 @@ func (h *headerHost) member(name string) (Value, error) {
 		return Object(funcValue{fn: h.get}), nil
 	case "GetValueOrDefault":
 		return Object(funcValue{fn: h.getValueOrDefault}), nil
+	// A header collection is an IReadOnlyDictionary, so it answers the members
+	// .NET gives one. Their absence is what made the type gate read headers as
+	// a plain object rather than as the dictionary Microsoft declares.
+	case "ContainsKey":
+		return Object(funcValue{fn: func(args []Value) (Value, error) {
+			if len(args) != 1 || args[0].kind != KindString {
+				return Null(), fmt.Errorf("ContainsKey requires a header name")
+			}
+			_, ok := h.header[textproto.CanonicalMIMEHeaderKey(args[0].str)]
+			return Bool(ok), nil
+		}}), nil
+	case "Count":
+		return Double(float64(len(h.header))), nil
 	default:
 		return Null(), fmt.Errorf("unknown member %s", name)
 	}
