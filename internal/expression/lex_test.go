@@ -33,9 +33,16 @@ func TestLexWrappersAndOperators(t *testing.T) {
 		t.Fatalf("block tokens = %v", kinds(block))
 	}
 
+	// `?.` is ONE token now. It used to lex as `?` then `.`, which left the
+	// parser unable to tell a null-conditional access from a ternary.
 	bare, form, err := Lex("items[0]?.Name")
-	if err != nil || form != FormBare || !equalKinds(kinds(bare), []TokenKind{TokenIdent, TokenLBracket, TokenNumber, TokenRBracket, TokenQuestion, TokenDot, TokenIdent, TokenEOF}) {
+	if err != nil || form != FormBare || !equalKinds(kinds(bare), []TokenKind{TokenIdent, TokenLBracket, TokenNumber, TokenRBracket, TokenQuestionDot, TokenIdent, TokenEOF}) {
 		t.Fatalf("bare = %v %d %v", kinds(bare), form, err)
+	}
+	// A `?` that does not touch a `.` is still a ternary's.
+	ternary, _, err := Lex("a ? b : c")
+	if err != nil || !equalKinds(kinds(ternary), []TokenKind{TokenIdent, TokenQuestion, TokenIdent, TokenColon, TokenIdent, TokenEOF}) {
+		t.Fatalf("ternary = %v %v", kinds(ternary), err)
 	}
 
 	ops, _, err := Lex("a + b - c * d / e % f < g <= h > i >= j != k || m => n ++ -- , : new")
