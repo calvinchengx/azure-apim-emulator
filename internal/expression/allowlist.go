@@ -171,7 +171,27 @@ func Allowlist() []Member {
 		{Type: "Query", Name: "ContainsKey", Status: MemberFramework},
 		{Type: "Query", Name: "Count", Status: MemberFramework},
 		{Type: "value", Name: "ToString", Status: MemberBound},
-		{Type: "string", Name: "Length", Status: MemberBound},
+		{Type: "string", Name: "Split", Status: MemberFramework},
+		{Type: "string", Name: "Trim", Status: MemberFramework},
+		{Type: "string", Name: "TrimStart", Status: MemberFramework},
+		{Type: "string", Name: "TrimEnd", Status: MemberFramework},
+		{Type: "string", Name: "ToLower", Status: MemberFramework},
+		{Type: "string", Name: "ToUpper", Status: MemberFramework},
+		{Type: "string", Name: "StartsWith", Status: MemberFramework},
+		{Type: "string", Name: "EndsWith", Status: MemberFramework},
+		{Type: "string", Name: "Contains", Status: MemberFramework},
+		{Type: "string", Name: "Equals", Status: MemberFramework},
+		{Type: "string", Name: "Replace", Status: MemberFramework},
+		{Type: "string", Name: "Substring", Status: MemberFramework},
+		{Type: "string", Name: "IndexOf", Status: MemberFramework},
+		{Type: "string", Name: "GetHashCode", Status: MemberFramework},
+		{Type: "StringComparison", Name: "Ordinal", Status: MemberFramework},
+		{Type: "StringComparison", Name: "OrdinalIgnoreCase", Status: MemberFramework},
+		{Type: "StringComparison", Name: "InvariantCulture", Status: MemberFramework},
+		{Type: "StringComparison", Name: "InvariantCultureIgnoreCase", Status: MemberFramework},
+		{Type: "StringComparison", Name: "CurrentCulture", Status: MemberFramework},
+		{Type: "StringComparison", Name: "CurrentCultureIgnoreCase", Status: MemberFramework},
+		{Type: "string", Name: "Length", Status: MemberFramework},
 		{Type: "string", Name: "AsJwt", Status: MemberBound},
 		{Type: "string", Name: "AsBasic", Status: MemberBound},
 		{Type: "Jwt", Name: "Id", Status: MemberBound},
@@ -201,6 +221,10 @@ func frameworkTypeOf(typ string) (string, bool) {
 	switch typ {
 	case "Certificate":
 		return "System.Security.Cryptography.X509Certificates.X509Certificate2", true
+	case "string":
+		return "System.String", true
+	case "StringComparison":
+		return "System.StringComparison", true
 	case "Random":
 		return "System.Random", true
 	case "Uri":

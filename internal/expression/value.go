@@ -229,6 +229,12 @@ func (v Value) member(name string) (Value, error) {
 		if v.IsNull() {
 			return Null(), fmt.Errorf("member access on null")
 		}
+		// System.String's own members, which a policy uses constantly. They are
+		// tried before the failure so that a member on any OTHER kind still
+		// reports as unknown rather than as a string operation.
+		if v.kind == KindString {
+			return stringHost{text: v.str}.member(name)
+		}
 		return Null(), fmt.Errorf("unknown member %s", name)
 	}
 }

@@ -184,6 +184,9 @@ type Context struct {
 func Bind(ctx Context) *Env {
 	return &Env{Bindings: map[string]Value{
 		"context": Object(&contextHost{ctx: ctx}),
+		// StringComparison is a global rather than a member of anything: a
+		// policy writes `Equals(x, StringComparison.OrdinalIgnoreCase)`.
+		"StringComparison": Object(comparisonHost{}),
 	}}
 }
 

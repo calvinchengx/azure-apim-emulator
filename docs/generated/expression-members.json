@@ -583,6 +583,36 @@
       "status": "bound"
     },
     {
+      "type": "StringComparison",
+      "name": "CurrentCulture",
+      "status": "framework"
+    },
+    {
+      "type": "StringComparison",
+      "name": "CurrentCultureIgnoreCase",
+      "status": "framework"
+    },
+    {
+      "type": "StringComparison",
+      "name": "InvariantCulture",
+      "status": "framework"
+    },
+    {
+      "type": "StringComparison",
+      "name": "InvariantCultureIgnoreCase",
+      "status": "framework"
+    },
+    {
+      "type": "StringComparison",
+      "name": "Ordinal",
+      "status": "framework"
+    },
+    {
+      "type": "StringComparison",
+      "name": "OrdinalIgnoreCase",
+      "status": "framework"
+    },
+    {
       "type": "Subscription",
       "name": "CreatedDate",
       "status": "bound"
@@ -879,8 +909,78 @@
     },
     {
       "type": "string",
+      "name": "Contains",
+      "status": "framework"
+    },
+    {
+      "type": "string",
+      "name": "EndsWith",
+      "status": "framework"
+    },
+    {
+      "type": "string",
+      "name": "Equals",
+      "status": "framework"
+    },
+    {
+      "type": "string",
+      "name": "GetHashCode",
+      "status": "framework"
+    },
+    {
+      "type": "string",
+      "name": "IndexOf",
+      "status": "framework"
+    },
+    {
+      "type": "string",
       "name": "Length",
-      "status": "bound"
+      "status": "framework"
+    },
+    {
+      "type": "string",
+      "name": "Replace",
+      "status": "framework"
+    },
+    {
+      "type": "string",
+      "name": "Split",
+      "status": "framework"
+    },
+    {
+      "type": "string",
+      "name": "StartsWith",
+      "status": "framework"
+    },
+    {
+      "type": "string",
+      "name": "Substring",
+      "status": "framework"
+    },
+    {
+      "type": "string",
+      "name": "ToLower",
+      "status": "framework"
+    },
+    {
+      "type": "string",
+      "name": "ToUpper",
+      "status": "framework"
+    },
+    {
+      "type": "string",
+      "name": "Trim",
+      "status": "framework"
+    },
+    {
+      "type": "string",
+      "name": "TrimEnd",
+      "status": "framework"
+    },
+    {
+      "type": "string",
+      "name": "TrimStart",
+      "status": "framework"
     },
     {
       "type": "string",
