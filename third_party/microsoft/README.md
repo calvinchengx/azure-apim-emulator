@@ -32,6 +32,11 @@ and it measures the LANGUAGE: whether this parser can read what Microsoft tells
 people to write. A member inventory says nothing about that, because a policy is
 an expression, not a member lookup.
 
+There are TWO gates over it, because parsing is not working:
+`TestCorpusParsesWhatItParsedBefore` reads the expressions, and
+`TestCorpusEvaluatesWhatItEvaluatedBefore` runs them. A member that stops
+resolving is invisible to the first and caught by the second.
+
 `TestCorpusParsesWhatItParsedBefore` extracts every `@(...)` and `@{...}` from
 them and parses each. The result is recorded in
 `docs/generated/policy-corpus.json` and enforced as a RATCHET: an expression that
