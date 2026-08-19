@@ -1,0 +1,640 @@
+{
+  "source": "Azure/api-management-policy-snippets, MIT",
+  "commit": "87225c2090e45add095919e8767c37d9ece42e0c",
+  "total": 322,
+  "parsed": 229,
+  "gaps": [
+    {
+      "reason": "unexpected character \"$\"",
+      "count": 47
+    },
+    {
+      "reason": "unexpected token \"new\"",
+      "count": 11
+    },
+    {
+      "reason": "expected ')'",
+      "count": 9
+    },
+    {
+      "reason": "unexpected token \".\"",
+      "count": 6
+    },
+    {
+      "reason": "statement \"string\" is not implemented",
+      "count": 5
+    },
+    {
+      "reason": "expected ']'",
+      "count": 2
+    },
+    {
+      "reason": "unexpected token \"[\"",
+      "count": 2
+    },
+    {
+      "reason": "expected '",
+      "count": 1
+    },
+    {
+      "reason": "statement \"JObject\" is not implemented",
+      "count": 1
+    },
+    {
+      "reason": "statement \"System\" is not implemented",
+      "count": 1
+    },
+    {
+      "reason": "statement \"TimeSpan\" is not implemented",
+      "count": 1
+    },
+    {
+      "reason": "statement \"byte\" is not implemented",
+      "count": 1
+    },
+    {
+      "reason": "statement \"foreach\" is not implemented",
+      "count": 1
+    },
+    {
+      "reason": "statement \"try\" is not implemented",
+      "count": 1
+    },
+    {
+      "reason": "statement \"using\" is not implemented",
+      "count": 1
+    },
+    {
+      "reason": "unexpected character \"\u0026\"",
+      "count": 1
+    },
+    {
+      "reason": "unexpected token \"{\"",
+      "count": 1
+    },
+    {
+      "reason": "unterminated string",
+      "count": 1
+    }
+  ],
+  "failures": [
+    {
+      "digest": "9fb54ea195ad",
+      "reason": "expected '",
+      "file": "Parse_a_JWT_token_using_expressions.xml",
+      "excerpt": "@{ var jwt = (Jwt)context.Variables[\"valid-jwt\"]; var permissions = jwt.Claims[\""
+    },
+    {
+      "digest": "06a03e034a58",
+      "reason": "expected ')'",
+      "file": "Loopback_request_for_service_at_same_API_Management_service.xml",
+      "excerpt": "@(context.Request.Headers.GetValueOrDefault(\"Ocp-Apim-Subscription-Key=\"\"\",\"sche"
+    },
+    {
+      "digest": "1b8b2b1a6a4c",
+      "reason": "expected ')'",
+      "file": "oauth-proxy-session-fragment.xml",
+      "excerpt": "@(((Jwt)context.Variables[\"idTokenJwt\"]).Claims[\"preferred_username\"][0])"
+    },
+    {
+      "digest": "4941ed983f64",
+      "reason": "expected ')'",
+      "file": "Route_requests_based_on_size.policy.xml",
+      "excerpt": "@(context.Request.Body.As\u003cstring\u003e(preserveContent: true).Length\u003c256000)"
+    },
+    {
+      "digest": "5aab640eb762",
+      "reason": "expected ')'",
+      "file": "Call_out_to_an_HTTP_endpoint_and_cache_the_response.policy.xml",
+      "excerpt": "@(!context.Variables.ContainsKey(\"latlong=\"\"\"))"
+    },
+    {
+      "digest": "95a5feb03606",
+      "reason": "expected ')'",
+      "file": "Call_out_to_an_HTTP_endpoint_and_cache_the_response.policy.xml",
+      "excerpt": "@(context.Request.MatchedParameters.GetValueOrDefault(\"latlong=\"\"\"))"
+    },
+    {
+      "digest": "b350b68bebc8",
+      "reason": "expected ')'",
+      "file": "oauth-proxy-callback.xml",
+      "excerpt": "@(context.Request.Body.AsFormUrlEncodedContent(preserveContent: true)[\"code\"].Si"
+    },
+    {
+      "digest": "c08870a029e1",
+      "reason": "expected ')'",
+      "file": "oauth-proxy-session-fragment.xml",
+      "excerpt": "@(((Jwt)context.Variables[\"idTokenJwt\"]).Claims.ContainsKey(\"preferred_username\""
+    },
+    {
+      "digest": "dd9df4e66b11",
+      "reason": "expected ')'",
+      "file": "Pre-authorize_requests_based_on_HTTP_method_with_validate-jwt.policy.xml",
+      "excerpt": "@(context.Request.Method.Equals(\"patch=\"\"\",StringComparison.OrdinalIgnoreCase))"
+    },
+    {
+      "digest": "f8e6cce940b9",
+      "reason": "expected ')'",
+      "file": "oauth-proxy-session-fragment.xml",
+      "excerpt": "@(((Jwt)context.Variables[\"idTokenJwt\"]).Claims[\"name\"][0])"
+    },
+    {
+      "digest": "ddf62f2373f8",
+      "reason": "expected ']'",
+      "file": "Call_out_to_an_HTTP_endpoint_and_cache_the_response.policy.xml",
+      "excerpt": "@((string)context.Variables[\"latlong=\"\"\"])"
+    },
+    {
+      "digest": "f3aac929f363",
+      "reason": "expected ']'",
+      "file": "Call_out_to_an_HTTP_endpoint_and_cache_the_response.policy.xml",
+      "excerpt": "@(((IResponse)context.Variables[\"response=\"\"\"]).Body.As\u003cJObject\u003e ()[\"results\"][0"
+    },
+    {
+      "digest": "bc5e6ea8b121",
+      "reason": "statement \"JObject\" is not implemented",
+      "file": "Backend_for_Frontend_or_curated_API_policy.xml",
+      "excerpt": "@{ JObject finalResponse = new JObject(); int finalStatus = 200; // This assumes"
+    },
+    {
+      "digest": "3f764605edc6",
+      "reason": "statement \"System\" is not implemented",
+      "file": "Generate_Shared_Access_Signature_and_forward_request_to_Azure_storage.policy.xml",
+      "excerpt": "@{ // https://docs.microsoft.com/en-us/rest/api/storageservices/fileservices/aut"
+    },
+    {
+      "digest": "edd07057161e",
+      "reason": "statement \"TimeSpan\" is not implemented",
+      "file": "Generate_Azure_Relay_Token.policy.xml",
+      "excerpt": "@{ TimeSpan sinceEpoch = DateTime.UtcNow - new DateTime(1970, 1, 1); string expi"
+    },
+    {
+      "digest": "a57620f625e1",
+      "reason": "statement \"byte\" is not implemented",
+      "file": "Decrypt_AES_Data_using_policy_expressions.xml",
+      "excerpt": "@{ byte[] inBytes = Convert.FromBase64String(context.Request.Body.As\u003cJObject\u003e()."
+    },
+    {
+      "digest": "97938f1f478d",
+      "reason": "statement \"foreach\" is not implemented",
+      "file": "Filter_response_content_based_on_product_name.policy.xml",
+      "excerpt": "@{ var response = context.Response.Body.As\u003cJObject\u003e(); foreach (var key in new ["
+    },
+    {
+      "digest": "012c5e916498",
+      "reason": "statement \"string\" is not implemented",
+      "file": "Encrypt_data_using_expressions.policy.xml",
+      "excerpt": "@{ string goober = (string)context.Request.MatchedParameters[\"Goober\"]; byte[] g"
+    },
+    {
+      "digest": "4d8f75042053",
+      "reason": "statement \"string\" is not implemented",
+      "file": "Get_X-CSRF_token_from_SAP_gateway_using_send_request.policy.xml",
+      "excerpt": "@{ string rawcookie = ((IResponse)context.Variables[\"SAPCSRFToken\"]).Headers.Get"
+    },
+    {
+      "digest": "5b6dd9059498",
+      "reason": "statement \"string\" is not implemented",
+      "file": "Get_OAuth2_access_token_from_AAD_using_client_id_and_certificate_using_key_vault_manage_identity.xml",
+      "excerpt": "@{ //below code is to get claims string aud = (string)context.Variables[\"authori"
+    },
+    {
+      "digest": "b16f5c0a35c6",
+      "reason": "statement \"string\" is not implemented",
+      "file": "Decrypt_AES_Data_using_policy_expressions.xml",
+      "excerpt": "@{ string inBody = (string)context.Variables[\"plainText\"]; return inBody; }"
+    },
+    {
+      "digest": "b9de932cd461",
+      "reason": "statement \"string\" is not implemented",
+      "file": "Request_OAuth2_access_token_from_SAP_using_AAD_JWT_token.xml",
+      "excerpt": "@{ string rawcookie = ((IResponse)context.Variables[\"SAPCSRFToken\"]).Headers.Get"
+    },
+    {
+      "digest": "6c39e402d2c3",
+      "reason": "statement \"try\" is not implemented",
+      "file": "oauth-proxy-session-fragment.xml",
+      "excerpt": "@{ try { var cookieBytes = Convert.FromBase64String(((string)context.Variables[\""
+    },
+    {
+      "digest": "8d43289c5006",
+      "reason": "statement \"using\" is not implemented",
+      "file": "Extract_value_from_XML.xml",
+      "excerpt": "@{ // The XML from which you want to extract information may come from various p"
+    },
+    {
+      "digest": "042c1de1d8e1",
+      "reason": "unexpected character \"$\"",
+      "file": "oauth-proxy-callback.xml",
+      "excerpt": "@($\"client_id={{ClientId}}\u0026code={(string)context.Variables[\"code\"]}\u0026redirect_uri"
+    },
+    {
+      "digest": "06aadddc1633",
+      "reason": "unexpected character \"$\"",
+      "file": "oauth-proxy-callback.xml",
+      "excerpt": "@($\"signin-{context.Variables[\"cacheKey\"]}-nonce\")"
+    },
+    {
+      "digest": "07ea0a54abbd",
+      "reason": "unexpected character \"$\"",
+      "file": "Loopback_request_for_service_at_same_API_Management_service.xml",
+      "excerpt": "@($\"{(string)context.Variables[\"subscriptionKey\"]}\")"
+    },
+    {
+      "digest": "0ac082b64933",
+      "reason": "unexpected character \"$\"",
+      "file": "Request_OAuth2_access_token_from_SAP_using_AAD_JWT_token.xml",
+      "excerpt": "@{ var _AADRegisteredAppClientId = context.Variables[\"APIMAADRegisteredAppClient"
+    },
+    {
+      "digest": "112028fd322d",
+      "reason": "unexpected character \"$\"",
+      "file": "oauth-proxy-sign-out.xml",
+      "excerpt": "@($\"/oauth/signin?redirect={Uri.EscapeDataString(context.Request.OriginalUrl.ToS"
+    },
+    {
+      "digest": "11bb83aad87e",
+      "reason": "unexpected character \"$\"",
+      "file": "Call_out_to_an_HTTP_endpoint_and_cache_the_response.policy.xml",
+      "excerpt": "@{ var code = context.Request.MatchedParameters.GetValueOrDefault(\"place\"); var "
+    },
+    {
+      "digest": "16eb09ae7a5a",
+      "reason": "unexpected character \"$\"",
+      "file": "Return_a_blob_URL_signed_with_a_user_delegation_SAS_token.xml",
+      "excerpt": "@{ XmlDocument xml = new XmlDocument(); string userDelegationKeyResponse = ((IRe"
+    },
+    {
+      "digest": "1b80f2efbdfb",
+      "reason": "unexpected character \"$\"",
+      "file": "Request_OAuth2_access_token_from_SAP_using_AAD_JWT_token.xml",
+      "excerpt": "@{ var _SAPOAuthClientID = context.Variables[\"SAPOAuthClientID\"]; var _SAPOAuthS"
+    },
+    {
+      "digest": "21b558c16317",
+      "reason": "unexpected character \"$\"",
+      "file": "Request_OAuth2_access_token_from_SAP_using_AAD_JWT_token.xml",
+      "excerpt": "@{ var _SAPOAuthClientID = context.Variables[\"SAPOAuthClientID\"]; var _SAPOAuthS"
+    },
+    {
+      "digest": "2d36394df15f",
+      "reason": "unexpected character \"$\"",
+      "file": "oauth-proxy-session-fragment.xml",
+      "excerpt": "@{ var token = Encoding.UTF8.GetBytes((string)context.Variables[\"refreshToken\"])"
+    },
+    {
+      "digest": "34edba4c2bd7",
+      "reason": "unexpected character \"$\"",
+      "file": "oauth-proxy-sign-in.xml",
+      "excerpt": "@($\"{{CookiePrefix}}-{(string)context.Variables[\"state\"]}={(string)context.Varia"
+    },
+    {
+      "digest": "397f6ad54b90",
+      "reason": "unexpected character \"$\"",
+      "file": "oauth-proxy-session-fragment.xml",
+      "excerpt": "@($\"Bearer {(string)context.Variables[\"accessToken\"]}\")"
+    },
+    {
+      "digest": "3998e3a68cce",
+      "reason": "unexpected character \"$\"",
+      "file": "Authenticate_using_Managed_Identity_to_access_Storage_Account.xml",
+      "excerpt": "@($\"{((IResponse)context.Variables[\"blobdata\"]).Body.As\u003cJObject\u003e() }\")"
+    },
+    {
+      "digest": "3cc905bff432",
+      "reason": "unexpected character \"$\"",
+      "file": "oauth-proxy-callback.xml",
+      "excerpt": "@($\"tokens-{context.Variables[\"cacheKey\"]}-accessToken\")"
+    },
+    {
+      "digest": "41a3b8ae039b",
+      "reason": "unexpected character \"$\"",
+      "file": "oauth-proxy-callback.xml",
+      "excerpt": "@{ var token = Encoding.UTF8.GetBytes((string)context.Variables[\"idtoken\"]); var"
+    },
+    {
+      "digest": "5bb2c66b6ff0",
+      "reason": "unexpected character \"$\"",
+      "file": "oauth-proxy-session-fragment.xml",
+      "excerpt": "@($\"{{CookiePrefix}}=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT\")"
+    },
+    {
+      "digest": "6fa50e431c71",
+      "reason": "unexpected character \"$\"",
+      "file": "oauth-proxy-callback.xml",
+      "excerpt": "@{ var token = Encoding.UTF8.GetBytes((string)context.Variables[\"refreshToken\"])"
+    },
+    {
+      "digest": "7ba5fa262ece",
+      "reason": "unexpected character \"$\"",
+      "file": "oauth-proxy-callback.xml",
+      "excerpt": "@{ var forwardedHost = (string)context.Request.Headers.GetValueOrDefault(\"X-Forw"
+    },
+    {
+      "digest": "81a3e3cfcba3",
+      "reason": "unexpected character \"$\"",
+      "file": "oauth-proxy-callback.xml",
+      "excerpt": "@(context.Request.Headers.GetValueOrDefault(\"cookie\", \"\").Split(';').Select(x =\u003e"
+    },
+    {
+      "digest": "82a30ba0c23e",
+      "reason": "unexpected character \"$\"",
+      "file": "Create_HMAC_SHA256-Signed_JWT.policy.xml",
+      "excerpt": "@{ // 1) Construct the Base64Url-encoded header var header = new { typ = \"JWT\", "
+    },
+    {
+      "digest": "82c3c0d2325d",
+      "reason": "unexpected character \"$\"",
+      "file": "oauth-proxy-sign-in.xml",
+      "excerpt": "@{ var forwardedHost = (string)context.Request.Headers.GetValueOrDefault(\"X-Forw"
+    },
+    {
+      "digest": "83842577405e",
+      "reason": "unexpected character \"$\"",
+      "file": "oauth-proxy-slide-session-fragment.xml",
+      "excerpt": "@{ var cookie = Encoding.UTF8.GetBytes((string)context.Variables[\"cookie-prefix\""
+    },
+    {
+      "digest": "944b6bcc12f2",
+      "reason": "unexpected character \"$\"",
+      "file": "oauth-proxy-callback.xml",
+      "excerpt": "@($\"{{CookiePrefix}}-{(string)context.Variables[\"state\"]}=; path=/; expires=Thu,"
+    },
+    {
+      "digest": "94b6dfe7e1f1",
+      "reason": "unexpected character \"$\"",
+      "file": "Request_OAuth2_access_token_from_SAP_using_AAD_JWT_token.xml",
+      "excerpt": "@{ var _SAPOAuthClientID = context.Variables[\"SAPOAuthClientID\"]; var _SAPOAuthC"
+    },
+    {
+      "digest": "9770edf880bd",
+      "reason": "unexpected character \"$\"",
+      "file": "oauth-proxy-session-fragment.xml",
+      "excerpt": "@($\"client_id={{ClientId}}\u0026refresh_token={(string)context.Variables[\"refreshToke"
+    },
+    {
+      "digest": "989924569daf",
+      "reason": "unexpected character \"$\"",
+      "file": "oauth-proxy-sign-in.xml",
+      "excerpt": "@($\"signin-{(string)context.Variables[\"cookie\"]}-nonce\")"
+    },
+    {
+      "digest": "9f84c2008e4e",
+      "reason": "unexpected character \"$\"",
+      "file": "Request_OAuth2_access_token_from_SuccessFactors_using_AAD_JWT_token.xml",
+      "excerpt": "@{ var _AADRegisteredAppClientId = context.Variables[\"APIMAADRegisteredAppClient"
+    },
+    {
+      "digest": "a129af9be1e6",
+      "reason": "unexpected character \"$\"",
+      "file": "oauth-proxy-callback.xml",
+      "excerpt": "@($\"tokens-{context.Variables[\"cacheKey\"]}-idToken\")"
+    },
+    {
+      "digest": "a3c4718f8032",
+      "reason": "unexpected character \"$\"",
+      "file": "oauth-proxy-callback.xml",
+      "excerpt": "@($\"{(string)context.Variables[\"cacheKey\"]}.{(string)context.Variables[\"ivTokens"
+    },
+    {
+      "digest": "aa403e220502",
+      "reason": "unexpected character \"$\"",
+      "file": "oauth-proxy-callback.xml",
+      "excerpt": "@($\"{(string)context.Variables[\"expected-nonce\"]} != {(string)context.Variables["
+    },
+    {
+      "digest": "ad2e20759333",
+      "reason": "unexpected character \"$\"",
+      "file": "oauth-proxy-callback.xml",
+      "excerpt": "@{ var cookie = Encoding.UTF8.GetBytes((string)context.Variables[\"cookie-prefix\""
+    },
+    {
+      "digest": "b7fbe87ed28c",
+      "reason": "unexpected character \"$\"",
+      "file": "oauth-proxy-callback.xml",
+      "excerpt": "@($\"signin-{context.Variables[\"cacheKey\"]}-state\")"
+    },
+    {
+      "digest": "c2c4278c6509",
+      "reason": "unexpected character \"$\"",
+      "file": "oauth-proxy-callback.xml",
+      "excerpt": "@($\"tokens-{context.Variables[\"cacheKey\"]}-refreshToken\")"
+    },
+    {
+      "digest": "c5bae1aa1ea0",
+      "reason": "unexpected character \"$\"",
+      "file": "oauth-proxy-construct-authorization-redirect-fragment.xml",
+      "excerpt": "@{ return \"https://login.microsoftonline.com/{{TenantId}}/oauth2/v2.0/authorize\""
+    },
+    {
+      "digest": "c81eba82e0b5",
+      "reason": "unexpected character \"$\"",
+      "file": "oauth-proxy-callback.xml",
+      "excerpt": "@($\"signin-{context.Variables[\"cacheKey\"]}-code-challenge\")"
+    },
+    {
+      "digest": "c834f23b880d",
+      "reason": "unexpected character \"$\"",
+      "file": "oauth-proxy-session-fragment.xml",
+      "excerpt": "@{ var token = Encoding.UTF8.GetBytes((string)context.Variables[\"accessToken\"]);"
+    },
+    {
+      "digest": "cbab8b0c7dd7",
+      "reason": "unexpected character \"$\"",
+      "file": "oauth-proxy-session-fragment.xml",
+      "excerpt": "@{ var token = Encoding.UTF8.GetBytes((string)context.Variables[\"idtoken\"]); var"
+    },
+    {
+      "digest": "cbb98d959a62",
+      "reason": "unexpected character \"$\"",
+      "file": "oauth-proxy-callback.xml",
+      "excerpt": "@{ var token = Encoding.UTF8.GetBytes((string)context.Variables[\"accessToken\"]);"
+    },
+    {
+      "digest": "d05f131d07c9",
+      "reason": "unexpected character \"$\"",
+      "file": "oauth-proxy-slide-session-fragment.xml",
+      "excerpt": "@($\"{{CookiePrefix}}={(string)context.Variables[\"encryptedCookie\"]}; SameSite=La"
+    },
+    {
+      "digest": "d2d7e8ad6c72",
+      "reason": "unexpected character \"$\"",
+      "file": "oauth-proxy-token-endpoint-fragment.xml",
+      "excerpt": "@{ return $\"https://login.microsoftonline.com/{{TenantId}}/oauth2/v2.0/token\"; }"
+    },
+    {
+      "digest": "d2e459702039",
+      "reason": "unexpected character \"$\"",
+      "file": "oauth-proxy-session-fragment.xml",
+      "excerpt": "@($\"/oauth/signin?redirect={(string)context.Variables[\"redirect\"]}\")"
+    },
+    {
+      "digest": "d6f547748061",
+      "reason": "unexpected character \"$\"",
+      "file": "oauth-proxy-callback.xml",
+      "excerpt": "@($\"{(string)context.Variables[\"state\"]} != {(string)context.Variables[\"expected"
+    },
+    {
+      "digest": "df2982a49d8c",
+      "reason": "unexpected character \"$\"",
+      "file": "oauth-proxy-callback.xml",
+      "excerpt": "@($\"tokens-{context.Variables[\"cacheKey\"]}-refreshAt\")"
+    },
+    {
+      "digest": "e9810450028d",
+      "reason": "unexpected character \"$\"",
+      "file": "oauth-proxy-sign-in.xml",
+      "excerpt": "@($\"signin-{(string)context.Variables[\"cookie\"]}-state\")"
+    },
+    {
+      "digest": "ebf93ffbe3b6",
+      "reason": "unexpected character \"$\"",
+      "file": "Request_OAuth2_access_token_from_SuccessFactors_using_AAD_JWT_token.xml",
+      "excerpt": "@{ var _SAPSFApiKey = context.Variables[\"SAPSFApiKey\"]; var _SAPSFCompanyId = co"
+    },
+    {
+      "digest": "f0ecd0d41440",
+      "reason": "unexpected character \"$\"",
+      "file": "oauth-proxy-sign-in.xml",
+      "excerpt": "@($\"signin-{(string)context.Variables[\"cookie\"]}-code-challenge\")"
+    },
+    {
+      "digest": "fe147d8e3a96",
+      "reason": "unexpected character \"$\"",
+      "file": "oauth-proxy-callback.xml",
+      "excerpt": "@($\"{{CookiePrefix}}={(string)context.Variables[\"encryptedCookie\"]}; SameSite=La"
+    },
+    {
+      "digest": "b7a1a3b4c168",
+      "reason": "unexpected character \"\u0026\"",
+      "file": "Filter_on_IP_Address_when_using_Application_Gateway.policy.xml",
+      "excerpt": "@{ int HostToNetworkOrder(int host) { return (((int)HostToNetworkOrderShort((sho"
+    },
+    {
+      "digest": "1ba18cb5504b",
+      "reason": "unexpected token \".\"",
+      "file": "Request_OAuth2_access_token_from_SAP_using_AAD_JWT_token.xml",
+      "excerpt": "@(\"SAPBearerDuration\" + context.Request.Headers.GetValueOrDefault(\"Authorization"
+    },
+    {
+      "digest": "389771e4c3c5",
+      "reason": "unexpected token \".\"",
+      "file": "Request_OAuth2_access_token_from_SAP_using_AAD_JWT_token.xml",
+      "excerpt": "@(\"SAPRefreshDuration\" + context.Request.Headers.GetValueOrDefault(\"Authorizatio"
+    },
+    {
+      "digest": "a6e0b06e263d",
+      "reason": "unexpected token \".\"",
+      "file": "Request_OAuth2_access_token_from_SAP_using_AAD_JWT_token.xml",
+      "excerpt": "@(\"SAPPrincipalRefresh\" + context.Request.Headers.GetValueOrDefault(\"Authorizati"
+    },
+    {
+      "digest": "d1d47a8e4802",
+      "reason": "unexpected token \".\"",
+      "file": "Request_OAuth2_access_token_from_SAP_using_AAD_JWT_token.xml",
+      "excerpt": "@(\"SAPPrincipal\" + context.Request.Headers.GetValueOrDefault(\"Authorization\",\"\")"
+    },
+    {
+      "digest": "ed1e100de87f",
+      "reason": "unexpected token \".\"",
+      "file": "Set_cache_duration_using_response_cache_control_header.policy.xml",
+      "excerpt": "@{ var header = context.Response.Headers.GetValueOrDefault(\"Cache-Control\",\"\"); "
+    },
+    {
+      "digest": "fdb15fe2d4d3",
+      "reason": "unexpected token \".\"",
+      "file": "Request_OAuth2_access_token_from_SuccessFactors_using_AAD_JWT_token.xml",
+      "excerpt": "@(\"SAPSFPrincipal\" + context.Request.Headers.GetValueOrDefault(\"Authorization\",\""
+    },
+    {
+      "digest": "24a18be45df2",
+      "reason": "unexpected token \"[\"",
+      "file": "oauth-proxy-session-fragment.xml",
+      "excerpt": "@(context.Request.Headers.ContainsKey(\"cookie\") ? context.Request.Headers.GetVal"
+    },
+    {
+      "digest": "ae099e6898a4",
+      "reason": "unexpected token \"[\"",
+      "file": "oauth-proxy-sign-out.xml",
+      "excerpt": "@(context.Request.Headers.ContainsKey(\"cookie\") ? context.Request.Headers[\"cooki"
+    },
+    {
+      "digest": "0737c158764f",
+      "reason": "unexpected token \"new\"",
+      "file": "Random_load_balancer_simpler.policy.xml",
+      "excerpt": "@(new System.Random().Next(1,100) \u003c= {{MyTrafficSplitApp_TrafficSplitWeight}})"
+    },
+    {
+      "digest": "092e20f974cb",
+      "reason": "unexpected token \"new\"",
+      "file": "Request_OAuth2_access_token_from_SAP_using_AAD_JWT_token.xml",
+      "excerpt": "@(new Random().Next(0,(int)context.Variables[\"iSAPBearerTokenExpiry\"]/3))"
+    },
+    {
+      "digest": "32358cbc0e60",
+      "reason": "unexpected token \"new\"",
+      "file": "Random_load_balancer.policy.xml",
+      "excerpt": "@(new Random(context.RequestId.GetHashCode()).Next(1, 3))"
+    },
+    {
+      "digest": "5e2dbdfde791",
+      "reason": "unexpected token \"new\"",
+      "file": "Pre-authorize_requests_based_on_HTTP_method_with_validate-jwt.policy.xml",
+      "excerpt": "@(new [] {\"post=\"\"\", \"put=\"\"\"}.Contains(context.Request.Method,StringComparer.Or"
+    },
+    {
+      "digest": "65afa82535f6",
+      "reason": "unexpected token \"new\"",
+      "file": "Return_HTTP_405_if_the_HTTP_Method_of_the_request_is_not_defined.xml",
+      "excerpt": "@{ return new JObject( new JProperty(\"status\", \"HTTP 405\"), new JProperty(\"messa"
+    },
+    {
+      "digest": "7742fc05342e",
+      "reason": "unexpected token \"new\"",
+      "file": "Query_CosmosDB.policy.xml",
+      "excerpt": "@{ var verb = \"post\"; var resourceType = \"docs\"; var resourceLink = \"\"; var key "
+    },
+    {
+      "digest": "a645bd051784",
+      "reason": "unexpected token \"new\"",
+      "file": "Forward_Azure_Event_Grid_Event.xml",
+      "excerpt": "@{ var validationResponse = new JObject(new JProperty(\"validationResponse\",conte"
+    },
+    {
+      "digest": "cd155fed58ac",
+      "reason": "unexpected token \"new\"",
+      "file": "Extracting_multiple_values_from_xml_documents.policy.xml",
+      "excerpt": "@{ var doc = XDocument.Parse(((IResponse)context.Variables[\"sendRequestResponse\""
+    },
+    {
+      "digest": "d115b609c9ab",
+      "reason": "unexpected token \"new\"",
+      "file": "oauth-proxy-sign-out.xml",
+      "excerpt": "@(new Uri((string)context.Variables[\"redirect\"]).AbsolutePath.StartsWith(\"/oauth"
+    },
+    {
+      "digest": "d5fa3e0bd308",
+      "reason": "unexpected token \"new\"",
+      "file": "Add_correlation_id_to_inbound_request.policy.xml",
+      "excerpt": "@{ var guidBinary = new byte[16]; Array.Copy(Guid.NewGuid().ToByteArray(), 0, gu"
+    },
+    {
+      "digest": "ef666622df5b",
+      "reason": "unexpected token \"new\"",
+      "file": "Log_errors_to_Stackify.policy.xml",
+      "excerpt": "@{ return new JObject( new JProperty(\"Environment\",\"{{environment-name}}\"), new "
+    },
+    {
+      "digest": "ca8456b8ddaf",
+      "reason": "unexpected token \"{\"",
+      "file": "oauth-proxy-callback.xml",
+      "excerpt": "@(DateTimeOffset.UtcNow.AddSeconds({{SessionCookieExpirationInSeconds}}).ToUnixT"
+    },
+    {
+      "digest": "d261fb8146cb",
+      "reason": "unterminated string",
+      "file": "Call_out_to_an_HTTP_endpoint_and_cache_the_response.policy.xml",
+      "excerpt": "@{ var loc = JObject.Parse((string)context.Variables[\"latlong=\"\" lat=\"\" lng=\"\" f"
+    }
+  ]
+}
