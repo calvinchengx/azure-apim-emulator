@@ -33,7 +33,9 @@ func TestRequestEnvBindings(t *testing.T) {
 		{"@(context.Request.Url.Query.Count)", float64(1)},
 		{"@(context.Request.Url.QueryString)", "?x=1"},
 		{"@(context.Request.IpAddress)", "10.0.0.8"},
-		{"@(context.Request.Headers['X-Test'])", "yes"},
+		{"@(context.Request.Headers['X-Test'][0])", "yes"},
+		{"@(context.Request.Headers['X-Test'].Count)", float64(1)},
+		{"@(context.Request.Headers['X-Absent'] == null)", true},
 		{"@(context.Request.Headers.Get('X-Test'))", "yes"},
 		{"@(context.Request.Headers.Get('Missing'))", ""},
 		{"@(context.Request.Headers.GetValueOrDefault('X-Test'))", "yes"},
@@ -181,7 +183,7 @@ func TestResponseAndLastErrorBindings(t *testing.T) {
 		{"@(context.Response.StatusCode)", int64(503)},
 		{"@(context.Response.StatusCode >= 500)", true},
 		{"@(context.Response.StatusReason)", "Service Unavailable"},
-		{"@(context.Response.Headers['X-Retry'])", "yes"},
+		{"@(context.Response.Headers['X-Retry'][0])", "yes"},
 		{"@(context.LastError != null)", true},
 		{"@(context.LastError.Message)", "temporary"},
 	}
@@ -680,5 +682,46 @@ func TestVariablesGetValueOrDefault(t *testing.T) {
 	}
 	if _, err := EvalEnv("@(context.Variables.GetValueOrDefault())", env); err == nil {
 		t.Fatal("GetValueOrDefault accepted no arguments")
+	}
+}
+
+// A header may legitimately repeat, and Microsoft types request and response
+// headers as dictionaries of VALUES. Indexing used to answer the first value as
+// a string, which read fine for the single-valued case and silently dropped the
+// rest, so a policy written here carried a wrong assumption into a tenant.
+func TestHeadersAnswerEveryValue(t *testing.T) {
+	request := httptest.NewRequest(http.MethodGet, "https://api.example/", nil)
+	request.Header.Add("Set-Cookie", "first=1")
+	request.Header.Add("Set-Cookie", "second=2")
+	request.Header.Set("X-Single", "only")
+	env := RequestEnv(request, nil)
+	for _, test := range []struct {
+		source string
+		want   any
+	}{
+		{"@(context.Request.Headers['Set-Cookie'].Count)", float64(2)},
+		{"@(context.Request.Headers['Set-Cookie'][0])", "first=1"},
+		// The second value is the one the old shape lost.
+		{"@(context.Request.Headers['Set-Cookie'][1])", "second=2"},
+		{"@(context.Request.Headers['X-Single'][0])", "only"},
+		// Header names are case-insensitive on the wire and stay so here.
+		{"@(context.Request.Headers['set-cookie'].Count)", float64(2)},
+		// GetValueOrDefault still answers a STRING: Microsoft documents it as
+		// returning one, so it is the first value, not the collection.
+		{"@(context.Request.Headers.GetValueOrDefault('Set-Cookie', ''))", "first=1"},
+		// An absent header reads null rather than failing, which is a stated
+		// leniency: .NET would throw on a missing dictionary key.
+		{"@(context.Request.Headers['X-Absent'] == null)", true},
+	} {
+		got, err := EvalEnv(test.source, env)
+		if err != nil {
+			t.Fatalf("%s: %v", test.source, err)
+		}
+		if got.Interface() != test.want {
+			t.Fatalf("%s = %#v, want %#v", test.source, got.Interface(), test.want)
+		}
+	}
+	if _, err := EvalEnv("@(context.Request.Headers[0])", env); err == nil {
+		t.Fatal("a header indexed by position was accepted")
 	}
 }
