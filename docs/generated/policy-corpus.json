@@ -2,7 +2,7 @@
   "source": "Azure/api-management-policy-snippets, MIT",
   "commit": "87225c2090e45add095919e8767c37d9ece42e0c",
   "total": 322,
-  "parsed": 284,
+  "parsed": 286,
   "gaps": [
     {
       "reason": "expected ')'",
@@ -18,10 +18,6 @@
     },
     {
       "reason": "new HMACSHA256 is not implemented",
-      "count": 2
-    },
-    {
-      "reason": "statement \"xsrftoken\" is not implemented",
       "count": 2
     },
     {
@@ -245,18 +241,6 @@
       "reason": "statement \"void\" is not implemented",
       "file": "Backend_for_Frontend_or_curated_API_policy.xml",
       "excerpt": "@{ JObject finalResponse = new JObject(); int finalStatus = 200; // This assumes"
-    },
-    {
-      "digest": "4d8f75042053",
-      "reason": "statement \"xsrftoken\" is not implemented",
-      "file": "Get_X-CSRF_token_from_SAP_gateway_using_send_request.policy.xml",
-      "excerpt": "@{ string rawcookie = ((IResponse)context.Variables[\"SAPCSRFToken\"]).Headers.Get"
-    },
-    {
-      "digest": "b9de932cd461",
-      "reason": "statement \"xsrftoken\" is not implemented",
-      "file": "Request_OAuth2_access_token_from_SAP_using_AAD_JWT_token.xml",
-      "excerpt": "@{ string rawcookie = ((IResponse)context.Variables[\"SAPCSRFToken\"]).Headers.Get"
     },
     {
       "digest": "02993a22fd3c",

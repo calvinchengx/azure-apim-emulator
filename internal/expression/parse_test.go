@@ -96,9 +96,7 @@ func TestEvalAndParseErrors(t *testing.T) {
 		"@{ return }",
 		"@{ return 1 }",
 		"@{ return 1 + ; }",
-		"@{ return 1; return 2; }",
 		"@{ var x = 1; }",
-		"@{ var x = 1; return x; return x; }",
 		"@{ var ; return 1; }",
 		"@{ var x; return x; }",
 		"@{ var x = 1 return x; }",
@@ -166,6 +164,11 @@ func TestEvalAndParseErrors(t *testing.T) {
 			t.Fatalf("accepted %s", source)
 		}
 	}
+	// A statement after a return is unreachable rather than illegal, which is
+	// what C# does with it. The FIRST return decides the value.
+	if got, err := Eval("@{ return 1; return 2; }"); err != nil || got.Interface() != int64(1) {
+		t.Fatalf("unreachable statement = %v %v", got.Interface(), err)
+	}
 	if expr, form, err := Parse("@{ return 1; }"); err != nil || form != FormBlock {
 		t.Fatalf("block parse = %d %v", form, err)
 	} else if got, evalErr := expr.eval(nil); evalErr != nil || got.Interface() != int64(1) {
@@ -190,18 +193,22 @@ func TestEvalInternalBranches(t *testing.T) {
 	if _, err := (identExpr{name: "x"}).eval(&Env{}); err == nil {
 		t.Fatal("empty env identifier accepted")
 	}
-	if _, err := (blockExpr{
-		vars:   []varDecl{{name: "x", expr: binaryExpr{op: TokenSlash, left: literalExpr{value: Int(1)}, right: literalExpr{value: Int(0)}}}},
-		result: identExpr{name: "x"},
-	}).eval(nil); err == nil {
+	if _, err := (blockExpr{body: []stmt{
+		declStmt{name: "x", expr: binaryExpr{op: TokenSlash, left: literalExpr{value: Int(1)}, right: literalExpr{value: Int(0)}}},
+		returnStmt{expr: identExpr{name: "x"}},
+	}}).eval(nil); err == nil {
 		t.Fatal("var initializer error accepted")
 	}
-	got, err := (blockExpr{
-		vars:   []varDecl{{name: "x", expr: literalExpr{value: Int(2)}}},
-		result: identExpr{name: "x"},
-	}).eval(&Env{Bindings: map[string]Value{"context": Int(1)}})
+	got, err := (blockExpr{body: []stmt{
+		declStmt{name: "x", expr: literalExpr{value: Int(2)}},
+		returnStmt{expr: identExpr{name: "x"}},
+	}}).eval(&Env{Bindings: map[string]Value{"context": Int(1)}})
 	if err != nil || got.Interface() != int64(2) {
 		t.Fatalf("block locals = %+v %v", got, err)
+	}
+	// A block whose statements never return reports rather than answering null.
+	if _, err := (blockExpr{body: []stmt{declStmt{name: "x", expr: literalExpr{value: Int(1)}}}}).eval(nil); err == nil {
+		t.Fatal("a block that never returned was accepted")
 	}
 }
 
