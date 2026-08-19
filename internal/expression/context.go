@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/textproto"
 	"net/url"
 	"strconv"
 	"strings"
@@ -766,11 +767,32 @@ func (h *headerHost) get(args []Value) (Value, error) {
 	return String(h.header.Get(args[0].str)), nil
 }
 
+// index answers the header's VALUES, not the first of them.
+//
+// Microsoft types request and response headers
+// `IReadOnlyDictionary<string, string[]>`, and a header may legitimately repeat:
+// `Set-Cookie` routinely does. This used to answer the first value as a string,
+// which read fine for the common single-valued case and silently dropped the
+// rest, and which a policy written here would then carry into a tenant where
+// `Headers["x"]` is an array.
+//
+// A header that is ABSENT reads as null rather than failing. .NET would throw
+// on a missing dictionary key, so this is a stated leniency, kept because
+// `Headers["x"] == null` is the idiom policies here already use and because it
+// matches how this evaluator answers every other absent lookup.
 func (h *headerHost) index(key Value) (Value, error) {
 	if key.kind != KindString {
 		return Null(), fmt.Errorf("header index requires a string")
 	}
-	return String(h.header.Get(key.str)), nil
+	values, ok := h.header[textproto.CanonicalMIMEHeaderKey(key.str)]
+	if !ok {
+		return Null(), nil
+	}
+	items := make([]Value, 0, len(values))
+	for _, value := range values {
+		items = append(items, String(value))
+	}
+	return Object(&listHost{items: items, what: "header values"}), nil
 }
 
 func (h *headerHost) getValueOrDefault(args []Value) (Value, error) {
