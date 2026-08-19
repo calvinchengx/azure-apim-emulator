@@ -128,8 +128,11 @@ func TestJwtAndBasicRefusals(t *testing.T) {
 		{"@('" + jwt + "'.AsJwt().Claims.ContainsKey(1))", "requires a claim name"},
 		{"@('" + jwt + "'.AsJwt().Claims.GetValueOrDefault())", "requires a claim name"},
 		{"@('" + jwt + "'.AsJwt('extra'))", "takes no arguments"},
-		{"@(1.AsJwt)", "AsJwt requires a string"},
-		{"@(1.AsBasic)", "AsBasic requires a string"},
+		// A number has no AsJwt, and says so the way it does for any other
+		// member it lacks. It used to answer "AsJwt requires a string", which
+		// was more specific but inconsistent with every other type.
+		{"@(1.AsJwt)", "unknown member AsJwt"},
+		{"@(1.AsBasic)", "unknown member AsBasic"},
 		{"@('Basic YWRhOnMzY3JldA=='.AsBasic('extra'))", "takes no arguments"},
 		{"@('Basic YWRhOnMzY3JldA=='.AsBasic().Nonexistent)", "unknown member"},
 	} {

@@ -26,6 +26,24 @@ type stringHost struct {
 func (h stringHost) member(name string) (Value, error) {
 	text := h.text
 	switch name {
+	case "Length":
+		return Int(int64(len(text))), nil
+	// AsJwt and AsBasic are extension methods on `string`, which is why they
+	// sit here rather than on a context type.
+	case "AsJwt":
+		return Object(funcValue{fn: func(args []Value) (Value, error) {
+			if len(args) != 0 {
+				return Null(), fmt.Errorf("AsJwt takes no arguments")
+			}
+			return asJwt(text), nil
+		}}), nil
+	case "AsBasic":
+		return Object(funcValue{fn: func(args []Value) (Value, error) {
+			if len(args) != 0 {
+				return Null(), fmt.Errorf("AsBasic takes no arguments")
+			}
+			return asBasic(text), nil
+		}}), nil
 	case "Split":
 		return Object(funcValue{fn: func(args []Value) (Value, error) { return splitString(text, args) }}), nil
 	case "Trim", "TrimStart", "TrimEnd":

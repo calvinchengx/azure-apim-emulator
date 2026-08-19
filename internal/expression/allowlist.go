@@ -191,6 +191,40 @@ func Allowlist() []Member {
 		{Type: "StringComparison", Name: "InvariantCultureIgnoreCase", Status: MemberFramework},
 		{Type: "StringComparison", Name: "CurrentCulture", Status: MemberFramework},
 		{Type: "StringComparison", Name: "CurrentCultureIgnoreCase", Status: MemberFramework},
+		{Type: "DateTime", Name: "UtcNow", Status: MemberFramework},
+		{Type: "DateTime", Name: "Now", Status: MemberFramework},
+		{Type: "DateTime", Name: "Ticks", Status: MemberFramework},
+		{Type: "DateTime", Name: "AddSeconds", Status: MemberFramework},
+		{Type: "DateTime", Name: "AddMinutes", Status: MemberFramework},
+		{Type: "DateTime", Name: "AddHours", Status: MemberFramework},
+		{Type: "DateTime", Name: "AddDays", Status: MemberFramework},
+		{Type: "DateTime", Name: "AddMilliseconds", Status: MemberFramework},
+		{Type: "DateTime", Name: "Year", Status: MemberFramework},
+		{Type: "DateTime", Name: "Month", Status: MemberFramework},
+		{Type: "DateTime", Name: "Day", Status: MemberFramework},
+		{Type: "DateTime", Name: "ToString", Status: MemberFramework},
+		{Type: "DateTimeOffset", Name: "UtcNow", Status: MemberFramework},
+		{Type: "DateTimeOffset", Name: "Now", Status: MemberFramework},
+		{Type: "DateTimeOffset", Name: "FromUnixTimeSeconds", Status: MemberFramework},
+		{Type: "DateTimeOffset", Name: "FromUnixTimeMilliseconds", Status: MemberFramework},
+		{Type: "DateTimeOffset", Name: "ToUnixTimeSeconds", Status: MemberFramework},
+		{Type: "DateTimeOffset", Name: "ToUnixTimeMilliseconds", Status: MemberFramework},
+		{Type: "DateTimeOffset", Name: "UtcDateTime", Status: MemberFramework},
+		{Type: "DateTimeOffset", Name: "DateTime", Status: MemberFramework},
+		{Type: "DateTimeOffset", Name: "AddSeconds", Status: MemberFramework},
+		{Type: "DateTimeOffset", Name: "AddMinutes", Status: MemberFramework},
+		{Type: "DateTimeOffset", Name: "AddHours", Status: MemberFramework},
+		{Type: "DateTimeOffset", Name: "AddDays", Status: MemberFramework},
+		{Type: "DateTimeOffset", Name: "AddMilliseconds", Status: MemberFramework},
+		{Type: "DateTimeOffset", Name: "Year", Status: MemberFramework},
+		{Type: "DateTimeOffset", Name: "Month", Status: MemberFramework},
+		{Type: "DateTimeOffset", Name: "Day", Status: MemberFramework},
+		{Type: "DateTimeOffset", Name: "ToString", Status: MemberFramework},
+		{Type: "Guid", Name: "NewGuid", Status: MemberFramework},
+		{Type: "Guid", Name: "Parse", Status: MemberFramework},
+		{Type: "Guid", Name: "Empty", Status: MemberFramework},
+		{Type: "Guid", Name: "ToString", Status: MemberFramework},
+		{Type: "Guid", Name: "ToByteArray", Status: MemberFramework},
 		{Type: "Convert", Name: "FromBase64String", Status: MemberFramework},
 		{Type: "Convert", Name: "ToBase64String", Status: MemberFramework},
 		{Type: "Convert", Name: "ToString", Status: MemberFramework},
@@ -243,6 +277,12 @@ func frameworkTypeOf(typ string) (string, bool) {
 		return "System.String", true
 	case "Convert":
 		return "System.Convert", true
+	case "DateTime":
+		return "System.DateTime", true
+	case "DateTimeOffset":
+		return "System.DateTimeOffset", true
+	case "Guid":
+		return "System.Guid", true
 	case "Encoding", "UTF8":
 		return "System.Text.Encoding", true
 	case "int":
