@@ -27,6 +27,9 @@ type identExpr struct{ name string }
 type memberExpr struct {
 	recv Expr
 	name string
+	// guarded marks an access reached through a `?.`, which answers null for a
+	// null receiver instead of failing.
+	guarded bool
 	// typeArg is the type named in a generic call, as in `Body.As<string>()`.
 	// Empty for an ordinary member.
 	typeArg string
@@ -34,11 +37,13 @@ type memberExpr struct {
 
 type indexExpr struct {
 	recv, key Expr
+	guarded   bool
 }
 
 type callExpr struct {
-	recv Expr
-	args []Expr
+	recv    Expr
+	args    []Expr
+	guarded bool
 }
 
 type unaryExpr struct {
@@ -767,10 +772,17 @@ func (p *parser) postfix() (Expr, error) {
 	if err != nil {
 		return nil, err
 	}
+	// guarded records that a `?.` has appeared. In C# the null-conditional
+	// operator short-circuits the REST of the chain, not just its own link, so
+	// `a?.b.c` is null when `a` is rather than failing on `.c`. Tracking it for
+	// the remainder of the postfix chain is exactly that rule.
+	guarded := false
 	for {
 		switch p.peek().Kind {
-		case TokenDot:
-			p.take()
+		case TokenDot, TokenQuestionDot:
+			if p.take().Kind == TokenQuestionDot {
+				guarded = true
+			}
 			if p.peek().Kind != TokenIdent {
 				return nil, fmt.Errorf("expected member name")
 			}
@@ -778,7 +790,7 @@ func (p *parser) postfix() (Expr, error) {
 			// `As<string>()` is a generic call; `a.b < c` is a comparison. They
 			// are distinguishable only by looking past the `<`, so the attempt
 			// rewinds rather than committing.
-			expr = memberExpr{recv: expr, name: name, typeArg: p.typeArgument()}
+			expr = memberExpr{recv: expr, name: name, typeArg: p.typeArgument(), guarded: guarded}
 		case TokenLBracket:
 			p.take()
 			key, err := p.ternary()
@@ -789,14 +801,14 @@ func (p *parser) postfix() (Expr, error) {
 				return nil, fmt.Errorf("expected ']'")
 			}
 			p.take()
-			expr = indexExpr{recv: expr, key: key}
+			expr = indexExpr{recv: expr, key: key, guarded: guarded}
 		case TokenLParen:
 			p.take()
 			args, err := p.arguments()
 			if err != nil {
 				return nil, err
 			}
-			expr = callExpr{recv: expr, args: args}
+			expr = callExpr{recv: expr, args: args, guarded: guarded}
 		default:
 			return expr, nil
 		}
@@ -889,6 +901,9 @@ func (e memberExpr) eval(env *Env) (Value, error) {
 	if err != nil {
 		return Null(), err
 	}
+	if e.guarded && recv.IsNull() {
+		return Null(), nil
+	}
 	if e.typeArg != "" {
 		generic, ok := recv.obj.(genericHost)
 		if !ok {
@@ -910,6 +925,9 @@ func (e indexExpr) eval(env *Env) (Value, error) {
 	if err != nil {
 		return Null(), err
 	}
+	if e.guarded && recv.IsNull() {
+		return Null(), nil
+	}
 	key, err := e.key.eval(env)
 	if err != nil {
 		return Null(), err
@@ -921,6 +939,9 @@ func (e callExpr) eval(env *Env) (Value, error) {
 	recv, err := e.recv.eval(env)
 	if err != nil {
 		return Null(), err
+	}
+	if e.guarded && recv.IsNull() {
+		return Null(), nil
 	}
 	args := make([]Value, len(e.args))
 	for i, arg := range e.args {
@@ -1109,7 +1130,7 @@ func remainder(left, right float64) float64 {
 // against a parenthesised expression without type information.
 var castTypes = map[string]bool{
 	"string": true, "int": true, "long": true, "bool": true, "double": true,
-	"JObject": true, "JArray": true, "JValue": true, "JToken": true,
+	"JObject": true, "JArray": true, "JValue": true, "JToken": true, "Jwt": true,
 	"IResponse": true, "IRequest": true, "Authorization": true,
 }
 

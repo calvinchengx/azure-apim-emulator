@@ -2,14 +2,10 @@
   "source": "Azure/api-management-policy-snippets, MIT",
   "commit": "87225c2090e45add095919e8767c37d9ece42e0c",
   "total": 322,
-  "parsed": 286,
+  "parsed": 296,
   "gaps": [
     {
       "reason": "expected ')'",
-      "count": 9
-    },
-    {
-      "reason": "unexpected token \".\"",
       "count": 6
     },
     {
@@ -23,10 +19,6 @@
     {
       "reason": "unexpected token \"[\"",
       "count": 2
-    },
-    {
-      "reason": "expected '",
-      "count": 1
     },
     {
       "reason": "expected a type name after 'new'",
@@ -87,22 +79,10 @@
   ],
   "failures": [
     {
-      "digest": "9fb54ea195ad",
-      "reason": "expected '",
-      "file": "Parse_a_JWT_token_using_expressions.xml",
-      "excerpt": "@{ var jwt = (Jwt)context.Variables[\"valid-jwt\"]; var permissions = jwt.Claims[\""
-    },
-    {
       "digest": "06a03e034a58",
       "reason": "expected ')'",
       "file": "Loopback_request_for_service_at_same_API_Management_service.xml",
       "excerpt": "@(context.Request.Headers.GetValueOrDefault(\"Ocp-Apim-Subscription-Key=\"\"\",\"sche"
-    },
-    {
-      "digest": "1b8b2b1a6a4c",
-      "reason": "expected ')'",
-      "file": "oauth-proxy-session-fragment.xml",
-      "excerpt": "@(((Jwt)context.Variables[\"idTokenJwt\"]).Claims[\"preferred_username\"][0])"
     },
     {
       "digest": "4941ed983f64",
@@ -129,22 +109,10 @@
       "excerpt": "@(context.Request.Body.AsFormUrlEncodedContent(preserveContent: true)[\"code\"].Si"
     },
     {
-      "digest": "c08870a029e1",
-      "reason": "expected ')'",
-      "file": "oauth-proxy-session-fragment.xml",
-      "excerpt": "@(((Jwt)context.Variables[\"idTokenJwt\"]).Claims.ContainsKey(\"preferred_username\""
-    },
-    {
       "digest": "dd9df4e66b11",
       "reason": "expected ')'",
       "file": "Pre-authorize_requests_based_on_HTTP_method_with_validate-jwt.policy.xml",
       "excerpt": "@(context.Request.Method.Equals(\"patch=\"\"\",StringComparison.OrdinalIgnoreCase))"
-    },
-    {
-      "digest": "f8e6cce940b9",
-      "reason": "expected ')'",
-      "file": "oauth-proxy-session-fragment.xml",
-      "excerpt": "@(((Jwt)context.Variables[\"idTokenJwt\"]).Claims[\"name\"][0])"
     },
     {
       "digest": "ddf62f2373f8",
@@ -247,42 +215,6 @@
       "reason": "unexpected character \"\u0026\"",
       "file": "Filter_on_IP_Address_when_using_Application_Gateway.policy.xml",
       "excerpt": "@{ int HostToNetworkOrder(int host) { return (((int)HostToNetworkOrderShort((sho"
-    },
-    {
-      "digest": "1ba18cb5504b",
-      "reason": "unexpected token \".\"",
-      "file": "Request_OAuth2_access_token_from_SAP_using_AAD_JWT_token.xml",
-      "excerpt": "@(\"SAPBearerDuration\" + context.Request.Headers.GetValueOrDefault(\"Authorization"
-    },
-    {
-      "digest": "389771e4c3c5",
-      "reason": "unexpected token \".\"",
-      "file": "Request_OAuth2_access_token_from_SAP_using_AAD_JWT_token.xml",
-      "excerpt": "@(\"SAPRefreshDuration\" + context.Request.Headers.GetValueOrDefault(\"Authorizatio"
-    },
-    {
-      "digest": "a6e0b06e263d",
-      "reason": "unexpected token \".\"",
-      "file": "Request_OAuth2_access_token_from_SAP_using_AAD_JWT_token.xml",
-      "excerpt": "@(\"SAPPrincipalRefresh\" + context.Request.Headers.GetValueOrDefault(\"Authorizati"
-    },
-    {
-      "digest": "d1d47a8e4802",
-      "reason": "unexpected token \".\"",
-      "file": "Request_OAuth2_access_token_from_SAP_using_AAD_JWT_token.xml",
-      "excerpt": "@(\"SAPPrincipal\" + context.Request.Headers.GetValueOrDefault(\"Authorization\",\"\")"
-    },
-    {
-      "digest": "ed1e100de87f",
-      "reason": "unexpected token \".\"",
-      "file": "Set_cache_duration_using_response_cache_control_header.policy.xml",
-      "excerpt": "@{ var header = context.Response.Headers.GetValueOrDefault(\"Cache-Control\",\"\"); "
-    },
-    {
-      "digest": "fdb15fe2d4d3",
-      "reason": "unexpected token \".\"",
-      "file": "Request_OAuth2_access_token_from_SuccessFactors_using_AAD_JWT_token.xml",
-      "excerpt": "@(\"SAPSFPrincipal\" + context.Request.Headers.GetValueOrDefault(\"Authorization\",\""
     },
     {
       "digest": "3fb11089217b",

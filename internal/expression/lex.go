@@ -53,6 +53,8 @@ const (
 	TokenComma
 	TokenColon
 	TokenQuestion
+	// TokenQuestionDot is `?.`, the null-conditional access.
+	TokenQuestionDot
 	TokenAssign
 	TokenArrow
 	TokenInc
@@ -366,6 +368,13 @@ func (s *scanner) next() (Token, error) {
 		s.pos += width
 		return Token{Kind: TokenColon, Lexeme: ":", Offset: start}, nil
 	case '?':
+		// `?.` is one token. Lexing it as `?` then `.` would leave the parser
+		// unable to tell a null-conditional access from a ternary whose first
+		// arm begins with a member access.
+		if s.peekAt(1) == '.' {
+			s.pos += 2
+			return Token{Kind: TokenQuestionDot, Lexeme: "?.", Offset: start}, nil
+		}
 		s.pos += width
 		return Token{Kind: TokenQuestion, Lexeme: "?", Offset: start}, nil
 	case '(':
