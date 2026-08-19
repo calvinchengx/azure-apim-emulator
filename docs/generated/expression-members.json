@@ -105,12 +105,12 @@
     {
       "type": "Backend",
       "name": "Id",
-      "status": "planned"
+      "status": "bound"
     },
     {
       "type": "Backend",
       "name": "Type",
-      "status": "planned"
+      "status": "bound"
     },
     {
       "type": "BasicAuthCredentials",
@@ -715,7 +715,7 @@
     {
       "type": "context",
       "name": "Backend",
-      "status": "planned"
+      "status": "bound"
     },
     {
       "type": "context",

@@ -749,6 +749,31 @@ func displayName(display, name string) string {
 	return name
 }
 
+// backendContexts is the service's backends as a policy expression sees them,
+// keyed the way `set-backend-service backend-id` names them.
+func backendContexts(service *Service) map[string]expression.BackendContext {
+	if service == nil || len(service.Backends) == 0 {
+		return nil
+	}
+	contexts := make(map[string]expression.BackendContext, len(service.Backends))
+	for key, backend := range service.Backends {
+		contexts[key] = expression.BackendContext{Id: backend.Name, Type: backendType(backend)}
+	}
+	return contexts
+}
+
+// backendType reads the backend's own document rather than assuming. This
+// emulator does not implement pools, but a pool backend can be created through
+// ARM, and calling it Single would be wrong in the one case a policy cares.
+func backendType(backend model.Backend) string {
+	if properties, ok := backend.Document["properties"].(map[string]any); ok {
+		if _, pooled := properties["pool"]; pooled {
+			return "Pool"
+		}
+	}
+	return "Single"
+}
+
 func bindRequestContext(service *Service, route *Route, operation model.Operation, req *http.Request, selfHosted *SelfHostedGateway) (*expression.ApiContext, *expression.OperationContext, *expression.ProductContext, *expression.SubscriptionContext, *expression.UserContext, *expression.DeploymentContext) {
 	var api *expression.ApiContext
 	if route != nil {
@@ -973,7 +998,7 @@ func (r *Runtime) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 	cacheKey := service.Name + ":" + route.API.ID() + ":" + req.Method + ":" + req.URL.RequestURI()
 	apiCtx, operationCtx, productCtx, subscriptionCtx, userCtx, deploymentCtx := bindRequestContext(service, route, operation, req, selfHosted)
-	state := &policy.State{Request: req, BackendURL: route.API.ServiceURL, Path: relative, Headers: make(http.Header), ValidateToken: r.policyTokenValidator, SendRequest: r.policySendRequest, FetchCredential: r.credentialFetcher(req, route.API.ServiceID), Trace: func(phase, detail string) { traceEvent(trace, phase, detail) }, RateLimit: r.rateLimit, BandwidthLimit: r.bandwidthLimit, AcquireConcurrency: r.acquireConcurrency, CacheGet: r.cacheGet, CacheSet: r.cacheSet, ValueCacheGet: r.valueCacheGet, ValueCacheSet: r.valueCacheSet, ValueCacheRemove: r.valueCacheRemove, CacheKey: cacheKey, TokenLimit: r.tokenLimit, Timestamp: diagnosticStart, Elapsed: func() time.Duration { return time.Since(diagnosticStart) }, RequestId: requestID, Tracing: trace != nil, OriginalUrl: originalRequestURL(req), MatchedParameters: matchedParameters, Certificates: serviceCertificates(service), Api: apiCtx, Operation: operationCtx, Product: productCtx, Subscription: subscriptionCtx, User: userCtx, Deployment: deploymentCtx}
+	state := &policy.State{Request: req, BackendURL: route.API.ServiceURL, Path: relative, Headers: make(http.Header), ValidateToken: r.policyTokenValidator, SendRequest: r.policySendRequest, FetchCredential: r.credentialFetcher(req, route.API.ServiceID), Trace: func(phase, detail string) { traceEvent(trace, phase, detail) }, RateLimit: r.rateLimit, BandwidthLimit: r.bandwidthLimit, AcquireConcurrency: r.acquireConcurrency, CacheGet: r.cacheGet, CacheSet: r.cacheSet, ValueCacheGet: r.valueCacheGet, ValueCacheSet: r.valueCacheSet, ValueCacheRemove: r.valueCacheRemove, CacheKey: cacheKey, TokenLimit: r.tokenLimit, Timestamp: diagnosticStart, Elapsed: func() time.Duration { return time.Since(diagnosticStart) }, RequestId: requestID, Tracing: trace != nil, OriginalUrl: originalRequestURL(req), MatchedParameters: matchedParameters, Certificates: serviceCertificates(service), Backends: backendContexts(service), Api: apiCtx, Operation: operationCtx, Product: productCtx, Subscription: subscriptionCtx, User: userCtx, Deployment: deploymentCtx}
 	defer func() {
 		for index := len(state.ConcurrencyReleases) - 1; index >= 0; index-- {
 			state.ConcurrencyReleases[index]()
