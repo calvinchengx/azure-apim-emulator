@@ -65,18 +65,29 @@ func fixtureVariables() map[string]string {
 	return map[string]string{"v": "x"}
 }
 
-// variableReference finds the variables an expression reads, in either the
-// indexed or the GetValueOrDefault form.
-var variableReference = regexp.MustCompile(`Variables\s*\[\s*"([^"]+)"|GetValueOrDefault(?:<[^>]*>)?\(\s*"([^"]+)"`)
+// fixtureMatchedParameters are the route parameters the fixture's url template
+// binds.
+func fixtureMatchedParameters() map[string]string {
+	return map[string]string{"id": "A-1"}
+}
+
+// variableReference finds the per-request values an expression reads: a
+// variable in either form, or a matched route parameter.
+//
+// MatchedParameters belongs here for the same reason Variables does -- a real
+// request supplies it from the url template and one fixture cannot supply every
+// template. Leaving it out misfiled a blocker as a capability gap when the
+// expression was only reading a parameter this fixture has no route for.
+var variableReference = regexp.MustCompile(`Variables\s*\[\s*"([^"]+)"|MatchedParameters\s*\[\s*"([^"]+)"|GetValueOrDefault(?:<[^>]*>)?\(\s*"([^"]+)"`)
 
 func classifyBlocker(source string) string {
-	set := fixtureVariables()
+	supplied := fixtureVariables()
+	for name, value := range fixtureMatchedParameters() {
+		supplied[name] = value
+	}
 	for _, match := range variableReference.FindAllStringSubmatch(source, -1) {
-		name := match[1]
-		if name == "" {
-			name = match[2]
-		}
-		if _, ok := set[name]; !ok {
+		name := match[1] + match[2] + match[3]
+		if _, ok := supplied[name]; !ok {
 			return blockerFixture
 		}
 	}
@@ -128,7 +139,7 @@ func evaluationFixture() *Env {
 		Elapsed:           func() time.Duration { return 0 },
 		RequestId:         "req-1",
 		OriginalUrl:       "https://api.example/orders/A-1?id=A-1",
-		MatchedParameters: map[string]string{"id": "A-1"},
+		MatchedParameters: fixtureMatchedParameters(),
 		Certificates:      map[string]*x509.Certificate{},
 	})
 }

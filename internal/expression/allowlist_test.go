@@ -293,6 +293,40 @@ func evaluationCases(t *testing.T) (*Env, map[string]string) {
 		"string.Concat":                               `@(string.Concat("a", "b"))`,
 		"string.Join":                                 `@(string.Join("-", "a", "b"))`,
 		"string.Format":                               `@(string.Format("{0}", "a"))`,
+		"DateTime.UtcNow":                             "@(DateTime.UtcNow)",
+		"DateTime.Now":                                "@(DateTime.Now)",
+		"DateTime.AddSeconds":                         "@(DateTime.UtcNow.AddSeconds(1))",
+		"DateTime.AddMinutes":                         "@(DateTime.UtcNow.AddMinutes(1))",
+		"DateTime.AddHours":                           "@(DateTime.UtcNow.AddHours(1))",
+		"DateTime.AddDays":                            "@(DateTime.UtcNow.AddDays(1))",
+		"DateTime.AddMilliseconds":                    "@(DateTime.UtcNow.AddMilliseconds(1))",
+		"DateTime.Year":                               "@(DateTime.UtcNow.Year)",
+		"DateTime.Month":                              "@(DateTime.UtcNow.Month)",
+		"DateTime.Day":                                "@(DateTime.UtcNow.Day)",
+		"DateTime.ToString":                           "@(DateTime.UtcNow.ToString())",
+		"DateTimeOffset.UtcNow":                       "@(DateTimeOffset.UtcNow)",
+		"DateTimeOffset.Now":                          "@(DateTimeOffset.Now)",
+		"DateTimeOffset.AddSeconds":                   "@(DateTimeOffset.UtcNow.AddSeconds(1))",
+		"DateTimeOffset.AddMinutes":                   "@(DateTimeOffset.UtcNow.AddMinutes(1))",
+		"DateTimeOffset.AddHours":                     "@(DateTimeOffset.UtcNow.AddHours(1))",
+		"DateTimeOffset.AddDays":                      "@(DateTimeOffset.UtcNow.AddDays(1))",
+		"DateTimeOffset.AddMilliseconds":              "@(DateTimeOffset.UtcNow.AddMilliseconds(1))",
+		"DateTimeOffset.Year":                         "@(DateTimeOffset.UtcNow.Year)",
+		"DateTimeOffset.Month":                        "@(DateTimeOffset.UtcNow.Month)",
+		"DateTimeOffset.Day":                          "@(DateTimeOffset.UtcNow.Day)",
+		"DateTimeOffset.ToString":                     "@(DateTimeOffset.UtcNow.ToString())",
+		"DateTime.Ticks":                              "@(DateTime.UtcNow.Ticks)",
+		"DateTimeOffset.FromUnixTimeSeconds":          "@(DateTimeOffset.FromUnixTimeSeconds(0))",
+		"DateTimeOffset.FromUnixTimeMilliseconds":     "@(DateTimeOffset.FromUnixTimeMilliseconds(0))",
+		"DateTimeOffset.ToUnixTimeSeconds":            "@(DateTimeOffset.UtcNow.ToUnixTimeSeconds())",
+		"DateTimeOffset.ToUnixTimeMilliseconds":       "@(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds())",
+		"DateTimeOffset.UtcDateTime":                  "@(DateTimeOffset.UtcNow.UtcDateTime)",
+		"DateTimeOffset.DateTime":                     "@(DateTimeOffset.UtcNow.DateTime)",
+		"Guid.NewGuid":                                "@(Guid.NewGuid())",
+		"Guid.Parse":                                  `@(Guid.Parse("0f8fad5b-d9cb-469f-a165-70867728950e"))`,
+		"Guid.Empty":                                  "@(Guid.Empty)",
+		"Guid.ToString":                               "@(Guid.Empty.ToString())",
+		"Guid.ToByteArray":                            "@(Guid.Empty.ToByteArray())",
 		"value.ToString":                              "@(1.ToString())",
 		"string.Length":                               "@('ab'.Length)",
 	}
@@ -366,53 +400,70 @@ func boundByType(members []Member) map[string]map[string]bool {
 func binderCases(t *testing.T) map[string]map[string]bool {
 	t.Helper()
 	hosts := map[string][]string{
-		"contextHost":          {"context"},
-		"requestHost":          {"Request"},
-		"responseHost":         {"Response"},
-		"lastErrorHost":        {"LastError"},
-		"urlHost":              {"Url"},
-		"headerHost":           {"Headers"},
-		"mapHost":              {"Variables"},
-		"bodyHost":             {"Body"},
-		"apiHost":              {"Api"},
-		"operationHost":        {"Operation"},
-		"namedHost":            {},
-		"userHost":             {"User"},
-		"groupHost":            {"Group"},
-		"userIdentityHost":     {"UserIdentity"},
-		"listHost":             {},
-		"formHost":             {},
-		"productHost":          {"Product"},
-		"subscriptionHost":     {"Subscription"},
-		"deploymentHost":       {"Deployment"},
-		"gatewayHost":          {"Gateway"},
-		"certificateHost":      {"Certificate"},
-		"certificateMapHost":   {"Certificates"},
-		"graphQLHost":          {"GraphQL"},
-		"jsonMapHost":          {"Arguments"},
-		"queryHost":            {"Query"},
-		"backendHost":          {"Backend"},
-		"jwtHost":              {"Jwt"},
-		"randomHost":           {"Random"},
-		"stringHost":           {"string"},
-		"stringStaticHost":     {"string"},
-		"convertHost":          {"Convert"},
-		"encodingHost":         {"Encoding"},
-		"utf8Host":             {"UTF8"},
-		"uriStaticHost":        {"Uri"},
-		"intStaticHost":        {"int"},
-		"bytesHost":            {"byte[]"},
-		"comparisonHost":       {"StringComparison"},
-		"uriHost":              {"Uri"},
-		"propertyHost":         {"JProperty"},
-		"objectHost":           {"JObject"},
-		"claimsHost":           {"Claims"},
-		"basicCredentialsHost": {"BasicAuthCredentials"},
-		"authorizationHost":    {"Authorization"},
+		"contextHost":              {"context"},
+		"requestHost":              {"Request"},
+		"responseHost":             {"Response"},
+		"lastErrorHost":            {"LastError"},
+		"urlHost":                  {"Url"},
+		"headerHost":               {"Headers"},
+		"mapHost":                  {"Variables"},
+		"bodyHost":                 {"Body"},
+		"apiHost":                  {"Api"},
+		"operationHost":            {"Operation"},
+		"namedHost":                {},
+		"userHost":                 {"User"},
+		"groupHost":                {"Group"},
+		"userIdentityHost":         {"UserIdentity"},
+		"listHost":                 {},
+		"formHost":                 {},
+		"productHost":              {"Product"},
+		"subscriptionHost":         {"Subscription"},
+		"deploymentHost":           {"Deployment"},
+		"gatewayHost":              {"Gateway"},
+		"certificateHost":          {"Certificate"},
+		"certificateMapHost":       {"Certificates"},
+		"graphQLHost":              {"GraphQL"},
+		"jsonMapHost":              {"Arguments"},
+		"queryHost":                {"Query"},
+		"backendHost":              {"Backend"},
+		"jwtHost":                  {"Jwt"},
+		"randomHost":               {"Random"},
+		"stringHost":               {"string"},
+		"stringStaticHost":         {"string"},
+		"convertHost":              {"Convert"},
+		"encodingHost":             {"Encoding"},
+		"utf8Host":                 {"UTF8"},
+		"uriStaticHost":            {"Uri"},
+		"intStaticHost":            {"int"},
+		"commonTimeHost":           {"DateTime", "DateTimeOffset"},
+		"dateTimeStaticHost":       {"DateTime"},
+		"dateTimeHost":             {"DateTime"},
+		"dateTimeOffsetStaticHost": {"DateTimeOffset"},
+		"dateTimeOffsetHost":       {"DateTimeOffset"},
+		"guidStaticHost":           {"Guid"},
+		"guidHost":                 {"Guid"},
+		"bytesHost":                {"byte[]"},
+		"comparisonHost":           {"StringComparison"},
+		"uriHost":                  {"Uri"},
+		"propertyHost":             {"JProperty"},
+		"objectHost":               {"JObject"},
+		"claimsHost":               {"Claims"},
+		"basicCredentialsHost":     {"BasicAuthCredentials"},
+		"authorizationHost":        {"Authorization"},
+		// Value carries only ToString, which belongs to no type in particular.
+		// Every string member lives on stringHost so that one host owns one
+		// type; a receiver spanning `value` and `string` would be mapped to
+		// both and would then attribute every member to both.
+		"Value": {"value"},
 	}
-	// Both files, because a host that binds members is a host wherever it
-	// lives. Parsing only context.go would let a new file expose members the
-	// allowlist never sees, which is the exact drift this test exists to catch.
+	// EVERY file in the package, found rather than listed.
+	//
+	// This used to be a hardcoded list, and that list was the gap four separate
+	// times: jwt.go, construct.go, stringmembers.go and datetime.go each bound
+	// members that no gate saw until somebody remembered to add the filename.
+	// A list is opt-IN, so the failure mode is silence. Reading the directory
+	// is opt-OUT: a new binding file is scanned the moment it exists, and an
+	// unmapped host below is a loud failure rather than an omission.
 	found := map[string]map[string]bool{}
 	inspect := func(node ast.Node) bool {
 		fn, ok := node.(*ast.FuncDecl)
@@ -451,12 +502,26 @@ func binderCases(t *testing.T) map[string]map[string]bool {
 		}
 		return true
 	}
-	for _, name := range []string{"context.go", "graphql.go", "collections.go", "jwt.go", "construct.go", "stringmembers.go", "statics.go"} {
+	names, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	scanned := 0
+	for _, name := range names {
+		if strings.HasSuffix(name, "_test.go") {
+			continue
+		}
 		file, err := goparser.ParseFile(token.NewFileSet(), name, nil, 0)
 		if err != nil {
 			t.Fatal(err)
 		}
+		scanned++
 		ast.Inspect(file, inspect)
+	}
+	// A glob that matched nothing would report a tidy zero drift over nothing
+	// at all, which is the failure a directory scan invites and a list did not.
+	if scanned < 5 {
+		t.Fatalf("scanned only %d files; the binder scan is reading almost nothing", scanned)
 	}
 	if len(found) == 0 {
 		t.Fatal("no binder member cases found")

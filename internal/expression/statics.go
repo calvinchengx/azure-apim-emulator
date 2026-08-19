@@ -23,9 +23,12 @@ func staticBindings() map[string]Value {
 		"Uri":              Object(uriStaticHost{}),
 		"StringComparison": Object(comparisonHost{}),
 		// `string` and `String` are the same type, and policies write both.
-		"string": Object(stringStaticHost{}),
-		"String": Object(stringStaticHost{}),
-		"int":    Object(intStaticHost{}),
+		"string":         Object(stringStaticHost{}),
+		"String":         Object(stringStaticHost{}),
+		"int":            Object(intStaticHost{}),
+		"DateTime":       Object(dateTimeStaticHost{}),
+		"DateTimeOffset": Object(dateTimeOffsetStaticHost{}),
+		"Guid":           Object(guidStaticHost{}),
 	}
 }
 

@@ -213,6 +213,151 @@
       "status": "framework"
     },
     {
+      "type": "DateTime",
+      "name": "AddDays",
+      "status": "framework"
+    },
+    {
+      "type": "DateTime",
+      "name": "AddHours",
+      "status": "framework"
+    },
+    {
+      "type": "DateTime",
+      "name": "AddMilliseconds",
+      "status": "framework"
+    },
+    {
+      "type": "DateTime",
+      "name": "AddMinutes",
+      "status": "framework"
+    },
+    {
+      "type": "DateTime",
+      "name": "AddSeconds",
+      "status": "framework"
+    },
+    {
+      "type": "DateTime",
+      "name": "Day",
+      "status": "framework"
+    },
+    {
+      "type": "DateTime",
+      "name": "Month",
+      "status": "framework"
+    },
+    {
+      "type": "DateTime",
+      "name": "Now",
+      "status": "framework"
+    },
+    {
+      "type": "DateTime",
+      "name": "Ticks",
+      "status": "framework"
+    },
+    {
+      "type": "DateTime",
+      "name": "ToString",
+      "status": "framework"
+    },
+    {
+      "type": "DateTime",
+      "name": "UtcNow",
+      "status": "framework"
+    },
+    {
+      "type": "DateTime",
+      "name": "Year",
+      "status": "framework"
+    },
+    {
+      "type": "DateTimeOffset",
+      "name": "AddDays",
+      "status": "framework"
+    },
+    {
+      "type": "DateTimeOffset",
+      "name": "AddHours",
+      "status": "framework"
+    },
+    {
+      "type": "DateTimeOffset",
+      "name": "AddMilliseconds",
+      "status": "framework"
+    },
+    {
+      "type": "DateTimeOffset",
+      "name": "AddMinutes",
+      "status": "framework"
+    },
+    {
+      "type": "DateTimeOffset",
+      "name": "AddSeconds",
+      "status": "framework"
+    },
+    {
+      "type": "DateTimeOffset",
+      "name": "DateTime",
+      "status": "framework"
+    },
+    {
+      "type": "DateTimeOffset",
+      "name": "Day",
+      "status": "framework"
+    },
+    {
+      "type": "DateTimeOffset",
+      "name": "FromUnixTimeMilliseconds",
+      "status": "framework"
+    },
+    {
+      "type": "DateTimeOffset",
+      "name": "FromUnixTimeSeconds",
+      "status": "framework"
+    },
+    {
+      "type": "DateTimeOffset",
+      "name": "Month",
+      "status": "framework"
+    },
+    {
+      "type": "DateTimeOffset",
+      "name": "Now",
+      "status": "framework"
+    },
+    {
+      "type": "DateTimeOffset",
+      "name": "ToString",
+      "status": "framework"
+    },
+    {
+      "type": "DateTimeOffset",
+      "name": "ToUnixTimeMilliseconds",
+      "status": "framework"
+    },
+    {
+      "type": "DateTimeOffset",
+      "name": "ToUnixTimeSeconds",
+      "status": "framework"
+    },
+    {
+      "type": "DateTimeOffset",
+      "name": "UtcDateTime",
+      "status": "framework"
+    },
+    {
+      "type": "DateTimeOffset",
+      "name": "UtcNow",
+      "status": "framework"
+    },
+    {
+      "type": "DateTimeOffset",
+      "name": "Year",
+      "status": "framework"
+    },
+    {
       "type": "Deployment",
       "name": "Certificates",
       "status": "bound"
@@ -291,6 +436,31 @@
       "type": "Group",
       "name": "Name",
       "status": "bound"
+    },
+    {
+      "type": "Guid",
+      "name": "Empty",
+      "status": "framework"
+    },
+    {
+      "type": "Guid",
+      "name": "NewGuid",
+      "status": "framework"
+    },
+    {
+      "type": "Guid",
+      "name": "Parse",
+      "status": "framework"
+    },
+    {
+      "type": "Guid",
+      "name": "ToByteArray",
+      "status": "framework"
+    },
+    {
+      "type": "Guid",
+      "name": "ToString",
+      "status": "framework"
     },
     {
       "type": "Headers",

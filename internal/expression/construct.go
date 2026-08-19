@@ -6,6 +6,7 @@ import (
 	"math/rand"
 	"net/url"
 	"strings"
+	"time"
 )
 
 // The objects a policy constructs with `new`.
@@ -18,10 +19,13 @@ import (
 // Every type here is one Microsoft's reference lists as available to a policy
 // expression, so nothing in this file invents a type Azure does not offer.
 var constructors = map[string]func([]Value) (Value, error){
-	"Random":    newRandom,
-	"Uri":       newUri,
-	"JObject":   newJObject,
-	"JProperty": newJProperty,
+	"Random":         newRandom,
+	"Uri":            newUri,
+	"JObject":        newJObject,
+	"JProperty":      newJProperty,
+	"DateTime":       newDateTime,
+	"DateTimeOffset": newDateTimeOffset,
+	"Guid":           newGuid,
 }
 
 // newRandom builds a System.Random. A seed makes it REPRODUCIBLE, which is what
@@ -153,6 +157,54 @@ func uriPort(parsed *url.URL) int64 {
 type jsonField struct {
 	name  string
 	value Value
+}
+
+// newDateTime builds one from its parts, which is how the corpus writes the
+// unix epoch: `new DateTime(1970, 1, 1)`.
+func newDateTime(args []Value) (Value, error) {
+	if len(args) != 3 && len(args) != 6 {
+		return Null(), fmt.Errorf("DateTime takes a year, month and day, and optionally hours, minutes and seconds")
+	}
+	parts := make([]int, len(args))
+	for i, arg := range args {
+		number, ok := arg.AsNumber()
+		if !ok {
+			return Null(), fmt.Errorf("DateTime takes numbers")
+		}
+		parts[i] = int(number)
+	}
+	hour, minute, second := 0, 0, 0
+	if len(parts) == 6 {
+		hour, minute, second = parts[3], parts[4], parts[5]
+	}
+	return Object(dateTimeHost{at: time.Date(parts[0], time.Month(parts[1]), parts[2], hour, minute, second, 0, time.UTC)}), nil
+}
+
+// newDateTimeOffset wraps a DateTime, which is the only form the corpus uses.
+func newDateTimeOffset(args []Value) (Value, error) {
+	if len(args) != 1 {
+		return Null(), fmt.Errorf("DateTimeOffset takes one DateTime")
+	}
+	moment, ok := args[0].obj.(dateTimeHost)
+	if !ok {
+		return Null(), fmt.Errorf("DateTimeOffset takes a DateTime")
+	}
+	return Object(dateTimeOffsetHost{at: moment.at}), nil
+}
+
+// newGuid rebuilds one from the bytes ToByteArray produced.
+func newGuid(args []Value) (Value, error) {
+	if len(args) != 1 {
+		return Null(), fmt.Errorf("Guid takes a byte array or a string")
+	}
+	if text := args[0]; text.kind == KindString {
+		return parseGuid(text.str)
+	}
+	raw, ok := args[0].obj.(bytesHost)
+	if !ok {
+		return Null(), fmt.Errorf("Guid takes a byte array or a string")
+	}
+	return guidFromBytes(raw.data)
 }
 
 // newJProperty is Newtonsoft's JProperty: a name and a value, which only means

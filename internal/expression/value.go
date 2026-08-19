@@ -198,40 +198,15 @@ func (v Value) member(name string) (Value, error) {
 			}
 			return String(v.String()), nil
 		}}), nil
-	case "Length":
-		if v.kind != KindString {
-			return Null(), fmt.Errorf("Length requires a string")
-		}
-		return Int(int64(len(v.str))), nil
-	// AsJwt and AsBasic are extension methods on `string`, so they hang off the
-	// value rather than off a context type.
-	case "AsJwt":
-		if v.kind != KindString {
-			return Null(), fmt.Errorf("AsJwt requires a string")
-		}
-		return Object(funcValue{fn: func(args []Value) (Value, error) {
-			if len(args) != 0 {
-				return Null(), fmt.Errorf("AsJwt takes no arguments")
-			}
-			return asJwt(v.str), nil
-		}}), nil
-	case "AsBasic":
-		if v.kind != KindString {
-			return Null(), fmt.Errorf("AsBasic requires a string")
-		}
-		return Object(funcValue{fn: func(args []Value) (Value, error) {
-			if len(args) != 0 {
-				return Null(), fmt.Errorf("AsBasic takes no arguments")
-			}
-			return asBasic(v.str), nil
-		}}), nil
 	default:
 		if v.IsNull() {
 			return Null(), fmt.Errorf("member access on null")
 		}
-		// System.String's own members, which a policy uses constantly. They are
-		// tried before the failure so that a member on any OTHER kind still
-		// reports as unknown rather than as a string operation.
+		// System.String's own members, which a policy uses constantly. They all
+		// live on stringHost so that ONE host owns one type: the allowlist scan
+		// attributes members by their receiver, and a receiver spanning `value`
+		// and `string` would have to be mapped to both and would then attribute
+		// every member to both.
 		if v.kind == KindString {
 			return stringHost{text: v.str}.member(name)
 		}

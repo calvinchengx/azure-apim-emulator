@@ -1,18 +1,10 @@
 {
   "note": "Corpus expressions that EVALUATE, not merely parse. See policy-corpus.json for the parse measure.",
   "parsed": 298,
-  "evaluated": 182,
-  "blockedByCapability": 19,
+  "evaluated": 191,
+  "blockedByCapability": 10,
   "blockedByFixture": 97,
   "gaps": [
-    {
-      "reason": "unbound identifier DateTime",
-      "count": 4
-    },
-    {
-      "reason": "unbound identifier Guid",
-      "count": 4
-    },
     {
       "reason": "index on null",
       "count": 2
@@ -30,10 +22,6 @@
       "count": 1
     },
     {
-      "reason": "unbound identifier DateTimeOffset",
-      "count": 1
-    },
-    {
       "reason": "unknown member First",
       "count": 1
     },
@@ -47,6 +35,54 @@
     }
   ],
   "blockers": [
+    {
+      "digest": "4fa908604352",
+      "kind": "fixture",
+      "reason": "\"\" is not a guid",
+      "excerpt": "@{ var token = Encoding.UTF8.GetBytes((string)context.Variables[\"idtoken\"]); var"
+    },
+    {
+      "digest": "570428e3f583",
+      "kind": "fixture",
+      "reason": "\"\" is not a guid",
+      "excerpt": "@{ var cookie = Encoding.UTF8.GetBytes((string)context.Variables[\"cookie-prefix\""
+    },
+    {
+      "digest": "9d69f02b4bda",
+      "kind": "fixture",
+      "reason": "\"\" is not a guid",
+      "excerpt": "@{ var token = Encoding.UTF8.GetBytes((string)context.Variables[\"idtoken\"]); var"
+    },
+    {
+      "digest": "a02b4d1e3ab2",
+      "kind": "fixture",
+      "reason": "\"\" is not a guid",
+      "excerpt": "@{ var token = Encoding.UTF8.GetBytes((string)context.Variables[\"refreshToken\"])"
+    },
+    {
+      "digest": "a6bb2d06f629",
+      "kind": "fixture",
+      "reason": "\"\" is not a guid",
+      "excerpt": "@{ var cookie = Encoding.UTF8.GetBytes((string)context.Variables[\"cookie-prefix\""
+    },
+    {
+      "digest": "c59d4218421b",
+      "kind": "fixture",
+      "reason": "\"\" is not a guid",
+      "excerpt": "@{ var token = Encoding.UTF8.GetBytes((string)context.Variables[\"accessToken\"]);"
+    },
+    {
+      "digest": "d99e6d0a939d",
+      "kind": "fixture",
+      "reason": "\"\" is not a guid",
+      "excerpt": "@{ var token = Encoding.UTF8.GetBytes((string)context.Variables[\"accessToken\"]);"
+    },
+    {
+      "digest": "e14e6577dc08",
+      "kind": "fixture",
+      "reason": "\"\" is not a guid",
+      "excerpt": "@{ var token = Encoding.UTF8.GetBytes((string)context.Variables[\"refreshToken\"])"
+    },
     {
       "digest": "28f4d91b0a37",
       "kind": "fixture",
@@ -66,6 +102,12 @@
       "excerpt": "@(int.Parse(context.Variables.GetValueOrDefault\u003cstring\u003e(\"bodySize\"))\u003c256000)"
     },
     {
+      "digest": "20494cd749aa",
+      "kind": "fixture",
+      "reason": "AddSeconds takes one number",
+      "excerpt": "@{ return \"\u003cKeyInfo\u003e\" + \"\u003cStart\u003e\" + DateTime.UtcNow.ToString(\"u\").Replace(\" \", \""
+    },
+    {
       "digest": "092e20f974cb",
       "kind": "fixture",
       "reason": "cannot cast 0 to int",
@@ -76,6 +118,12 @@
       "kind": "fixture",
       "reason": "cannot cast 0 to int",
       "excerpt": "@((int)context.Variables[\"iSAPBearerTokenExpiry\"] - (int)context.Variables[\"Rand"
+    },
+    {
+      "digest": "1e2908573f77",
+      "kind": "fixture",
+      "reason": "cannot cast 0 to int",
+      "excerpt": "@(DateTimeOffset.UtcNow.AddSeconds((int)context.Variables[\"refreshTime\"] / 2).To"
     },
     {
       "digest": "c7249d5b084c",
@@ -96,10 +144,34 @@
       "excerpt": "@((int)context.Variables[\"refreshTime\"])"
     },
     {
+      "digest": "7ad8cea7335c",
+      "kind": "fixture",
+      "reason": "cannot cast 0 to long",
+      "excerpt": "@(DateTimeOffset.UtcNow \u003e DateTimeOffset.FromUnixTimeMilliseconds((long)context."
+    },
+    {
+      "digest": "90ff368ac93b",
+      "kind": "fixture",
+      "reason": "cannot cast 0 to long",
+      "excerpt": "@($\"1={(string)context.Variables[\"encryptedCookie\"]}; SameSite=Lax; secure; path"
+    },
+    {
+      "digest": "9d850b609a82",
+      "kind": "fixture",
+      "reason": "cannot cast 0 to long",
+      "excerpt": "@(DateTimeOffset.UtcNow \u003e DateTimeOffset.FromUnixTimeSeconds((long)context.Varia"
+    },
+    {
       "digest": "a3c4718f8032",
       "kind": "fixture",
       "reason": "cannot cast 0 to long",
       "excerpt": "@($\"{(string)context.Variables[\"cacheKey\"]}.{(string)context.Variables[\"ivTokens"
+    },
+    {
+      "digest": "aa5389077db6",
+      "kind": "fixture",
+      "reason": "cannot cast 0 to long",
+      "excerpt": "@($\"1={(string)context.Variables[\"encryptedCookie\"]}; SameSite=Lax; secure; path"
     },
     {
       "digest": "0a4b7e9c8f8e",
@@ -490,144 +562,6 @@
       "kind": "fixture",
       "reason": "position 2 is outside a collection of 1 parts",
       "excerpt": "@(((string)context.Variables[\"encryptedIncomingFullSessionCookie\"]).Split('.')[2"
-    },
-    {
-      "digest": "20494cd749aa",
-      "kind": "capability",
-      "reason": "unbound identifier DateTime",
-      "excerpt": "@{ return \"\u003cKeyInfo\u003e\" + \"\u003cStart\u003e\" + DateTime.UtcNow.ToString(\"u\").Replace(\" \", \""
-    },
-    {
-      "digest": "557142df1374",
-      "kind": "capability",
-      "reason": "unbound identifier DateTime",
-      "excerpt": "@(DateTime.UtcNow.ToString(\"R\"))"
-    },
-    {
-      "digest": "669eeff80d2b",
-      "kind": "capability",
-      "reason": "unbound identifier DateTime",
-      "excerpt": "@(DateTime.UtcNow.AddDays(1).ToString(\"yyyy-MM-ddTHH:mm:ssZ\"))"
-    },
-    {
-      "digest": "7d8f327d1535",
-      "kind": "capability",
-      "reason": "unbound identifier DateTime",
-      "excerpt": "@(DateTime.UtcNow.ToString(\"r\"))"
-    },
-    {
-      "digest": "1e2908573f77",
-      "kind": "fixture",
-      "reason": "unbound identifier DateTimeOffset",
-      "excerpt": "@(DateTimeOffset.UtcNow.AddSeconds((int)context.Variables[\"refreshTime\"] / 2).To"
-    },
-    {
-      "digest": "622981360b25",
-      "kind": "capability",
-      "reason": "unbound identifier DateTimeOffset",
-      "excerpt": "@(DateTimeOffset.UtcNow.AddSeconds(1).ToUnixTimeMilliseconds())"
-    },
-    {
-      "digest": "7ad8cea7335c",
-      "kind": "fixture",
-      "reason": "unbound identifier DateTimeOffset",
-      "excerpt": "@(DateTimeOffset.UtcNow \u003e DateTimeOffset.FromUnixTimeMilliseconds((long)context."
-    },
-    {
-      "digest": "90ff368ac93b",
-      "kind": "fixture",
-      "reason": "unbound identifier DateTimeOffset",
-      "excerpt": "@($\"1={(string)context.Variables[\"encryptedCookie\"]}; SameSite=Lax; secure; path"
-    },
-    {
-      "digest": "97a02000cc7f",
-      "kind": "fixture",
-      "reason": "unbound identifier DateTimeOffset",
-      "excerpt": "@($\"1-{(string)context.Variables[\"state\"]}={(string)context.Variables[\"cookie\"]}"
-    },
-    {
-      "digest": "9d850b609a82",
-      "kind": "fixture",
-      "reason": "unbound identifier DateTimeOffset",
-      "excerpt": "@(DateTimeOffset.UtcNow \u003e DateTimeOffset.FromUnixTimeSeconds((long)context.Varia"
-    },
-    {
-      "digest": "aa5389077db6",
-      "kind": "fixture",
-      "reason": "unbound identifier DateTimeOffset",
-      "excerpt": "@($\"1={(string)context.Variables[\"encryptedCookie\"]}; SameSite=Lax; secure; path"
-    },
-    {
-      "digest": "0384f098dcb9",
-      "kind": "capability",
-      "reason": "unbound identifier Guid",
-      "excerpt": "@(Guid.NewGuid().ToString())"
-    },
-    {
-      "digest": "19fd742b3f35",
-      "kind": "capability",
-      "reason": "unbound identifier Guid",
-      "excerpt": "@{ return Guid.NewGuid().ToString(); }"
-    },
-    {
-      "digest": "27420f9da0f6",
-      "kind": "capability",
-      "reason": "unbound identifier Guid",
-      "excerpt": "@{return Guid.NewGuid().ToString();}"
-    },
-    {
-      "digest": "4fa908604352",
-      "kind": "fixture",
-      "reason": "unbound identifier Guid",
-      "excerpt": "@{ var token = Encoding.UTF8.GetBytes((string)context.Variables[\"idtoken\"]); var"
-    },
-    {
-      "digest": "570428e3f583",
-      "kind": "fixture",
-      "reason": "unbound identifier Guid",
-      "excerpt": "@{ var cookie = Encoding.UTF8.GetBytes((string)context.Variables[\"cookie-prefix\""
-    },
-    {
-      "digest": "9d69f02b4bda",
-      "kind": "fixture",
-      "reason": "unbound identifier Guid",
-      "excerpt": "@{ var token = Encoding.UTF8.GetBytes((string)context.Variables[\"idtoken\"]); var"
-    },
-    {
-      "digest": "a02b4d1e3ab2",
-      "kind": "fixture",
-      "reason": "unbound identifier Guid",
-      "excerpt": "@{ var token = Encoding.UTF8.GetBytes((string)context.Variables[\"refreshToken\"])"
-    },
-    {
-      "digest": "a6bb2d06f629",
-      "kind": "fixture",
-      "reason": "unbound identifier Guid",
-      "excerpt": "@{ var cookie = Encoding.UTF8.GetBytes((string)context.Variables[\"cookie-prefix\""
-    },
-    {
-      "digest": "b1f6141bbf27",
-      "kind": "capability",
-      "reason": "unbound identifier Guid",
-      "excerpt": "@(Guid.NewGuid().ToString() + Guid.NewGuid().ToString())"
-    },
-    {
-      "digest": "c59d4218421b",
-      "kind": "fixture",
-      "reason": "unbound identifier Guid",
-      "excerpt": "@{ var token = Encoding.UTF8.GetBytes((string)context.Variables[\"accessToken\"]);"
-    },
-    {
-      "digest": "d99e6d0a939d",
-      "kind": "fixture",
-      "reason": "unbound identifier Guid",
-      "excerpt": "@{ var token = Encoding.UTF8.GetBytes((string)context.Variables[\"accessToken\"]);"
-    },
-    {
-      "digest": "e14e6577dc08",
-      "kind": "fixture",
-      "reason": "unbound identifier Guid",
-      "excerpt": "@{ var token = Encoding.UTF8.GetBytes((string)context.Variables[\"refreshToken\"])"
     },
     {
       "digest": "ed1e100de87f",
