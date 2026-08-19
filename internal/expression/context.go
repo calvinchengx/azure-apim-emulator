@@ -182,12 +182,15 @@ type Context struct {
 // response, or last-error values still bind `context` so literal expressions
 // evaluate; member access on a missing object fails at the member.
 func Bind(ctx Context) *Env {
-	return &Env{Bindings: map[string]Value{
+	bindings := map[string]Value{
 		"context": Object(&contextHost{ctx: ctx}),
-		// StringComparison is a global rather than a member of anything: a
-		// policy writes `Equals(x, StringComparison.OrdinalIgnoreCase)`.
-		"StringComparison": Object(comparisonHost{}),
-	}}
+	}
+	// The static types a policy calls into -- Convert, Encoding, string and the
+	// rest -- are globals rather than members of anything.
+	for name, value := range staticBindings() {
+		bindings[name] = value
+	}
+	return &Env{Bindings: bindings}
 }
 
 // RequestEnv binds request and variables only. Prefer Bind when response or

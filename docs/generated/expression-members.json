@@ -198,6 +198,21 @@
       "status": "bound"
     },
     {
+      "type": "Convert",
+      "name": "FromBase64String",
+      "status": "framework"
+    },
+    {
+      "type": "Convert",
+      "name": "ToBase64String",
+      "status": "framework"
+    },
+    {
+      "type": "Convert",
+      "name": "ToString",
+      "status": "framework"
+    },
+    {
       "type": "Deployment",
       "name": "Certificates",
       "status": "bound"
@@ -231,6 +246,11 @@
       "type": "Deployment",
       "name": "SustainabilityInfo",
       "status": "planned"
+    },
+    {
+      "type": "Encoding",
+      "name": "UTF8",
+      "status": "framework"
     },
     {
       "type": "Foundry",
@@ -668,6 +688,16 @@
       "status": "planned"
     },
     {
+      "type": "UTF8",
+      "name": "GetBytes",
+      "status": "framework"
+    },
+    {
+      "type": "UTF8",
+      "name": "GetString",
+      "status": "framework"
+    },
+    {
       "type": "Uri",
       "name": "AbsolutePath",
       "status": "framework"
@@ -675,6 +705,11 @@
     {
       "type": "Uri",
       "name": "AbsoluteUri",
+      "status": "framework"
+    },
+    {
+      "type": "Uri",
+      "name": "EscapeDataString",
       "status": "framework"
     },
     {
@@ -695,6 +730,11 @@
     {
       "type": "Uri",
       "name": "Scheme",
+      "status": "framework"
+    },
+    {
+      "type": "Uri",
+      "name": "UnescapeDataString",
       "status": "framework"
     },
     {
@@ -808,6 +848,11 @@
       "status": "planned"
     },
     {
+      "type": "byte[]",
+      "name": "Length",
+      "status": "framework"
+    },
+    {
       "type": "context",
       "name": "Api",
       "status": "bound"
@@ -898,6 +943,21 @@
       "status": "planned"
     },
     {
+      "type": "int",
+      "name": "MaxValue",
+      "status": "framework"
+    },
+    {
+      "type": "int",
+      "name": "MinValue",
+      "status": "framework"
+    },
+    {
+      "type": "int",
+      "name": "Parse",
+      "status": "framework"
+    },
+    {
       "type": "string",
       "name": "AsBasic",
       "status": "bound"
@@ -909,7 +969,17 @@
     },
     {
       "type": "string",
+      "name": "Concat",
+      "status": "framework"
+    },
+    {
+      "type": "string",
       "name": "Contains",
+      "status": "framework"
+    },
+    {
+      "type": "string",
+      "name": "Empty",
       "status": "framework"
     },
     {
@@ -924,12 +994,32 @@
     },
     {
       "type": "string",
+      "name": "Format",
+      "status": "framework"
+    },
+    {
+      "type": "string",
       "name": "GetHashCode",
       "status": "framework"
     },
     {
       "type": "string",
       "name": "IndexOf",
+      "status": "framework"
+    },
+    {
+      "type": "string",
+      "name": "IsNullOrEmpty",
+      "status": "framework"
+    },
+    {
+      "type": "string",
+      "name": "IsNullOrWhiteSpace",
+      "status": "framework"
+    },
+    {
+      "type": "string",
+      "name": "Join",
       "status": "framework"
     },
     {
