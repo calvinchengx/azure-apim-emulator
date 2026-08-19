@@ -59,10 +59,18 @@ jobs:
           tags: |
             type=semver,pattern={{version}}
             type=raw,value=latest
+      # The tag is `v0.4.0`; GoReleaser stamps the tarballs with `0.4.0`. Strip
+      # the prefix so the image and the tarball from one release report the
+      # SAME string. (Sibling repos pass the raw ref and their images say
+      # `v0.4.0` while their tarballs say `0.4.0`; aligning them is a separate
+      # family sweep, not this release.)
+      - id: version
+        run: echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
       - uses: docker/build-push-action@v7
         with:
           context: .
           platforms: linux/amd64,linux/arm64
           push: true
+          build-args: VERSION=${{ steps.version.outputs.value }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
