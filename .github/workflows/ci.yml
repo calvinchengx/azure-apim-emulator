@@ -29,7 +29,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
-          go-version: 1.25.11
+          go-version-file: go.mod
           cache: true
       - run: make verify
 
@@ -60,7 +60,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
-          go-version: 1.25.11
+          go-version-file: go.mod
           cache: true
       - uses: actions/setup-python@v7
         with:
@@ -80,7 +80,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
-          go-version: 1.25.11
+          go-version-file: go.mod
           cache: true
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7
@@ -107,7 +107,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
-          go-version: 1.25.11
+          go-version-file: go.mod
           cache: true
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7
@@ -127,7 +127,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
-          go-version: 1.25.11
+          go-version-file: go.mod
           cache: true
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7
@@ -147,7 +147,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
-          go-version: 1.25.11
+          go-version-file: go.mod
           cache: true
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7
@@ -167,7 +167,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
-          go-version: 1.25.11
+          go-version-file: go.mod
           cache: true
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7
@@ -187,7 +187,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
-          go-version: 1.25.11
+          go-version-file: go.mod
           cache: true
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7
@@ -207,7 +207,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
-          go-version: 1.25.11
+          go-version-file: go.mod
           cache: true
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7
@@ -224,7 +224,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
-          go-version: 1.25.11
+          go-version-file: go.mod
       - run: docker build -t azure-apim-emulator:test .
       - run: docker compose config --quiet
 
