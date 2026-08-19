@@ -1,4 +1,4 @@
-# 04 - Gateway and protocol runtime
+# 06 - Gateway and protocol runtime
 
 ## Addressing
 

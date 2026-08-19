@@ -1,4 +1,4 @@
-# 06 - Developer portal, workspaces, and platform features
+# 08 - Developer portal, workspaces, and platform features
 
 ## Developer portal scope
 

@@ -7,8 +7,9 @@
 // routes under the configured base.
 //
 // This is the family's sync script minus the parity-version history, which
-// keyvault and fabric generate from release tags. APIM has not released yet,
-// so there is nothing to snapshot; add it back when it does.
+// keyvault and fabric generate from release tags. APIM has released (v0.1.0 to
+// v0.3.0) and keeps no parity snapshots yet, so there is still nothing to
+// build a version picker from; adding them is what unblocks it.
 import { readdirSync, readFileSync, writeFileSync, rmSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';

@@ -1,4 +1,4 @@
-# 07 - Identity, networking, and observability
+# 09 - Identity, networking, and observability
 
 ## Identity domains
 

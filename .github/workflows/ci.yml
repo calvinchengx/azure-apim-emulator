@@ -238,8 +238,15 @@ jobs:
         with:
           node-version: '22'
           cache: pnpm
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      # The build catches unparseable frontmatter, but NOT a dangling intra-doc
+      # link: measured, it exits 0 and publishes a 404. This checker is what
+      # actually holds the links, and it also fails a page missing from the
+      # sidebar, which the build cannot see at all.
+      - run: ./scripts/check_docs_links.py --strict
       - run: pnpm install --frozen-lockfile
-      # Builds from /docs through website/scripts/sync-docs.mjs, so a broken
-      # intra-doc link or unparseable frontmatter fails here rather than on
-      # the published site.
+      # Builds from /docs through website/scripts/sync-docs.mjs, so unparseable
+      # frontmatter fails here rather than on the published site.
       - run: pnpm --filter azure-apim-emulator-docs build
