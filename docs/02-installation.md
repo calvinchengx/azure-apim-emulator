@@ -38,10 +38,11 @@ healthcheck:
   retries: 10
 ```
 
-**Known wart:** `azure-apim-emulator version` inside the released image prints
-`dev` rather than the release version. The tarball binaries below print the
-right thing; the image is built by its own Dockerfile, which does not stamp the
-version. Use the image tag as the source of truth for what you are running.
+**Images from 0.3.0 and earlier report their version as `dev`.** The Dockerfile
+did not stamp it, so the image could not say which release it was while the
+tarball from the same tag could. Fixed from 0.4.0 on, where the image and the
+tarball report the identical string. On an older image, the tag is the only
+source of truth for what you are running.
 
 ## Release binary
 
