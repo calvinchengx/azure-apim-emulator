@@ -691,7 +691,7 @@ func (p *parser) ternary() (Expr, error) {
 	if lambda, ok, err := p.lambda(); ok || err != nil {
 		return lambda, err
 	}
-	cond, err := p.or()
+	cond, err := p.coalesce()
 	if err != nil {
 		return nil, err
 	}
@@ -712,6 +712,45 @@ func (p *parser) ternary() (Expr, error) {
 		return nil, err
 	}
 	return ternaryExpr{cond: cond, then: then, els: els}, nil
+}
+
+// coalesce parses `a ?? b`, which sits between the ternary and `||` in C#'s
+// precedence and is RIGHT-associative: `a ?? b ?? c` is `a ?? (b ?? c)`, so a
+// chain of fallbacks tries each in turn.
+func (p *parser) coalesce() (Expr, error) {
+	left, err := p.or()
+	if err != nil {
+		return nil, err
+	}
+	if p.peek().Kind != TokenCoalesce {
+		return left, nil
+	}
+	p.take()
+	right, err := p.coalesce()
+	if err != nil {
+		return nil, err
+	}
+	return coalesceExpr{left: left, right: right}, nil
+}
+
+// coalesceExpr answers its left side unless that is null.
+//
+// The right side is evaluated ONLY when needed, which is the point of the
+// operator: `x ?? Expensive()` must not call Expensive when x is present, and a
+// fallback that fails must not fail an expression that never needed it.
+type coalesceExpr struct {
+	left, right Expr
+}
+
+func (e coalesceExpr) eval(env *Env) (Value, error) {
+	left, err := e.left.eval(env)
+	if err != nil {
+		return Null(), err
+	}
+	if !left.IsNull() {
+		return left, nil
+	}
+	return e.right.eval(env)
 }
 
 func (p *parser) or() (Expr, error)  { return p.binary(p.and, TokenOr) }
@@ -791,8 +830,10 @@ func (p *parser) postfix() (Expr, error) {
 			// are distinguishable only by looking past the `<`, so the attempt
 			// rewinds rather than committing.
 			expr = memberExpr{recv: expr, name: name, typeArg: p.typeArgument(), guarded: guarded}
-		case TokenLBracket:
-			p.take()
+		case TokenLBracket, TokenQuestionBracket:
+			if p.take().Kind == TokenQuestionBracket {
+				guarded = true
+			}
 			key, err := p.ternary()
 			if err != nil {
 				return nil, err

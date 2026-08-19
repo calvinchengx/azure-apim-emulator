@@ -2,7 +2,7 @@
   "source": "Azure/api-management-policy-snippets, MIT",
   "commit": "87225c2090e45add095919e8767c37d9ece42e0c",
   "total": 322,
-  "parsed": 296,
+  "parsed": 298,
   "gaps": [
     {
       "reason": "expected ')'",
@@ -14,10 +14,6 @@
     },
     {
       "reason": "new HMACSHA256 is not implemented",
-      "count": 2
-    },
-    {
-      "reason": "unexpected token \"[\"",
       "count": 2
     },
     {
@@ -215,18 +211,6 @@
       "reason": "unexpected character \"\u0026\"",
       "file": "Filter_on_IP_Address_when_using_Application_Gateway.policy.xml",
       "excerpt": "@{ int HostToNetworkOrder(int host) { return (((int)HostToNetworkOrderShort((sho"
-    },
-    {
-      "digest": "3fb11089217b",
-      "reason": "unexpected token \"[\"",
-      "file": "oauth-proxy-session-fragment.xml",
-      "excerpt": "@(context.Request.Headers.ContainsKey(\"cookie\") ? context.Request.Headers.GetVal"
-    },
-    {
-      "digest": "ae099e6898a4",
-      "reason": "unexpected token \"[\"",
-      "file": "oauth-proxy-sign-out.xml",
-      "excerpt": "@(context.Request.Headers.ContainsKey(\"cookie\") ? context.Request.Headers[\"cooki"
     },
     {
       "digest": "9226ca1a2e58",
