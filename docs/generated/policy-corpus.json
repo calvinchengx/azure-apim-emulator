@@ -151,7 +151,7 @@
       "excerpt": "@(((IResponse)context.Variables[\"response=\"\"\"]).Body.As\u003cJObject\u003e ()[\"results\"][0"
     },
     {
-      "digest": "bc5e6ea8b121",
+      "digest": "0f7ad5cb3547",
       "reason": "statement \"JObject\" is not implemented",
       "file": "Backend_for_Frontend_or_curated_API_policy.xml",
       "excerpt": "@{ JObject finalResponse = new JObject(); int finalStatus = 200; // This assumes"
@@ -601,12 +601,6 @@
       "excerpt": "@{ var validationResponse = new JObject(new JProperty(\"validationResponse\",conte"
     },
     {
-      "digest": "cd155fed58ac",
-      "reason": "unexpected token \"new\"",
-      "file": "Extracting_multiple_values_from_xml_documents.policy.xml",
-      "excerpt": "@{ var doc = XDocument.Parse(((IResponse)context.Variables[\"sendRequestResponse\""
-    },
-    {
       "digest": "d115b609c9ab",
       "reason": "unexpected token \"new\"",
       "file": "oauth-proxy-sign-out.xml",
@@ -617,6 +611,12 @@
       "reason": "unexpected token \"new\"",
       "file": "Add_correlation_id_to_inbound_request.policy.xml",
       "excerpt": "@{ var guidBinary = new byte[16]; Array.Copy(Guid.NewGuid().ToByteArray(), 0, gu"
+    },
+    {
+      "digest": "dcd923d09869",
+      "reason": "unexpected token \"new\"",
+      "file": "Extracting_multiple_values_from_xml_documents.policy.xml",
+      "excerpt": "@{ var doc = XDocument.Parse(((IResponse)context.Variables[\"sendRequestResponse\""
     },
     {
       "digest": "ef666622df5b",

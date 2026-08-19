@@ -85,10 +85,16 @@ func corpusExpressions(t *testing.T) map[string]corpusEntry {
 		if err != nil {
 			t.Fatal(err)
 		}
-		// XML entities are unescaped FIRST. A policy writes `As&lt;string&gt;()`
+		// Line endings are normalised BEFORE anything else. Three of these
+		// documents ship with CRLF, git rewrites line endings on checkout
+		// depending on how it is configured, and a digest taken over the raw
+		// bytes would differ between machines for the same expression -- which
+		// would read as a regression that nobody caused.
+		text := strings.ReplaceAll(string(raw), "\r\n", "\n")
+		// XML entities are unescaped next. A policy writes `As&lt;string&gt;()`
 		// and `&amp;&amp;`, so parsing the raw markup would measure the escaping
 		// rather than the expression.
-		for _, source := range extractExpressions(html.UnescapeString(string(raw))) {
+		for _, source := range extractExpressions(html.UnescapeString(text)) {
 			sum := sha256.Sum256([]byte(source))
 			digest := hex.EncodeToString(sum[:])[:12]
 			if _, seen := found[digest]; !seen {
