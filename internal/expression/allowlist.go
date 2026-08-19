@@ -48,6 +48,7 @@ func Allowlist() []Member {
 		{Type: "context", Name: "Response", Status: MemberBound},
 		{Type: "context", Name: "Subscription", Status: MemberBound},
 		{Type: "context", Name: "Timestamp", Status: MemberBound},
+		{Type: "context", Name: "Trace", Status: MemberBound},
 		{Type: "context", Name: "Tracing", Status: MemberBound},
 		{Type: "context", Name: "User", Status: MemberBound},
 		{Type: "context", Name: "Variables", Status: MemberBound},
@@ -55,6 +56,7 @@ func Allowlist() []Member {
 		{Type: "Api", Name: "IsCurrentRevision", Status: MemberBound},
 		{Type: "Api", Name: "Name", Status: MemberBound},
 		{Type: "Api", Name: "Path", Status: MemberBound},
+		{Type: "Api", Name: "Protocols", Status: MemberBound},
 		{Type: "Api", Name: "Revision", Status: MemberBound},
 		{Type: "Api", Name: "ServiceUrl", Status: MemberBound},
 		{Type: "Api", Name: "Version", Status: MemberBound},
@@ -153,6 +155,23 @@ func Allowlist() []Member {
 		{Type: "Query", Name: "Count", Status: MemberFramework},
 		{Type: "value", Name: "ToString", Status: MemberBound},
 		{Type: "string", Name: "Length", Status: MemberBound},
+		{Type: "string", Name: "AsJwt", Status: MemberBound},
+		{Type: "string", Name: "AsBasic", Status: MemberBound},
+		{Type: "Jwt", Name: "Id", Status: MemberBound},
+		{Type: "Jwt", Name: "Algorithm", Status: MemberBound},
+		{Type: "Jwt", Name: "Issuer", Status: MemberBound},
+		{Type: "Jwt", Name: "Subject", Status: MemberBound},
+		{Type: "Jwt", Name: "Type", Status: MemberBound},
+		{Type: "Jwt", Name: "Audiences", Status: MemberBound},
+		{Type: "Jwt", Name: "Claims", Status: MemberBound},
+		{Type: "Jwt", Name: "ExpirationTime", Status: MemberBound},
+		{Type: "Jwt", Name: "NotBefore", Status: MemberBound},
+		{Type: "Jwt", Name: "IssuedAt", Status: MemberBound},
+		{Type: "Claims", Name: "GetValueOrDefault", Status: MemberBound},
+		{Type: "Claims", Name: "ContainsKey", Status: MemberFramework},
+		{Type: "Claims", Name: "Count", Status: MemberFramework},
+		{Type: "BasicAuthCredentials", Name: "Username", Status: MemberBound},
+		{Type: "BasicAuthCredentials", Name: "Password", Status: MemberBound},
 	}
 }
 
@@ -165,8 +184,9 @@ func frameworkTypeOf(typ string) (string, bool) {
 	switch typ {
 	case "Certificate":
 		return "System.Security.Cryptography.X509Certificates.X509Certificate2", true
-	case "Query":
-		// Microsoft types `IUrl.Query` as IReadOnlyDictionary<string, string[]>,
+	case "Query", "Claims":
+		// Microsoft types `IUrl.Query` and `Jwt.Claims` as
+		// IReadOnlyDictionary<string, string[]>,
 		// so its dictionary members come from .NET rather than from an APIM
 		// document.
 		return "System.Collections.Generic.IReadOnlyDictionary<TKey, TValue>", true

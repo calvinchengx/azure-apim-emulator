@@ -756,7 +756,7 @@ func bindRequestContext(service *Service, route *Route, operation model.Operatio
 			Id: route.API.Name, Name: displayName(route.API.DisplayName, route.API.Name),
 			Path: strings.Trim(route.API.Path, "/"), Revision: route.API.Revision,
 			Version: route.API.Version, IsCurrentRevision: route.API.IsCurrent,
-			ServiceUrl: route.API.ServiceURL,
+			ServiceUrl: route.API.ServiceURL, Protocols: route.API.Protocols,
 		}
 	}
 	operationCtx := &expression.OperationContext{Id: operation.Name, Name: displayName(operation.DisplayName, operation.Name), Method: operation.Method, UrlTemplate: operation.URLTemplate}
