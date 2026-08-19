@@ -78,6 +78,80 @@ func (e lambdaExpr) eval(env *Env) (Value, error) {
 	}}), nil
 }
 
+// interpolationExpr is `$"text {hole} more"`.
+//
+// It is its own node rather than sugar for `+`, so that a null hole renders as
+// EMPTY the way C# renders it, instead of depending on what this evaluator's
+// addition happens to do with a null operand.
+type interpolationExpr struct {
+	segments []interpolationSegment
+}
+
+// A segment is literal text, or an expression when expr is non-nil.
+type interpolationSegment struct {
+	literal string
+	expr    Expr
+}
+
+func (e interpolationExpr) eval(env *Env) (Value, error) {
+	var out strings.Builder
+	for _, segment := range e.segments {
+		if segment.expr == nil {
+			out.WriteString(segment.literal)
+			continue
+		}
+		value, err := segment.expr.eval(env)
+		if err != nil {
+			return Null(), err
+		}
+		out.WriteString(value.String())
+	}
+	return String(out.String()), nil
+}
+
+// interpolation compiles a `$"..."` token, parsing each hole as an expression in
+// its own right. The holes are split by the SAME scanner the lexer used to find
+// the end of the string, so the two cannot disagree about where a hole stops.
+func (p *parser) interpolation(token Token) (Expr, error) {
+	parts, _, err := splitInterpolation(token.Lexeme[2:])
+	if err != nil {
+		return nil, err
+	}
+	expr := interpolationExpr{}
+	for _, part := range parts {
+		if !part.isHole {
+			expr.segments = append(expr.segments, interpolationSegment{literal: part.text})
+			continue
+		}
+		hole, err := parseHole(part.text)
+		if err != nil {
+			return nil, err
+		}
+		expr.segments = append(expr.segments, interpolationSegment{expr: hole})
+	}
+	return expr, nil
+}
+
+// parseHole compiles one hole. A hole is an expression, not a statement, and it
+// must consume its whole source: trailing input means an alignment or format
+// specifier -- `{value,10:F2}` -- which this evaluator does not implement, and
+// failing loudly beats formatting it wrongly.
+func parseHole(source string) (Expr, error) {
+	tokens, err := scan(source)
+	if err != nil {
+		return nil, err
+	}
+	sub := &parser{tokens: tokens}
+	hole, err := sub.ternary()
+	if err != nil {
+		return nil, err
+	}
+	if sub.peek().Kind != TokenEOF {
+		return nil, fmt.Errorf("unexpected %q in an interpolated hole; alignment and format specifiers are not implemented", sub.peek().Lexeme)
+	}
+	return hole, nil
+}
+
 type ternaryExpr struct {
 	cond, then, els Expr
 }
@@ -448,6 +522,8 @@ func (p *parser) atom() (Expr, error) {
 	switch token.Kind {
 	case TokenTrue, TokenFalse, TokenNull, TokenNumber, TokenString:
 		return literalExpr{value: token.Literal}, nil
+	case TokenInterpolated:
+		return p.interpolation(token)
 	case TokenIdent:
 		return identExpr{name: token.Lexeme}, nil
 	case TokenLParen:
