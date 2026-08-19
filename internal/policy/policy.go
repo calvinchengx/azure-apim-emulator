@@ -115,6 +115,11 @@ type Action struct {
 	// `context.LastError`.
 	Element string
 	Scope   string
+	// PolicyID is the `id` attribute the AUTHOR put on the element, if any.
+	// Microsoft reports it as `context.LastError.PolicyId`, and it is empty for
+	// the common case of an element with no id rather than falling back to the
+	// element name, which would make an unlabelled policy look labelled.
+	PolicyID string
 	// LLM carries the token-governance configuration of an `llm-token-limit`
 	// or `llm-emit-token-metric` node. Kept as one struct rather than a dozen
 	// more fields on Action, because these attributes are only meaningful
@@ -427,6 +432,7 @@ func compileNodes(nodes []node, strict bool) ([]Action, error) {
 		// what `context.LastError.Source` reports. Recorded here, in the one
 		// place actions are built, rather than in sixty compile cases.
 		action.Element = item.Name
+		action.PolicyID = strings.TrimSpace(item.Attrs["id"])
 		actions = append(actions, action)
 	}
 	return actions, nil

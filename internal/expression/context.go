@@ -295,7 +295,11 @@ func (h *productHost) member(name string) (Value, error) {
 		return groupList(h.ctx.Groups), nil
 	case "Apis":
 		return apiList(h.ctx.Apis), nil
-	case "SubscriptionsLimit":
+	case "SubscriptionsLimit", "SubscriptionLimit":
+		// Microsoft's two sources disagree on the spelling: the reference says
+		// SubscriptionsLimit, the toolkit says SubscriptionLimit. Both answer,
+		// because a policy written against either document is a policy that
+		// works in a tenant, and the ledger records the disagreement.
 		// Null rather than zero when the product sets no limit: Azure types this
 		// as a nullable int, and reporting 0 would read as "no subscriptions
 		// allowed", which is the opposite of "unlimited".
@@ -509,18 +513,13 @@ func (c *certificateHost) member(name string) (Value, error) {
 		return String(c.certificate.NotBefore.UTC().Format(time.RFC3339)), nil
 	case "NotAfter":
 		return String(c.certificate.NotAfter.UTC().Format(time.RFC3339)), nil
+	case "VerifyNoRevocation":
+		// Same answer as Verify: there is no trust store here to build a chain
+		// against, so neither can consult revocation and both check validity
+		// only. Binding it to a weaker check would be the dangerous direction.
+		return Object(funcValue{fn: c.verify}), nil
 	case "Verify":
-		// Validity only: this emulator has no trust store to chain against, and
-		// answering true from a chain nobody built would be the more dangerous
-		// direction. An expired certificate is the check a policy actually
-		// writes this for.
-		return Object(funcValue{fn: func(args []Value) (Value, error) {
-			if len(args) != 0 {
-				return Null(), fmt.Errorf("Verify takes no arguments")
-			}
-			now := time.Now().UTC()
-			return Bool(now.After(c.certificate.NotBefore) && now.Before(c.certificate.NotAfter)), nil
-		}}), nil
+		return Object(funcValue{fn: c.verify}), nil
 	default:
 		return Null(), fmt.Errorf("unknown member %s", name)
 	}
@@ -563,6 +562,7 @@ type lastErrorHost struct {
 // the dependency running the other way.
 type ErrorLocation interface {
 	Element() string
+	PolicyId() string
 	Section() string
 	Scope() string
 	Reason() string
@@ -577,6 +577,10 @@ func (e *lastErrorHost) member(name string) (Value, error) {
 		// occurred", which is exactly this. An `Element` alias sat here too,
 		// under a comment claiming Azure exposed both names. It does not.
 		return String(locatedValue(e.located, ErrorLocation.Element)), nil
+	case "PolicyId":
+		// The author's `id` attribute, empty when they did not set one. Azure
+		// reports it that way too: an unlabelled policy is not mislabelled.
+		return String(locatedValue(e.located, ErrorLocation.PolicyId)), nil
 	case "Section":
 		return String(locatedValue(e.located, ErrorLocation.Section)), nil
 	case "Scope":
@@ -641,7 +645,11 @@ func (u *urlHost) member(name string) (Value, error) {
 		}
 		return String("http"), nil
 	case "Query":
-		return String(url.RawQuery), nil
+		// Microsoft types this `IReadOnlyDictionary<string, string[]>`, not a
+		// string: `QueryString` is the raw text. It used to return RawQuery
+		// here, which is a defect a member-NAME inventory cannot see, because
+		// the member was present and only its shape was wrong.
+		return Object(&queryHost{values: url.Query()}), nil
 	case "QueryString":
 		if url.RawQuery == "" {
 			return String(""), nil
@@ -716,6 +724,73 @@ func (h *headerHost) getValueOrDefault(args []Value) (Value, error) {
 	return String(value), nil
 }
 
+// verify checks VALIDITY ONLY: this emulator has no trust store to chain
+// against, and answering true from a chain nobody built would be the more
+// dangerous direction. An expired certificate is the check a policy writes this
+// for, and it is the check that works.
+func (c *certificateHost) verify(args []Value) (Value, error) {
+	if len(args) != 0 {
+		return Null(), fmt.Errorf("Verify takes no arguments")
+	}
+	now := time.Now().UTC()
+	return Bool(now.After(c.certificate.NotBefore) && now.Before(c.certificate.NotAfter)), nil
+}
+
+// queryHost is the query string as Microsoft types it: a dictionary of name to
+// VALUES, because a parameter may legitimately repeat.
+type queryHost struct {
+	values url.Values
+}
+
+func (q *queryHost) member(name string) (Value, error) {
+	switch name {
+	case "GetValueOrDefault":
+		return Object(funcValue{fn: q.getValueOrDefault}), nil
+	case "ContainsKey":
+		return Object(funcValue{fn: func(args []Value) (Value, error) {
+			if len(args) != 1 || args[0].kind != KindString {
+				return Null(), fmt.Errorf("ContainsKey requires a query parameter name")
+			}
+			_, ok := q.values[args[0].str]
+			return Bool(ok), nil
+		}}), nil
+	case "Count":
+		return Double(float64(len(q.values))), nil
+	default:
+		return Null(), fmt.Errorf("unknown member %s", name)
+	}
+}
+
+// index answers the VALUES of a parameter, not the first of them, because the
+// documented type is string[] and `Query["x"][0]` is how a policy reads one.
+func (q *queryHost) index(key Value) (Value, error) {
+	if key.kind != KindString {
+		return Null(), fmt.Errorf("a query string is indexed by parameter name")
+	}
+	values, ok := q.values[key.str]
+	if !ok {
+		return Null(), nil
+	}
+	items := make([]Value, 0, len(values))
+	for _, value := range values {
+		items = append(items, String(value))
+	}
+	return Object(&listHost{items: items, what: "values"}), nil
+}
+
+func (q *queryHost) getValueOrDefault(args []Value) (Value, error) {
+	if len(args) == 0 || len(args) > 2 || args[0].kind != KindString {
+		return Null(), fmt.Errorf("GetValueOrDefault requires a query parameter name")
+	}
+	if values := q.values[args[0].str]; len(values) > 0 {
+		return String(values[0]), nil
+	}
+	if len(args) == 2 {
+		return args[1], nil
+	}
+	return String(""), nil
+}
+
 // certificateMapHost is the service's client certificates, keyed by name. It is
 // a dictionary of OBJECTS, which the text-only mapHost cannot carry.
 type certificateMapHost struct {
@@ -758,6 +833,8 @@ type mapHost struct {
 
 func (m *mapHost) member(name string) (Value, error) {
 	switch name {
+	case "GetValueOrDefault":
+		return Object(funcValue{fn: m.getValueOrDefault}), nil
 	case "ContainsKey":
 		return Object(funcValue{fn: func(args []Value) (Value, error) {
 			if len(args) != 1 || args[0].kind != KindString {
@@ -774,25 +851,51 @@ func (m *mapHost) member(name string) (Value, error) {
 	}
 }
 
+// getValueOrDefault reads a variable, or the caller's fallback when it is
+// absent. It goes through index so an object variable answers the same way it
+// does when indexed, rather than falling through to the string map and reading
+// as missing.
+func (m *mapHost) getValueOrDefault(args []Value) (Value, error) {
+	if len(args) == 0 || len(args) > 2 || args[0].kind != KindString {
+		return Null(), fmt.Errorf("GetValueOrDefault requires a variable name")
+	}
+	value := m.lookup(args[0].str)
+	if value.kind != KindNull {
+		return value, nil
+	}
+	if len(args) == 2 {
+		return args[1], nil
+	}
+	return Null(), nil
+}
+
 func (m *mapHost) index(key Value) (Value, error) {
 	if key.kind != KindString {
 		return Null(), fmt.Errorf("index requires a string")
 	}
+	return m.lookup(key.str), nil
+}
+
+// lookup reads a variable by name, answering null when it is absent. It cannot
+// fail, which is why GetValueOrDefault calls it rather than index: routing
+// through index would leave an error path that the name check has already made
+// unreachable.
+func (m *mapHost) lookup(name string) Value {
 	// An object variable is checked FIRST: get-authorization-context stores a
 	// credential, and the documented expression reads a member off it. Falling
-	// through to the string map would answer null and make
-	// `.AccessToken` fail on a variable that is genuinely present.
-	if credential, ok := m.objects[key.str]; ok {
-		return Object(&authorizationHost{context: credential}), nil
+	// through to the string map would answer null and make `.AccessToken` fail
+	// on a variable that is genuinely present.
+	if credential, ok := m.objects[name]; ok {
+		return Object(&authorizationHost{context: credential})
 	}
 	if m.values == nil {
-		return Null(), nil
+		return Null()
 	}
-	value, ok := m.values[key.str]
+	value, ok := m.values[name]
 	if !ok {
-		return Null(), nil
+		return Null()
 	}
-	return String(value), nil
+	return String(value)
 }
 
 type bodyHost struct {

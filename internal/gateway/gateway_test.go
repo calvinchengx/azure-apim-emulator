@@ -2105,9 +2105,9 @@ func TestLastErrorReportsItsLocation(t *testing.T) {
 	// An inbound expression that compiles and cannot evaluate, and an on-error
 	// section that reports where it happened.
 	if _, err := st.UpsertPolicy(model.Policy{ScopeID: api.ID(), Value: `<policies>` +
-		`<inbound><set-header name="X-Broken" exists-action="override"><value>@(context.Product.Name)</value></set-header></inbound>` +
+		`<inbound><set-header name="X-Broken" id="broken-header" exists-action="override"><value>@(context.Product.Name)</value></set-header></inbound>` +
 		`<on-error><return-response><set-status code="500" reason="Failed"/>` +
-		`<set-body>@(context.LastError.Section + "|" + context.LastError.Source + "|" + context.LastError.Scope + "|" + context.LastError.Reason)</set-body>` +
+		`<set-body>@(context.LastError.Section + "|" + context.LastError.Source + "|" + context.LastError.Scope + "|" + context.LastError.Reason + "|" + context.LastError.PolicyId)</set-body>` +
 		`</return-response></on-error></policies>`}); err != nil {
 		t.Fatal(err)
 	}
@@ -2118,8 +2118,10 @@ func TestLastErrorReportsItsLocation(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	runtime.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/orders", nil))
 	body := recorder.Body.String()
-	// section | source | scope | reason
-	if body != "inbound|set-header|api|ExpressionValueEvaluationFailure" {
+	// section | source | scope | reason | policyId. PolicyId is read through a
+	// real policy rather than off a hand-built error, because a member can be
+	// bound on the binder and still arrive empty through the gateway.
+	if body != "inbound|set-header|api|ExpressionValueEvaluationFailure|broken-header" {
 		t.Fatalf("last error location = %q", body)
 	}
 }

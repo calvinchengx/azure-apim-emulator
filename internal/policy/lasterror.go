@@ -22,6 +22,8 @@ type PolicyError struct {
 	// Element is the policy element that failed, and Source repeats it because
 	// Azure exposes both names for the same thing.
 	element string
+	// policyID is the author's `id` attribute on the failing element.
+	policyID string
 	section string
 	scope   string
 	// reason is Azure's short classification. It is populated ONLY where this
@@ -35,7 +37,8 @@ func (e *PolicyError) Error() string { return e.Err.Error() }
 
 // The accessors satisfy expression.ErrorLocation, which is how the binder reads
 // a failure's position without this package and that one importing each other.
-func (e *PolicyError) Element() string { return e.element }
+func (e *PolicyError) Element() string  { return e.element }
+func (e *PolicyError) PolicyId() string { return e.policyID }
 func (e *PolicyError) Section() string { return e.section }
 func (e *PolicyError) Scope() string   { return e.scope }
 func (e *PolicyError) Reason() string  { return e.reason }
@@ -79,7 +82,7 @@ func locate(err error, action Action, state *State) error {
 		return err
 	}
 	return &PolicyError{
-		Err: err, element: action.Element, section: state.Section,
+		Err: err, element: action.Element, policyID: action.PolicyID, section: state.Section,
 		scope: action.Scope, reason: reasonFor(err),
 	}
 }
