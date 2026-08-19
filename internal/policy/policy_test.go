@@ -673,11 +673,11 @@ func TestSharedLimitAndResponsePolicies(t *testing.T) {
 	if err != nil || quota.Inbound[0].Value != "quota" || quota.Inbound[0].StatusCode != http.StatusForbidden || quota.Inbound[0].LimitPeriod != time.Hour {
 		t.Fatalf("quota action = %+v, %v", quota, err)
 	}
-	limited := &State{RateLimit: func(key string, _ int, _ time.Duration) bool { return key == "rate-limit" }}
+	limited := &State{Subscription: &expr.SubscriptionContext{Id: "sub-a"}, RateLimit: func(key string, _ int, _ time.Duration) bool { return key == "sub-a/rate-limit" }}
 	if err := Execute(rate.Inbound, limited); err != nil || !limited.Returned || limited.StatusCode != http.StatusTooManyRequests || limited.Headers.Get("X-Retry") != "true" {
 		t.Fatalf("rate-limit execute = %+v, %v", limited, err)
 	}
-	quotaState := &State{RateLimit: func(key string, _ int, _ time.Duration) bool { return key == "quota" }}
+	quotaState := &State{Subscription: &expr.SubscriptionContext{Id: "sub-a"}, RateLimit: func(key string, _ int, _ time.Duration) bool { return key == "sub-a/quota" }}
 	if err := Execute(quota.Inbound, quotaState); err != nil || !quotaState.Returned || quotaState.StatusCode != http.StatusForbidden {
 		t.Fatalf("quota execute = %+v, %v", quotaState, err)
 	}
@@ -751,22 +751,22 @@ func TestSharedLimitAndResponsePolicies(t *testing.T) {
 		t.Fatalf("nested rate-limit = %+v, %v", nested, err)
 	}
 	nestedHits := map[string]int{}
-	nestedState := &State{RateLimit: func(key string, _ int, _ time.Duration) bool {
+	nestedState := &State{Subscription: &expr.SubscriptionContext{Id: "sub-a"}, RateLimit: func(key string, _ int, _ time.Duration) bool {
 		nestedHits[key]++
 		return false
 	}}
-	if err := Execute(nested.Inbound, nestedState); err != nil || nestedHits["rate-limit"] != 1 || nestedHits["rate-limit/api/demo"] != 1 || nestedHits["rate-limit/api/operation/get"] != 1 {
+	if err := Execute(nested.Inbound, nestedState); err != nil || nestedHits["sub-a/rate-limit"] != 1 || nestedHits["sub-a/rate-limit/api/demo"] != 1 || nestedHits["sub-a/rate-limit/api/operation/get"] != 1 {
 		t.Fatalf("nested rate-limit execute = %v %v", nestedHits, err)
 	}
 	bandwidth, err := Compile(`<policies><inbound><quota bandwidth="4" renewal-period="60"/></inbound></policies>`, true)
 	if err != nil || bandwidth.Inbound[0].LimitBandwidth != 4 || bandwidth.Inbound[0].LimitCalls != 0 {
 		t.Fatalf("quota bandwidth plan = %+v, %v", bandwidth, err)
 	}
-	if err := Execute(bandwidth.Inbound, &State{}); err == nil {
+	if err := Execute(bandwidth.Inbound, &State{Subscription: &expr.SubscriptionContext{Id: "sub-a"}}); err == nil {
 		t.Fatal("quota bandwidth without limiter accepted")
 	}
 	used := int64(0)
-	bwState := &State{Request: httptest.NewRequest(http.MethodPost, "/", strings.NewReader("abcd")), BandwidthLimit: func(key string, add, budget int64, _ time.Duration) bool {
+	bwState := &State{Subscription: &expr.SubscriptionContext{Id: "sub-a"}, Request: httptest.NewRequest(http.MethodPost, "/", strings.NewReader("abcd")), BandwidthLimit: func(key string, add, budget int64, _ time.Duration) bool {
 		used += add
 		return used > budget
 	}}
@@ -887,7 +887,7 @@ func TestSharedLimitAndResponsePolicies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := Execute(childErr.Inbound, &State{BandwidthLimit: func(string, int64, int64, time.Duration) bool { return false }}); err == nil {
+	if err := Execute(childErr.Inbound, &State{Subscription: &expr.SubscriptionContext{Id: "sub-a"}, BandwidthLimit: func(string, int64, int64, time.Duration) bool { return false }}); err == nil {
 		t.Fatal("nested calls without rate limiter accepted")
 	}
 	limitState := &State{Request: httptest.NewRequest(http.MethodGet, "/", nil)}
@@ -2707,5 +2707,83 @@ func TestIntegrationPolicies(t *testing.T) {
 		if err := Execute(append(append(compiled.Inbound, compiled.Outbound...), compiled.OnError...), &State{Request: httptest.NewRequest(http.MethodGet, "/", nil), ValidateToken: func(string) error { return nil }, SendRequest: func(*http.Request) (*http.Response, error) { return nil, nil }}); err == nil {
 			t.Fatalf("expected unsupported failure for %s", value)
 		}
+	}
+}
+
+// TestKeylessLimitsAreScopedToTheSubscription pins the two rules the reference
+// states for <rate-limit> and <quota>: they count "on a per subscription basis"
+// and are "only applied when an API is accessed using a subscription key".
+func TestKeylessLimitsAreScopedToTheSubscription(t *testing.T) {
+	for _, name := range []string{"rate-limit", "quota"} {
+		plan, err := Compile(`<policies><inbound><`+name+` calls="1" renewal-period="60"/></inbound></policies>`, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// An anonymous caller is not counted at all: the limiter is never asked.
+		asked := false
+		anonymous := &State{RateLimit: func(string, int, time.Duration) bool { asked = true; return true }}
+		if err := Execute(plan.Inbound, anonymous); err != nil || anonymous.Returned || asked {
+			t.Fatalf("%s counted an anonymous caller: returned=%v asked=%v err=%v", name, anonymous.Returned, asked, err)
+		}
+
+		// Two subscriptions get two counters, so exhausting one leaves the other
+		// untouched. A shared bucket would throttle a caller for someone else's
+		// traffic.
+		seen := map[string]int{}
+		limiter := func(key string, calls int, _ time.Duration) bool {
+			seen[key]++
+			return seen[key] > calls
+		}
+		for _, id := range []string{"sub-a", "sub-a", "sub-b"} {
+			state := &State{Subscription: &expr.SubscriptionContext{Id: id}, RateLimit: limiter}
+			if err := Execute(plan.Inbound, state); err != nil {
+				t.Fatal(err)
+			}
+			if id == "sub-b" && state.Returned {
+				t.Fatalf("%s throttled sub-b using sub-a's traffic", name)
+			}
+		}
+		if seen["sub-a/"+name] != 2 || seen["sub-b/"+name] != 1 {
+			t.Fatalf("%s counter keys = %v", name, seen)
+		}
+
+		// The primary and secondary key of one subscription share a counter,
+		// because the counter is the subscription and not the presented key.
+		shared := map[string]int{}
+		for _, key := range []string{"primary", "secondary"} {
+			state := &State{Subscription: &expr.SubscriptionContext{Id: "sub-c", Key: key}, RateLimit: func(k string, _ int, _ time.Duration) bool { shared[k]++; return false }}
+			if err := Execute(plan.Inbound, state); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if shared["sub-c/"+name] != 2 {
+			t.Fatalf("%s split one subscription across its keys: %v", name, shared)
+		}
+
+		// counter-key is documented on the by-key variants only, so Azure rejects
+		// it here. Accepting it would pass a policy the tenant refuses.
+		rejected, err := Compile(`<policies><inbound><`+name+` calls="1" renewal-period="60" counter-key="mine"/></inbound></policies>`, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(rejected.Inbound) != 1 || rejected.Inbound[0].Kind != ActionUnsupported || rejected.Inbound[0].Source != name+"/@counter-key" {
+			t.Fatalf("%s counter-key = %+v", name, rejected.Inbound)
+		}
+		if err := Execute(rejected.Inbound, &State{}); err == nil {
+			t.Fatalf("%s accepted counter-key", name)
+		}
+	}
+
+	// The by-key variants keep their own counter and stay unscoped, so they work
+	// without a subscription.
+	byKey, err := Compile(`<policies><inbound><rate-limit-by-key calls="1" renewal-period="60" counter-key="fixed"/></inbound></policies>`, true)
+	if err != nil || byKey.Inbound[0].PerSubscription {
+		t.Fatalf("rate-limit-by-key scoped to a subscription: %+v, %v", byKey.Inbound[0], err)
+	}
+	keyed := ""
+	state := &State{RateLimit: func(k string, _ int, _ time.Duration) bool { keyed = k; return false }}
+	if err := Execute(byKey.Inbound, state); err != nil || keyed != "fixed" {
+		t.Fatalf("rate-limit-by-key counter = %q, %v", keyed, err)
 	}
 }

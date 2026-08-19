@@ -103,6 +103,11 @@ type Action struct {
 	LimitCalls     int
 	LimitBandwidth int64
 	LimitPeriod    time.Duration
+	// PerSubscription marks the keyless <rate-limit> and <quota> family, which
+	// Microsoft counts "on a per subscription basis" and applies "only when an
+	// API is accessed using a subscription key". The by-key variants carry their
+	// own counter-key and are not scoped this way.
+	PerSubscription bool
 	CacheDuration  time.Duration
 	StatusMin      int
 	StatusMax      int
@@ -1100,7 +1105,14 @@ func compileLimit(item node) (Action, bool, error) {
 		return Action{}, false, err
 	}
 	key := item.Attrs["counter-key"]
-	if key == "" && (item.Name == "rate-limit" || item.Name == "quota") {
+	perSubscription := item.Name == "rate-limit" || item.Name == "quota"
+	if perSubscription {
+		// counter-key belongs to the by-key variants. Neither keyless reference
+		// mentions it, so Azure rejects it; accepting it here would let a policy
+		// pass the emulator and fail the tenant.
+		if key != "" {
+			return unsupported(item.Name + "/@counter-key"), true, nil
+		}
 		key = item.Name
 	}
 	key, err = compileValue(key)
@@ -1115,7 +1127,7 @@ func compileLimit(item node) (Action, bool, error) {
 		if child.Name != "api" && child.Name != "operation" {
 			return unsupported(item.Name + "/" + child.Name), true, nil
 		}
-		nested, err := compileNestedLimit(item.Name, period, child)
+		nested, err := compileNestedLimit(item.Name, period, child, perSubscription)
 		if err != nil {
 			return Action{}, false, err
 		}
@@ -1132,10 +1144,10 @@ func compileLimit(item node) (Action, bool, error) {
 	if retryAfter == "" && (item.Name == "rate-limit" || item.Name == "quota") {
 		retryAfter = "Retry-After"
 	}
-	return Action{Kind: ActionRateLimit, Value: key, LimitCalls: calls, LimitBandwidth: bandwidth, LimitPeriod: period, StatusCode: status, Body: retryAfter, Children: children}, true, nil
+	return Action{Kind: ActionRateLimit, Value: key, LimitCalls: calls, LimitBandwidth: bandwidth, LimitPeriod: period, StatusCode: status, Body: retryAfter, Children: children, PerSubscription: perSubscription}, true, nil
 }
 
-func compileNestedLimit(parent string, parentPeriod time.Duration, item node) (Action, error) {
+func compileNestedLimit(parent string, parentPeriod time.Duration, item node, perSubscription bool) (Action, error) {
 	name := strings.TrimSpace(item.Attrs["name"])
 	if name == "" {
 		return unsupported(parent + "/" + item.Name), nil
@@ -1155,7 +1167,7 @@ func compileNestedLimit(parent string, parentPeriod time.Duration, item node) (A
 		if item.Name != "api" || child.Name != "operation" {
 			return unsupported(parent + "/" + item.Name + "/" + child.Name), nil
 		}
-		nested, err := compileNestedLimit(parent+"/"+item.Name, period, child)
+		nested, err := compileNestedLimit(parent+"/"+item.Name, period, child, perSubscription)
 		if err != nil {
 			return Action{}, err
 		}
@@ -1168,7 +1180,7 @@ func compileNestedLimit(parent string, parentPeriod time.Duration, item node) (A
 	if strings.HasPrefix(parent, "quota") {
 		status = http.StatusForbidden
 	}
-	return Action{Kind: ActionRateLimit, Value: parent + "/" + item.Name + "/" + name, LimitCalls: calls, LimitBandwidth: bandwidth, LimitPeriod: period, StatusCode: status, Children: children}, nil
+	return Action{Kind: ActionRateLimit, Value: parent + "/" + item.Name + "/" + name, LimitCalls: calls, LimitBandwidth: bandwidth, LimitPeriod: period, StatusCode: status, Children: children, PerSubscription: perSubscription}, nil
 }
 
 func parseLimitBudget(item node) (int, time.Duration, int64, error) {
@@ -2513,6 +2525,17 @@ func executeLimit(action Action, state *State) error {
 	}
 	if key == "" && state.Request != nil {
 		key = state.Request.RemoteAddr
+	}
+	if action.PerSubscription {
+		// "This policy is only applied when an API is accessed using a
+		// subscription key." An anonymous caller is not counted at all, and the
+		// nested api/operation limits under it are not either.
+		if state.Subscription == nil || state.Subscription.Id == "" {
+			return nil
+		}
+		// Counted per SUBSCRIPTION, not per key: the primary and secondary keys
+		// of one subscription share a counter, and two subscriptions never do.
+		key = state.Subscription.Id + "/" + key
 	}
 	if action.LimitCalls > 0 {
 		if state.RateLimit == nil {

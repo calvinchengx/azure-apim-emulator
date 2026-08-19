@@ -11,6 +11,21 @@ the two disagree.
 | `policy-expressions.md` | [MicrosoftDocs/azure-docs](https://github.com/MicrosoftDocs/azure-docs) `articles/api-management/api-management-policy-expressions.md` | `4a74bf2f66742c18e9cbe465af133be6f87c895b` | CC-BY-4.0 |
 | `toolkit/*.cs` | [Azure/azure-api-management-policy-toolkit](https://github.com/Azure/azure-api-management-policy-toolkit) `src/Authoring/Expressions/` | `1989f9f1764e1560ba971c939983ccf59e154031` | MIT |
 | `policy-snippets/*.xml` | [Azure/api-management-policy-snippets](https://github.com/Azure/api-management-policy-snippets) | `87225c2090e45add095919e8767c37d9ece42e0c` | MIT |
+| `policy-reference/*.md` | [MicrosoftDocs/azure-docs](https://github.com/MicrosoftDocs/azure-docs) `articles/api-management/{rate-limit,quota,rate-limit-by-key,quota-by-key}-policy.md` | `f31ac8723a622ba3950df57ba0389d8347f546ab` | CC-BY-4.0 |
+
+## The policy reference states behaviour, not surface
+
+`policy-reference/` carries the reference page for individual policies. Those
+pages are the only place Microsoft states how a policy COUNTS, as opposed to
+which attributes it takes, and the two limit families turned out to differ from
+this emulator on exactly that. `rate-limit-policy.md` says the policy limits "on
+a per subscription basis" and "is only applied when an API is accessed using a
+subscription key"; both sentences were unimplemented, and neither is derivable
+from a schema or an attribute table.
+
+These pages are read by people, not by a script, so nothing is generated from
+them. They are vendored so a behavioural claim in a test can cite a pinned
+sentence instead of a memory of the docs.
 
 ## Why two sources
 

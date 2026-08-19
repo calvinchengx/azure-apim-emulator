@@ -3,75 +3,1189 @@
   "retrieved": "2026-06-25",
   "status": "classified",
   "policies": [
-    {"name":"base","status":"implemented","sections":["inbound","backend","outbound","on-error"],"gateways":["classic","v2","consumption","self-hosted","workspace"],"expression_fields":[]},
-    {"name":"rate-limit","status":"partial","sections":["inbound","outbound"],"gateways":["classic","v2","consumption","self-hosted","workspace"],"expression_fields":["counter-key"],"notes":"nested api/operation children and bandwidth are implemented; subscription counters remain open"},
-    {"name":"rate-limit-by-key","status":"implemented","sections":["inbound","outbound"],"gateways":["classic","v2","self-hosted","workspace"],"expression_fields":["counter-key"]},
-    {"name":"quota","status":"partial","sections":["inbound","outbound"],"gateways":["classic","v2","consumption","self-hosted","workspace"],"expression_fields":["counter-key"],"notes":"nested api/operation children and bandwidth are implemented; subscription counters remain open"},
-    {"name":"quota-by-key","status":"implemented","sections":["inbound","outbound"],"gateways":["classic","v2","self-hosted","workspace"],"expression_fields":["counter-key"]},
-    {"name":"limit-concurrency","status":"implemented","sections":["inbound","backend","outbound","on-error"],"gateways":["classic","v2","consumption","self-hosted","workspace"],"expression_fields":["key"]},
-    {"name":"llm-token-limit","status":"partial","sections":["inbound"],"gateways":["classic","v2","self-hosted","workspace"],"expression_fields":["counter-key"]},
-    {"name":"azure-openai-token-limit","status":"partial","sections":["inbound"],"gateways":["classic","v2","self-hosted","workspace"],"expression_fields":["counter-key"]},
-    {"name":"check-header","status":"implemented","sections":["inbound"],"gateways":["classic","v2","consumption","self-hosted","workspace"],"expression_fields":["name","value","failed-check-error-message"]},
-    {"name":"get-authorization-context","status":"implemented","sections":["inbound"],"gateways":["classic","v2","consumption"],"expression_fields":[]},
-    {"name":"ip-filter","status":"implemented","sections":["inbound"],"gateways":["classic","v2","consumption","self-hosted","workspace"],"expression_fields":[]},
-    {"name":"validate-azure-ad-token","status":"partial","sections":["inbound"],"gateways":["classic","v2","consumption","self-hosted","workspace"],"expression_fields":["tenant-id","header-name","query-parameter-name","failed-validation-httpcode","failed-validation-error-message"],"notes":"client-application-ids and required-claims are enforced from the JWT payload; non-empty token-value remains unsupported"},
-    {"name":"validate-jwt","status":"partial","sections":["inbound"],"gateways":["classic","v2","consumption","self-hosted","workspace"],"expression_fields":[],"notes":"audiences, issuers, and required-claims are enforced from the JWT payload; openid-config remains unsupported"},
-    {"name":"validate-client-certificate","status":"implemented","sections":["inbound"],"gateways":["classic","v2","consumption","self-hosted","workspace"],"expression_fields":[]},
-    {"name":"authentication-basic","status":"implemented","sections":["backend"],"gateways":["classic","v2","consumption","self-hosted","workspace"],"expression_fields":["username","password"]},
-    {"name":"authentication-certificate","status":"implemented","sections":["backend"],"gateways":["classic","v2","consumption","self-hosted","workspace"],"expression_fields":["certificate-id"]},
-    {"name":"authentication-managed-identity","status":"implemented","sections":["backend"],"gateways":["classic","v2","consumption","self-hosted"],"expression_fields":["resource"]},
-    {"name":"authentication-oauth2","status":"implemented","sections":["backend"],"gateways":["classic","v2","consumption","self-hosted","workspace"],"expression_fields":["client-id","client-secret","token-endpoint","resource"]},
-    {"name":"llm-content-safety","status":"external-adapter","sections":["inbound"],"gateways":["classic","v2","consumption","self-hosted","workspace"],"expression_fields":[]},
-    {"name":"validate-content","status":"implemented","sections":["inbound","outbound"],"gateways":["classic","v2","consumption","self-hosted","workspace"],"expression_fields":[]},
-    {"name":"validate-graphql-request","status":"unsupported","sections":["inbound"],"gateways":["classic","v2","consumption","self-hosted"],"expression_fields":[]},
-    {"name":"validate-odata-request","status":"unsupported","sections":["inbound"],"gateways":["classic","v2","consumption","self-hosted","workspace"],"expression_fields":[]},
-    {"name":"validate-parameters","status":"implemented","sections":["inbound"],"gateways":["classic","v2","consumption","self-hosted","workspace"],"expression_fields":[]},
-    {"name":"validate-headers","status":"implemented","sections":["outbound"],"gateways":["classic","v2","consumption","self-hosted","workspace"],"expression_fields":[]},
-    {"name":"validate-status-code","status":"implemented","sections":["outbound"],"gateways":["classic","v2","consumption","self-hosted","workspace"],"expression_fields":[]},
-    {"name":"forward-request","status":"implemented","sections":["backend"],"gateways":["classic","v2","consumption","self-hosted","workspace"],"expression_fields":[]},
-    {"name":"set-backend-service","status":"implemented","sections":["inbound","backend"],"gateways":["classic","v2","consumption","self-hosted","workspace"],"expression_fields":["base-url","backend-id"]},
-    {"name":"proxy","status":"unsupported","sections":["backend"],"gateways":["classic","v2","consumption","self-hosted","workspace"],"expression_fields":[]},
-    {"name":"cache-lookup","status":"implemented","sections":["inbound"],"gateways":["classic","v2","consumption","self-hosted","workspace"],"expression_fields":[]},
-    {"name":"cache-store","status":"implemented","sections":["outbound"],"gateways":["classic","v2","consumption","self-hosted","workspace"],"expression_fields":[]},
-    {"name":"cache-lookup-value","status":"implemented","sections":["inbound","backend","outbound","on-error"],"gateways":["classic","v2","consumption","self-hosted","workspace"],"expression_fields":["key","variable-name"]},
-    {"name":"cache-store-value","status":"implemented","sections":["inbound","backend","outbound","on-error"],"gateways":["classic","v2","consumption","self-hosted","workspace"],"expression_fields":["key","value"]},
-    {"name":"cache-remove-value","status":"implemented","sections":["inbound","backend","outbound","on-error"],"gateways":["classic","v2","consumption","self-hosted","workspace"],"expression_fields":["key"]},
-    {"name":"llm-semantic-cache-lookup","status":"unsupported","sections":["inbound"],"gateways":["classic","v2","consumption","self-hosted"],"expression_fields":[]},
-    {"name":"llm-semantic-cache-store","status":"unsupported","sections":["outbound"],"gateways":["classic","v2","consumption","self-hosted"],"expression_fields":[]},
-    {"name":"set-method","status":"implemented","sections":["inbound"],"gateways":["classic","v2","consumption","self-hosted","workspace"],"expression_fields":[]},
-    {"name":"set-status","status":"implemented","sections":["inbound","backend","outbound","on-error"],"gateways":["classic","v2","consumption","self-hosted","workspace"],"expression_fields":["code","reason"]},
-    {"name":"set-variable","status":"implemented","sections":["inbound","backend","outbound","on-error"],"gateways":["classic","v2","consumption","self-hosted","workspace"],"expression_fields":["value"]},
-    {"name":"set-body","status":"implemented","sections":["inbound","backend","outbound","on-error"],"gateways":["classic","v2","consumption","self-hosted","workspace"],"expression_fields":[]},
-    {"name":"set-header","status":"implemented","sections":["inbound","backend","outbound","on-error"],"gateways":["classic","v2","consumption","self-hosted","workspace"],"expression_fields":["value"]},
-    {"name":"set-query-parameter","status":"implemented","sections":["inbound"],"gateways":["classic","v2","consumption","self-hosted","workspace"],"expression_fields":["value"]},
-    {"name":"rewrite-uri","status":"implemented","sections":["inbound"],"gateways":["classic","v2","consumption","self-hosted","workspace"],"expression_fields":["template"]},
-    {"name":"json-to-xml","status":"implemented","sections":["inbound","outbound"],"gateways":["classic","v2","consumption","self-hosted","workspace"],"expression_fields":["root-element-name"]},
-    {"name":"xml-to-json","status":"implemented","sections":["inbound","outbound"],"gateways":["classic","v2","consumption","self-hosted","workspace"],"expression_fields":[]},
-    {"name":"find-and-replace","status":"implemented","sections":["inbound","outbound"],"gateways":["classic","v2","consumption","self-hosted","workspace"],"expression_fields":["from","to"]},
-    {"name":"redirect-content-urls","status":"implemented","sections":["outbound"],"gateways":["classic","v2","consumption","self-hosted","workspace"],"expression_fields":[]},
-    {"name":"xsl-transform","status":"unsupported","sections":["inbound","outbound"],"gateways":["classic","v2","consumption","self-hosted","workspace"],"expression_fields":[]},
-    {"name":"return-response","status":"implemented","sections":["inbound","backend","outbound","on-error"],"gateways":["classic","v2","consumption","self-hosted","workspace"],"expression_fields":[]},
-    {"name":"mock-response","status":"partial","sections":["inbound","outbound"],"gateways":["classic","v2","consumption","self-hosted","workspace"],"expression_fields":["status-code","content-type"],"notes":"example bodies are implemented; schema bodies remain unsupported"},
-    {"name":"cross-domain","status":"implemented","sections":["inbound"],"gateways":["classic","v2","consumption","self-hosted","workspace"],"expression_fields":[]},
-    {"name":"cors","status":"implemented","sections":["inbound"],"gateways":["classic","v2","consumption","self-hosted","workspace"],"expression_fields":["allowed-origins","allowed-methods","allowed-headers","expose-headers","max-age"]},
-    {"name":"jsonp","status":"implemented","sections":["outbound"],"gateways":["classic","v2","consumption","self-hosted","workspace"],"expression_fields":["callback-parameter-name"]},
-    {"name":"send-request","status":"implemented","sections":["inbound","backend","outbound","on-error"],"gateways":["classic","v2","consumption","self-hosted","workspace"],"expression_fields":["set-url","set-method","set-header","set-body"]},
-    {"name":"send-one-way-request","status":"partial","sections":["inbound","backend","outbound","on-error"],"gateways":["classic","v2","consumption","self-hosted","workspace"],"expression_fields":["mode","timeout","set-url","set-method","set-header","set-body"],"notes":"nested authentication children remain open"},
-    {"name":"log-to-eventhub","status":"external-adapter","sections":["inbound","backend","outbound","on-error"],"gateways":["classic","v2","consumption","self-hosted","workspace"],"expression_fields":[]},
-    {"name":"send-service-bus-message","status":"external-adapter","sections":["inbound","backend","outbound"],"gateways":["classic"],"expression_fields":[]},
-    {"name":"publish-to-dapr","status":"external-adapter","sections":["inbound","backend"],"gateways":["self-hosted"],"expression_fields":[]},
-    {"name":"invoke-dapr-binding","status":"external-adapter","sections":["inbound","backend"],"gateways":["self-hosted"],"expression_fields":[]},
-    {"name":"trace","status":"implemented","sections":["inbound","backend","outbound","on-error"],"gateways":["classic","v2","consumption","self-hosted","workspace"],"expression_fields":[]},
-    {"name":"emit-metric","status":"external-adapter","sections":["inbound","backend","outbound","on-error"],"gateways":["classic","v2","consumption","self-hosted","workspace"],"expression_fields":[]},
-    {"name":"llm-emit-token-metric","status":"partial","sections":["inbound","outbound"],"gateways":["classic","v2","self-hosted","workspace"],"expression_fields":["dimension/value"]},
-    {"name":"azure-openai-emit-token-metric","status":"partial","sections":["inbound","outbound"],"gateways":["classic","v2","self-hosted","workspace"],"expression_fields":["dimension/value"]},
-    {"name":"sql-data-source","status":"unsupported","sections":["inbound"],"gateways":["classic","v2"],"expression_fields":[]},
-    {"name":"cosmosdb-data-source","status":"unsupported","sections":["inbound"],"gateways":["classic","v2"],"expression_fields":[]},
-    {"name":"http-data-source","status":"unsupported","sections":["inbound"],"gateways":["classic","v2","consumption"],"expression_fields":[]},
-    {"name":"publish-event","status":"unsupported","sections":["inbound"],"gateways":["classic","v2","consumption"],"expression_fields":[]},
-    {"name":"choose","status":"implemented","sections":["inbound","backend","outbound","on-error"],"gateways":["classic","v2","consumption","self-hosted","workspace"],"expression_fields":["condition"]},
-    {"name":"include-fragment","status":"implemented","sections":["inbound","backend","outbound","on-error"],"gateways":["classic","v2","consumption","self-hosted","workspace"],"expression_fields":[]},
-    {"name":"retry","status":"implemented","sections":["backend"],"gateways":["classic","v2","consumption","self-hosted","workspace"],"expression_fields":["condition"]},
-    {"name":"wait","status":"partial","sections":["inbound","backend","outbound","on-error"],"gateways":["classic","v2","consumption","self-hosted","workspace"],"expression_fields":[],"notes":"sequential all/any/self over send-request, cache-lookup-value, and choose; parallel wait remains open"}
+    {
+      "name": "base",
+      "status": "implemented",
+      "sections": [
+        "inbound",
+        "backend",
+        "outbound",
+        "on-error"
+      ],
+      "gateways": [
+        "classic",
+        "v2",
+        "consumption",
+        "self-hosted",
+        "workspace"
+      ],
+      "expression_fields": []
+    },
+    {
+      "name": "rate-limit",
+      "status": "partial",
+      "sections": [
+        "inbound",
+        "outbound"
+      ],
+      "gateways": [
+        "classic",
+        "v2",
+        "consumption",
+        "self-hosted",
+        "workspace"
+      ],
+      "expression_fields": [],
+      "notes": "counter keys are scoped to the subscription and skipped without a subscription key, per the reference; the response and variable attributes (retry-after value, remaining-calls, total-calls), the api/operation id attribute and quota's infinite renewal-period remain open"
+    },
+    {
+      "name": "rate-limit-by-key",
+      "status": "implemented",
+      "sections": [
+        "inbound",
+        "outbound"
+      ],
+      "gateways": [
+        "classic",
+        "v2",
+        "self-hosted",
+        "workspace"
+      ],
+      "expression_fields": [
+        "counter-key"
+      ]
+    },
+    {
+      "name": "quota",
+      "status": "partial",
+      "sections": [
+        "inbound",
+        "outbound"
+      ],
+      "gateways": [
+        "classic",
+        "v2",
+        "consumption",
+        "self-hosted",
+        "workspace"
+      ],
+      "expression_fields": [],
+      "notes": "counter keys are scoped to the subscription and skipped without a subscription key, per the reference; the response and variable attributes (retry-after value, remaining-calls, total-calls), the api/operation id attribute and quota's infinite renewal-period remain open"
+    },
+    {
+      "name": "quota-by-key",
+      "status": "implemented",
+      "sections": [
+        "inbound",
+        "outbound"
+      ],
+      "gateways": [
+        "classic",
+        "v2",
+        "self-hosted",
+        "workspace"
+      ],
+      "expression_fields": [
+        "counter-key"
+      ]
+    },
+    {
+      "name": "limit-concurrency",
+      "status": "implemented",
+      "sections": [
+        "inbound",
+        "backend",
+        "outbound",
+        "on-error"
+      ],
+      "gateways": [
+        "classic",
+        "v2",
+        "consumption",
+        "self-hosted",
+        "workspace"
+      ],
+      "expression_fields": [
+        "key"
+      ]
+    },
+    {
+      "name": "llm-token-limit",
+      "status": "partial",
+      "sections": [
+        "inbound"
+      ],
+      "gateways": [
+        "classic",
+        "v2",
+        "self-hosted",
+        "workspace"
+      ],
+      "expression_fields": [
+        "counter-key"
+      ]
+    },
+    {
+      "name": "azure-openai-token-limit",
+      "status": "partial",
+      "sections": [
+        "inbound"
+      ],
+      "gateways": [
+        "classic",
+        "v2",
+        "self-hosted",
+        "workspace"
+      ],
+      "expression_fields": [
+        "counter-key"
+      ]
+    },
+    {
+      "name": "check-header",
+      "status": "implemented",
+      "sections": [
+        "inbound"
+      ],
+      "gateways": [
+        "classic",
+        "v2",
+        "consumption",
+        "self-hosted",
+        "workspace"
+      ],
+      "expression_fields": [
+        "name",
+        "value",
+        "failed-check-error-message"
+      ]
+    },
+    {
+      "name": "get-authorization-context",
+      "status": "implemented",
+      "sections": [
+        "inbound"
+      ],
+      "gateways": [
+        "classic",
+        "v2",
+        "consumption"
+      ],
+      "expression_fields": []
+    },
+    {
+      "name": "ip-filter",
+      "status": "implemented",
+      "sections": [
+        "inbound"
+      ],
+      "gateways": [
+        "classic",
+        "v2",
+        "consumption",
+        "self-hosted",
+        "workspace"
+      ],
+      "expression_fields": []
+    },
+    {
+      "name": "validate-azure-ad-token",
+      "status": "partial",
+      "sections": [
+        "inbound"
+      ],
+      "gateways": [
+        "classic",
+        "v2",
+        "consumption",
+        "self-hosted",
+        "workspace"
+      ],
+      "expression_fields": [
+        "tenant-id",
+        "header-name",
+        "query-parameter-name",
+        "failed-validation-httpcode",
+        "failed-validation-error-message"
+      ],
+      "notes": "client-application-ids and required-claims are enforced from the JWT payload; non-empty token-value remains unsupported"
+    },
+    {
+      "name": "validate-jwt",
+      "status": "partial",
+      "sections": [
+        "inbound"
+      ],
+      "gateways": [
+        "classic",
+        "v2",
+        "consumption",
+        "self-hosted",
+        "workspace"
+      ],
+      "expression_fields": [],
+      "notes": "audiences, issuers, and required-claims are enforced from the JWT payload; openid-config remains unsupported"
+    },
+    {
+      "name": "validate-client-certificate",
+      "status": "implemented",
+      "sections": [
+        "inbound"
+      ],
+      "gateways": [
+        "classic",
+        "v2",
+        "consumption",
+        "self-hosted",
+        "workspace"
+      ],
+      "expression_fields": []
+    },
+    {
+      "name": "authentication-basic",
+      "status": "implemented",
+      "sections": [
+        "backend"
+      ],
+      "gateways": [
+        "classic",
+        "v2",
+        "consumption",
+        "self-hosted",
+        "workspace"
+      ],
+      "expression_fields": [
+        "username",
+        "password"
+      ]
+    },
+    {
+      "name": "authentication-certificate",
+      "status": "implemented",
+      "sections": [
+        "backend"
+      ],
+      "gateways": [
+        "classic",
+        "v2",
+        "consumption",
+        "self-hosted",
+        "workspace"
+      ],
+      "expression_fields": [
+        "certificate-id"
+      ]
+    },
+    {
+      "name": "authentication-managed-identity",
+      "status": "implemented",
+      "sections": [
+        "backend"
+      ],
+      "gateways": [
+        "classic",
+        "v2",
+        "consumption",
+        "self-hosted"
+      ],
+      "expression_fields": [
+        "resource"
+      ]
+    },
+    {
+      "name": "authentication-oauth2",
+      "status": "implemented",
+      "sections": [
+        "backend"
+      ],
+      "gateways": [
+        "classic",
+        "v2",
+        "consumption",
+        "self-hosted",
+        "workspace"
+      ],
+      "expression_fields": [
+        "client-id",
+        "client-secret",
+        "token-endpoint",
+        "resource"
+      ]
+    },
+    {
+      "name": "llm-content-safety",
+      "status": "external-adapter",
+      "sections": [
+        "inbound"
+      ],
+      "gateways": [
+        "classic",
+        "v2",
+        "consumption",
+        "self-hosted",
+        "workspace"
+      ],
+      "expression_fields": []
+    },
+    {
+      "name": "validate-content",
+      "status": "implemented",
+      "sections": [
+        "inbound",
+        "outbound"
+      ],
+      "gateways": [
+        "classic",
+        "v2",
+        "consumption",
+        "self-hosted",
+        "workspace"
+      ],
+      "expression_fields": []
+    },
+    {
+      "name": "validate-graphql-request",
+      "status": "unsupported",
+      "sections": [
+        "inbound"
+      ],
+      "gateways": [
+        "classic",
+        "v2",
+        "consumption",
+        "self-hosted"
+      ],
+      "expression_fields": []
+    },
+    {
+      "name": "validate-odata-request",
+      "status": "unsupported",
+      "sections": [
+        "inbound"
+      ],
+      "gateways": [
+        "classic",
+        "v2",
+        "consumption",
+        "self-hosted",
+        "workspace"
+      ],
+      "expression_fields": []
+    },
+    {
+      "name": "validate-parameters",
+      "status": "implemented",
+      "sections": [
+        "inbound"
+      ],
+      "gateways": [
+        "classic",
+        "v2",
+        "consumption",
+        "self-hosted",
+        "workspace"
+      ],
+      "expression_fields": []
+    },
+    {
+      "name": "validate-headers",
+      "status": "implemented",
+      "sections": [
+        "outbound"
+      ],
+      "gateways": [
+        "classic",
+        "v2",
+        "consumption",
+        "self-hosted",
+        "workspace"
+      ],
+      "expression_fields": []
+    },
+    {
+      "name": "validate-status-code",
+      "status": "implemented",
+      "sections": [
+        "outbound"
+      ],
+      "gateways": [
+        "classic",
+        "v2",
+        "consumption",
+        "self-hosted",
+        "workspace"
+      ],
+      "expression_fields": []
+    },
+    {
+      "name": "forward-request",
+      "status": "implemented",
+      "sections": [
+        "backend"
+      ],
+      "gateways": [
+        "classic",
+        "v2",
+        "consumption",
+        "self-hosted",
+        "workspace"
+      ],
+      "expression_fields": []
+    },
+    {
+      "name": "set-backend-service",
+      "status": "implemented",
+      "sections": [
+        "inbound",
+        "backend"
+      ],
+      "gateways": [
+        "classic",
+        "v2",
+        "consumption",
+        "self-hosted",
+        "workspace"
+      ],
+      "expression_fields": [
+        "base-url",
+        "backend-id"
+      ]
+    },
+    {
+      "name": "proxy",
+      "status": "unsupported",
+      "sections": [
+        "backend"
+      ],
+      "gateways": [
+        "classic",
+        "v2",
+        "consumption",
+        "self-hosted",
+        "workspace"
+      ],
+      "expression_fields": []
+    },
+    {
+      "name": "cache-lookup",
+      "status": "implemented",
+      "sections": [
+        "inbound"
+      ],
+      "gateways": [
+        "classic",
+        "v2",
+        "consumption",
+        "self-hosted",
+        "workspace"
+      ],
+      "expression_fields": []
+    },
+    {
+      "name": "cache-store",
+      "status": "implemented",
+      "sections": [
+        "outbound"
+      ],
+      "gateways": [
+        "classic",
+        "v2",
+        "consumption",
+        "self-hosted",
+        "workspace"
+      ],
+      "expression_fields": []
+    },
+    {
+      "name": "cache-lookup-value",
+      "status": "implemented",
+      "sections": [
+        "inbound",
+        "backend",
+        "outbound",
+        "on-error"
+      ],
+      "gateways": [
+        "classic",
+        "v2",
+        "consumption",
+        "self-hosted",
+        "workspace"
+      ],
+      "expression_fields": [
+        "key",
+        "variable-name"
+      ]
+    },
+    {
+      "name": "cache-store-value",
+      "status": "implemented",
+      "sections": [
+        "inbound",
+        "backend",
+        "outbound",
+        "on-error"
+      ],
+      "gateways": [
+        "classic",
+        "v2",
+        "consumption",
+        "self-hosted",
+        "workspace"
+      ],
+      "expression_fields": [
+        "key",
+        "value"
+      ]
+    },
+    {
+      "name": "cache-remove-value",
+      "status": "implemented",
+      "sections": [
+        "inbound",
+        "backend",
+        "outbound",
+        "on-error"
+      ],
+      "gateways": [
+        "classic",
+        "v2",
+        "consumption",
+        "self-hosted",
+        "workspace"
+      ],
+      "expression_fields": [
+        "key"
+      ]
+    },
+    {
+      "name": "llm-semantic-cache-lookup",
+      "status": "unsupported",
+      "sections": [
+        "inbound"
+      ],
+      "gateways": [
+        "classic",
+        "v2",
+        "consumption",
+        "self-hosted"
+      ],
+      "expression_fields": []
+    },
+    {
+      "name": "llm-semantic-cache-store",
+      "status": "unsupported",
+      "sections": [
+        "outbound"
+      ],
+      "gateways": [
+        "classic",
+        "v2",
+        "consumption",
+        "self-hosted"
+      ],
+      "expression_fields": []
+    },
+    {
+      "name": "set-method",
+      "status": "implemented",
+      "sections": [
+        "inbound"
+      ],
+      "gateways": [
+        "classic",
+        "v2",
+        "consumption",
+        "self-hosted",
+        "workspace"
+      ],
+      "expression_fields": []
+    },
+    {
+      "name": "set-status",
+      "status": "implemented",
+      "sections": [
+        "inbound",
+        "backend",
+        "outbound",
+        "on-error"
+      ],
+      "gateways": [
+        "classic",
+        "v2",
+        "consumption",
+        "self-hosted",
+        "workspace"
+      ],
+      "expression_fields": [
+        "code",
+        "reason"
+      ]
+    },
+    {
+      "name": "set-variable",
+      "status": "implemented",
+      "sections": [
+        "inbound",
+        "backend",
+        "outbound",
+        "on-error"
+      ],
+      "gateways": [
+        "classic",
+        "v2",
+        "consumption",
+        "self-hosted",
+        "workspace"
+      ],
+      "expression_fields": [
+        "value"
+      ]
+    },
+    {
+      "name": "set-body",
+      "status": "implemented",
+      "sections": [
+        "inbound",
+        "backend",
+        "outbound",
+        "on-error"
+      ],
+      "gateways": [
+        "classic",
+        "v2",
+        "consumption",
+        "self-hosted",
+        "workspace"
+      ],
+      "expression_fields": []
+    },
+    {
+      "name": "set-header",
+      "status": "implemented",
+      "sections": [
+        "inbound",
+        "backend",
+        "outbound",
+        "on-error"
+      ],
+      "gateways": [
+        "classic",
+        "v2",
+        "consumption",
+        "self-hosted",
+        "workspace"
+      ],
+      "expression_fields": [
+        "value"
+      ]
+    },
+    {
+      "name": "set-query-parameter",
+      "status": "implemented",
+      "sections": [
+        "inbound"
+      ],
+      "gateways": [
+        "classic",
+        "v2",
+        "consumption",
+        "self-hosted",
+        "workspace"
+      ],
+      "expression_fields": [
+        "value"
+      ]
+    },
+    {
+      "name": "rewrite-uri",
+      "status": "implemented",
+      "sections": [
+        "inbound"
+      ],
+      "gateways": [
+        "classic",
+        "v2",
+        "consumption",
+        "self-hosted",
+        "workspace"
+      ],
+      "expression_fields": [
+        "template"
+      ]
+    },
+    {
+      "name": "json-to-xml",
+      "status": "implemented",
+      "sections": [
+        "inbound",
+        "outbound"
+      ],
+      "gateways": [
+        "classic",
+        "v2",
+        "consumption",
+        "self-hosted",
+        "workspace"
+      ],
+      "expression_fields": [
+        "root-element-name"
+      ]
+    },
+    {
+      "name": "xml-to-json",
+      "status": "implemented",
+      "sections": [
+        "inbound",
+        "outbound"
+      ],
+      "gateways": [
+        "classic",
+        "v2",
+        "consumption",
+        "self-hosted",
+        "workspace"
+      ],
+      "expression_fields": []
+    },
+    {
+      "name": "find-and-replace",
+      "status": "implemented",
+      "sections": [
+        "inbound",
+        "outbound"
+      ],
+      "gateways": [
+        "classic",
+        "v2",
+        "consumption",
+        "self-hosted",
+        "workspace"
+      ],
+      "expression_fields": [
+        "from",
+        "to"
+      ]
+    },
+    {
+      "name": "redirect-content-urls",
+      "status": "implemented",
+      "sections": [
+        "outbound"
+      ],
+      "gateways": [
+        "classic",
+        "v2",
+        "consumption",
+        "self-hosted",
+        "workspace"
+      ],
+      "expression_fields": []
+    },
+    {
+      "name": "xsl-transform",
+      "status": "unsupported",
+      "sections": [
+        "inbound",
+        "outbound"
+      ],
+      "gateways": [
+        "classic",
+        "v2",
+        "consumption",
+        "self-hosted",
+        "workspace"
+      ],
+      "expression_fields": []
+    },
+    {
+      "name": "return-response",
+      "status": "implemented",
+      "sections": [
+        "inbound",
+        "backend",
+        "outbound",
+        "on-error"
+      ],
+      "gateways": [
+        "classic",
+        "v2",
+        "consumption",
+        "self-hosted",
+        "workspace"
+      ],
+      "expression_fields": []
+    },
+    {
+      "name": "mock-response",
+      "status": "partial",
+      "sections": [
+        "inbound",
+        "outbound"
+      ],
+      "gateways": [
+        "classic",
+        "v2",
+        "consumption",
+        "self-hosted",
+        "workspace"
+      ],
+      "expression_fields": [
+        "status-code",
+        "content-type"
+      ],
+      "notes": "example bodies are implemented; schema bodies remain unsupported"
+    },
+    {
+      "name": "cross-domain",
+      "status": "implemented",
+      "sections": [
+        "inbound"
+      ],
+      "gateways": [
+        "classic",
+        "v2",
+        "consumption",
+        "self-hosted",
+        "workspace"
+      ],
+      "expression_fields": []
+    },
+    {
+      "name": "cors",
+      "status": "implemented",
+      "sections": [
+        "inbound"
+      ],
+      "gateways": [
+        "classic",
+        "v2",
+        "consumption",
+        "self-hosted",
+        "workspace"
+      ],
+      "expression_fields": [
+        "allowed-origins",
+        "allowed-methods",
+        "allowed-headers",
+        "expose-headers",
+        "max-age"
+      ]
+    },
+    {
+      "name": "jsonp",
+      "status": "implemented",
+      "sections": [
+        "outbound"
+      ],
+      "gateways": [
+        "classic",
+        "v2",
+        "consumption",
+        "self-hosted",
+        "workspace"
+      ],
+      "expression_fields": [
+        "callback-parameter-name"
+      ]
+    },
+    {
+      "name": "send-request",
+      "status": "implemented",
+      "sections": [
+        "inbound",
+        "backend",
+        "outbound",
+        "on-error"
+      ],
+      "gateways": [
+        "classic",
+        "v2",
+        "consumption",
+        "self-hosted",
+        "workspace"
+      ],
+      "expression_fields": [
+        "set-url",
+        "set-method",
+        "set-header",
+        "set-body"
+      ]
+    },
+    {
+      "name": "send-one-way-request",
+      "status": "partial",
+      "sections": [
+        "inbound",
+        "backend",
+        "outbound",
+        "on-error"
+      ],
+      "gateways": [
+        "classic",
+        "v2",
+        "consumption",
+        "self-hosted",
+        "workspace"
+      ],
+      "expression_fields": [
+        "mode",
+        "timeout",
+        "set-url",
+        "set-method",
+        "set-header",
+        "set-body"
+      ],
+      "notes": "nested authentication children remain open"
+    },
+    {
+      "name": "log-to-eventhub",
+      "status": "external-adapter",
+      "sections": [
+        "inbound",
+        "backend",
+        "outbound",
+        "on-error"
+      ],
+      "gateways": [
+        "classic",
+        "v2",
+        "consumption",
+        "self-hosted",
+        "workspace"
+      ],
+      "expression_fields": []
+    },
+    {
+      "name": "send-service-bus-message",
+      "status": "external-adapter",
+      "sections": [
+        "inbound",
+        "backend",
+        "outbound"
+      ],
+      "gateways": [
+        "classic"
+      ],
+      "expression_fields": []
+    },
+    {
+      "name": "publish-to-dapr",
+      "status": "external-adapter",
+      "sections": [
+        "inbound",
+        "backend"
+      ],
+      "gateways": [
+        "self-hosted"
+      ],
+      "expression_fields": []
+    },
+    {
+      "name": "invoke-dapr-binding",
+      "status": "external-adapter",
+      "sections": [
+        "inbound",
+        "backend"
+      ],
+      "gateways": [
+        "self-hosted"
+      ],
+      "expression_fields": []
+    },
+    {
+      "name": "trace",
+      "status": "implemented",
+      "sections": [
+        "inbound",
+        "backend",
+        "outbound",
+        "on-error"
+      ],
+      "gateways": [
+        "classic",
+        "v2",
+        "consumption",
+        "self-hosted",
+        "workspace"
+      ],
+      "expression_fields": []
+    },
+    {
+      "name": "emit-metric",
+      "status": "external-adapter",
+      "sections": [
+        "inbound",
+        "backend",
+        "outbound",
+        "on-error"
+      ],
+      "gateways": [
+        "classic",
+        "v2",
+        "consumption",
+        "self-hosted",
+        "workspace"
+      ],
+      "expression_fields": []
+    },
+    {
+      "name": "llm-emit-token-metric",
+      "status": "partial",
+      "sections": [
+        "inbound",
+        "outbound"
+      ],
+      "gateways": [
+        "classic",
+        "v2",
+        "self-hosted",
+        "workspace"
+      ],
+      "expression_fields": [
+        "dimension/value"
+      ]
+    },
+    {
+      "name": "azure-openai-emit-token-metric",
+      "status": "partial",
+      "sections": [
+        "inbound",
+        "outbound"
+      ],
+      "gateways": [
+        "classic",
+        "v2",
+        "self-hosted",
+        "workspace"
+      ],
+      "expression_fields": [
+        "dimension/value"
+      ]
+    },
+    {
+      "name": "sql-data-source",
+      "status": "unsupported",
+      "sections": [
+        "inbound"
+      ],
+      "gateways": [
+        "classic",
+        "v2"
+      ],
+      "expression_fields": []
+    },
+    {
+      "name": "cosmosdb-data-source",
+      "status": "unsupported",
+      "sections": [
+        "inbound"
+      ],
+      "gateways": [
+        "classic",
+        "v2"
+      ],
+      "expression_fields": []
+    },
+    {
+      "name": "http-data-source",
+      "status": "unsupported",
+      "sections": [
+        "inbound"
+      ],
+      "gateways": [
+        "classic",
+        "v2",
+        "consumption"
+      ],
+      "expression_fields": []
+    },
+    {
+      "name": "publish-event",
+      "status": "unsupported",
+      "sections": [
+        "inbound"
+      ],
+      "gateways": [
+        "classic",
+        "v2",
+        "consumption"
+      ],
+      "expression_fields": []
+    },
+    {
+      "name": "choose",
+      "status": "implemented",
+      "sections": [
+        "inbound",
+        "backend",
+        "outbound",
+        "on-error"
+      ],
+      "gateways": [
+        "classic",
+        "v2",
+        "consumption",
+        "self-hosted",
+        "workspace"
+      ],
+      "expression_fields": [
+        "condition"
+      ]
+    },
+    {
+      "name": "include-fragment",
+      "status": "implemented",
+      "sections": [
+        "inbound",
+        "backend",
+        "outbound",
+        "on-error"
+      ],
+      "gateways": [
+        "classic",
+        "v2",
+        "consumption",
+        "self-hosted",
+        "workspace"
+      ],
+      "expression_fields": []
+    },
+    {
+      "name": "retry",
+      "status": "implemented",
+      "sections": [
+        "backend"
+      ],
+      "gateways": [
+        "classic",
+        "v2",
+        "consumption",
+        "self-hosted",
+        "workspace"
+      ],
+      "expression_fields": [
+        "condition"
+      ]
+    },
+    {
+      "name": "wait",
+      "status": "partial",
+      "sections": [
+        "inbound",
+        "backend",
+        "outbound",
+        "on-error"
+      ],
+      "gateways": [
+        "classic",
+        "v2",
+        "consumption",
+        "self-hosted",
+        "workspace"
+      ],
+      "expression_fields": [],
+      "notes": "sequential all/any/self over send-request, cache-lookup-value, and choose; parallel wait remains open"
+    }
   ]
 }

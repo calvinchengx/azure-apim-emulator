@@ -2214,3 +2214,48 @@ func TestBackendContextReportsTheChosenBackend(t *testing.T) {
 		t.Fatalf("unset backend = %q", body)
 	}
 }
+
+// TestKeylessRateLimitCountsPerSubscription drives the documented behaviour over
+// HTTP rather than through a stub limiter: one subscription exhausting its calls
+// must not throttle another, which a single shared counter would.
+func TestKeylessRateLimitCountsPerSubscription(t *testing.T) {
+	plan, err := policy.Compile(`<policies><inbound><rate-limit calls="1" renewal-period="60"/><return-response><set-status code="200"/></return-response></inbound></policies>`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	serviceID := "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.ApiManagement/service/emulator"
+	runtime := New("fallback", nil)
+	runtime.current.Store(&Snapshot{Services: map[string]*Service{
+		"emulator": {
+			Name: "emulator", ID: serviceID, Hostnames: map[string]bool{"emulator.example.test": true},
+			Subscriptions: map[string]model.Subscription{
+				"key-a": {ServiceID: serviceID, Name: "sub-a", PrimaryKey: "key-a"},
+				"key-b": {ServiceID: serviceID, Name: "sub-b", PrimaryKey: "key-b"},
+			},
+			Routes: []*Route{{
+				API:          model.API{Path: "api"},
+				Operations:   []model.Operation{{Method: "GET", URLTemplate: "/"}},
+				Plan:         plan,
+				AcceptedKeys: map[string]bool{"key-a": true, "key-b": true},
+			}},
+		},
+	}})
+	call := func(key string) int {
+		response := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodGet, "http://emulator.example.test/api", nil)
+		if key != "" {
+			request.Header.Set("Ocp-Apim-Subscription-Key", key)
+		}
+		runtime.ServeHTTP(response, request)
+		return response.Code
+	}
+	if code := call("key-a"); code != http.StatusOK {
+		t.Fatalf("first call for sub-a = %d", code)
+	}
+	if code := call("key-a"); code != http.StatusTooManyRequests {
+		t.Fatalf("second call for sub-a = %d, want 429", code)
+	}
+	if code := call("key-b"); code != http.StatusOK {
+		t.Fatalf("sub-b throttled by sub-a's traffic = %d", code)
+	}
+}
