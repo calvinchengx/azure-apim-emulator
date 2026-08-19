@@ -243,6 +243,13 @@ func (v Value) index(key Value) (Value, error) {
 	if host, ok := v.obj.(indexHost); v.kind == KindObject && ok {
 		return host.index(key)
 	}
+	// A null says so, rather than sharing the message a number gets. Indexing
+	// an absent variable is a common mistake, and "value is not indexable"
+	// sends the author looking for a type problem they do not have. Member
+	// access has always distinguished the two.
+	if v.IsNull() {
+		return Null(), fmt.Errorf("index on null")
+	}
 	return Null(), fmt.Errorf("value is not indexable")
 }
 
