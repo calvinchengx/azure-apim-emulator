@@ -329,14 +329,133 @@ func (p *parser) take() Token {
 	return token
 }
 
-type varDecl struct {
+// A policy block is a sequence of STATEMENTS, not a list of declarations with
+// one result. That distinction is what lets `if (x == null) { x = ...; }` work:
+// the branch falls through instead of having to produce a value, and the
+// assignment is visible to the statements after it, which is how Microsoft's own
+// policies write a fallback.
+type stmt interface {
+	// exec runs the statement. The second result reports whether it RETURNED,
+	// so a return inside a branch stops the whole block rather than only the
+	// branch.
+	exec(env *Env) (Value, bool, error)
+}
+
+// declStmt introduces a local, `var x = ...` or `string x = ...`.
+type declStmt struct {
 	name string
 	expr Expr
 }
 
+func (s declStmt) exec(env *Env) (Value, bool, error) {
+	value, err := s.expr.eval(env)
+	if err != nil {
+		return Null(), false, err
+	}
+	env.Bindings[s.name] = value
+	return Null(), false, nil
+}
+
+// assignStmt writes to a local that already exists. Assigning to a name nobody
+// declared is an ERROR rather than an implicit declaration: C# rejects it, and
+// accepting it here would turn a policy's typo into a silent new variable.
+type assignStmt struct {
+	name string
+	expr Expr
+}
+
+func (s assignStmt) exec(env *Env) (Value, bool, error) {
+	if _, declared := env.Bindings[s.name]; !declared {
+		return Null(), false, fmt.Errorf("%s is not declared", s.name)
+	}
+	value, err := s.expr.eval(env)
+	if err != nil {
+		return Null(), false, err
+	}
+	env.Bindings[s.name] = value
+	return Null(), false, nil
+}
+
+type returnStmt struct {
+	expr Expr
+}
+
+func (s returnStmt) exec(env *Env) (Value, bool, error) {
+	value, err := s.expr.eval(env)
+	if err != nil {
+		return Null(), false, err
+	}
+	return value, true, nil
+}
+
+// ifStmt runs one branch. An absent else is a branch that does nothing, which is
+// the form `if (x == null) { x = fallback; }` takes.
+type ifStmt struct {
+	cond Expr
+	then []stmt
+	els  []stmt
+}
+
+func (s ifStmt) exec(env *Env) (Value, bool, error) {
+	cond, err := s.cond.eval(env)
+	if err != nil {
+		return Null(), false, err
+	}
+	truth, ok := cond.AsBool()
+	if !ok {
+		return Null(), false, fmt.Errorf("an if condition must be true or false")
+	}
+	branch := s.els
+	if truth {
+		branch = s.then
+	}
+	return execScoped(branch, env)
+}
+
+// execScoped runs a branch's statements against the enclosing environment, so an
+// assignment inside it is visible after it, and then removes the locals the
+// branch DECLARED, so those are not. C# scopes a declaration to its block, and
+// letting one escape would make a policy work here that fails in a tenant.
+func execScoped(body []stmt, env *Env) (Value, bool, error) {
+	restore := map[string]*Value{}
+	for _, statement := range body {
+		decl, ok := statement.(declStmt)
+		if !ok {
+			continue
+		}
+		if previous, existed := env.Bindings[decl.name]; existed {
+			saved := previous
+			restore[decl.name] = &saved
+		} else {
+			restore[decl.name] = nil
+		}
+	}
+	value, returned, err := execStatements(body, env)
+	for name, previous := range restore {
+		if previous == nil {
+			delete(env.Bindings, name)
+			continue
+		}
+		env.Bindings[name] = *previous
+	}
+	return value, returned, err
+}
+
+func execStatements(body []stmt, env *Env) (Value, bool, error) {
+	for _, statement := range body {
+		value, returned, err := statement.exec(env)
+		if err != nil {
+			return Null(), false, err
+		}
+		if returned {
+			return value, true, nil
+		}
+	}
+	return Null(), false, nil
+}
+
 type blockExpr struct {
-	vars   []varDecl
-	result Expr
+	body []stmt
 }
 
 func (e blockExpr) eval(env *Env) (Value, error) {
@@ -346,61 +465,89 @@ func (e blockExpr) eval(env *Env) (Value, error) {
 			child.Bindings[name] = value
 		}
 	}
-	for _, decl := range e.vars {
-		value, err := decl.expr.eval(child)
-		if err != nil {
-			return Null(), err
-		}
-		child.Bindings[decl.name] = value
+	value, returned, err := execStatements(e.body, child)
+	if err != nil {
+		return Null(), err
 	}
-	return e.result.eval(child)
-}
-
-func wrapVars(vars []varDecl, expr Expr) Expr {
-	if len(vars) == 0 {
-		return expr
+	if !returned {
+		// Unreachable for a block the parser accepted, which requires a
+		// returning final statement. Kept because a block that fell off its end
+		// answering null would be worse than one that says so.
+		return Null(), fmt.Errorf("statement block did not return a value")
 	}
-	return blockExpr{vars: vars, result: expr}
+	return value, nil
 }
 
 func (p *parser) block() (Expr, error) {
-	return p.blockBody()
+	body, err := p.statements(TokenEOF)
+	if err != nil {
+		return nil, err
+	}
+	if !alwaysReturns(body) {
+		return nil, fmt.Errorf("statement block must return a value")
+	}
+	return blockExpr{body: body}, nil
 }
 
-func (p *parser) blockBody() (Expr, error) {
-	var vars []varDecl
-	for {
-		typed := p.typedLocal()
-		if p.peek().Kind != TokenVar && !typed {
-			break
+// alwaysReturns reports whether a statement list returns on every path, which is
+// what a policy block must do. An `if` counts only when BOTH branches do, so a
+// fall-through branch cannot be mistaken for one that produces a value.
+func alwaysReturns(body []stmt) bool {
+	for _, statement := range body {
+		switch typed := statement.(type) {
+		case returnStmt:
+			return true
+		case ifStmt:
+			if alwaysReturns(typed.then) && typed.els != nil && alwaysReturns(typed.els) {
+				return true
+			}
 		}
-		decl, err := p.varDecl(typed)
+	}
+	return false
+}
+
+// statements reads statements until the closing token.
+func (p *parser) statements(closer TokenKind) ([]stmt, error) {
+	var body []stmt
+	for p.peek().Kind != closer && p.peek().Kind != TokenEOF {
+		statement, err := p.statement()
 		if err != nil {
 			return nil, err
 		}
-		vars = append(vars, decl)
+		body = append(body, statement)
+	}
+	return body, nil
+}
+
+func (p *parser) statement() (stmt, error) {
+	if typed := p.typedLocal(); typed || p.peek().Kind == TokenVar {
+		return p.varDecl(typed)
 	}
 	switch p.peek().Kind {
 	case TokenIf:
-		expr, err := p.ifStmt()
-		if err != nil {
-			return nil, err
-		}
-		return wrapVars(vars, expr), nil
+		return p.ifStmt()
 	case TokenReturn:
-		expr, err := p.returnStmt()
+		return p.returnStmt()
+	}
+	// `name = value;` assigns to a local. `name value =` was already read as a
+	// typed declaration above, so this cannot be one.
+	if p.peek().Kind == TokenIdent && p.peekAt(1).Kind == TokenAssign {
+		name := p.take().Lexeme
+		p.take()
+		expr, err := p.ternary()
 		if err != nil {
 			return nil, err
 		}
-		return wrapVars(vars, expr), nil
-	case TokenEOF, TokenRBrace:
-		return nil, fmt.Errorf("statement block must return a value")
-	default:
-		return nil, fmt.Errorf("statement %q is not implemented", p.peek().Lexeme)
+		if p.peek().Kind != TokenSemicolon {
+			return nil, fmt.Errorf("expected ';'")
+		}
+		p.take()
+		return assignStmt{name: name, expr: expr}, nil
 	}
+	return nil, fmt.Errorf("statement %q is not implemented", p.peek().Lexeme)
 }
 
-func (p *parser) returnStmt() (Expr, error) {
+func (p *parser) returnStmt() (stmt, error) {
 	p.take()
 	if p.peek().Kind == TokenSemicolon || p.peek().Kind == TokenEOF || p.peek().Kind == TokenRBrace {
 		return nil, fmt.Errorf("return requires a value")
@@ -413,10 +560,10 @@ func (p *parser) returnStmt() (Expr, error) {
 		return nil, fmt.Errorf("expected ';'")
 	}
 	p.take()
-	return expr, nil
+	return returnStmt{expr: expr}, nil
 }
 
-func (p *parser) ifStmt() (Expr, error) {
+func (p *parser) ifStmt() (stmt, error) {
 	p.take()
 	if p.peek().Kind != TokenLParen {
 		return nil, fmt.Errorf("expected '('")
@@ -434,23 +581,35 @@ func (p *parser) ifStmt() (Expr, error) {
 	if err != nil {
 		return nil, err
 	}
+	// An `else` is OPTIONAL now. It used to be required because an if compiled
+	// to a ternary and both arms had to produce a value; a branch that only
+	// assigns produces nothing, and demanding an else would have rejected the
+	// form Microsoft's own policies use for a fallback.
 	if p.peek().Kind != TokenElse {
-		return nil, fmt.Errorf("if requires else")
+		return ifStmt{cond: cond, then: then}, nil
 	}
 	p.take()
+	// `else if` chains without needing braces around the inner if.
+	if p.peek().Kind == TokenIf {
+		nested, err := p.ifStmt()
+		if err != nil {
+			return nil, err
+		}
+		return ifStmt{cond: cond, then: then, els: []stmt{nested}}, nil
+	}
 	els, err := p.bracedBlock()
 	if err != nil {
 		return nil, err
 	}
-	return ternaryExpr{cond: cond, then: then, els: els}, nil
+	return ifStmt{cond: cond, then: then, els: els}, nil
 }
 
-func (p *parser) bracedBlock() (Expr, error) {
+func (p *parser) bracedBlock() ([]stmt, error) {
 	if p.peek().Kind != TokenLBrace {
 		return nil, fmt.Errorf("expected '{'")
 	}
 	p.take()
-	expr, err := p.blockBody()
+	body, err := p.statements(TokenRBrace)
 	if err != nil {
 		return nil, err
 	}
@@ -458,7 +617,7 @@ func (p *parser) bracedBlock() (Expr, error) {
 		return nil, fmt.Errorf("expected '}'")
 	}
 	p.take()
-	return expr, nil
+	return body, nil
 }
 
 // typedLocal reports whether a declaration with an EXPLICIT type starts here,
@@ -500,27 +659,27 @@ func (p *parser) typedLocal() bool {
 
 // varDecl parses a local declaration. The type, if one was written, has already
 // been consumed by typedLocal; `var` has not.
-func (p *parser) varDecl(typed bool) (varDecl, error) {
+func (p *parser) varDecl(typed bool) (stmt, error) {
 	if !typed {
 		p.take()
 	}
 	if p.peek().Kind != TokenIdent {
-		return varDecl{}, fmt.Errorf("var requires a name")
+		return nil, fmt.Errorf("var requires a name")
 	}
 	name := p.take().Lexeme
 	if p.peek().Kind != TokenAssign {
-		return varDecl{}, fmt.Errorf("var requires '='")
+		return nil, fmt.Errorf("var requires '='")
 	}
 	p.take()
 	expr, err := p.ternary()
 	if err != nil {
-		return varDecl{}, err
+		return nil, err
 	}
 	if p.peek().Kind != TokenSemicolon {
-		return varDecl{}, fmt.Errorf("expected ';'")
+		return nil, fmt.Errorf("expected ';'")
 	}
 	p.take()
-	return varDecl{name: name, expr: expr}, nil
+	return declStmt{name: name, expr: expr}, nil
 }
 
 func (p *parser) ternary() (Expr, error) {
