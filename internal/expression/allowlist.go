@@ -67,6 +67,7 @@ func Allowlist() []Member {
 		{Type: "Gateway", Name: "Id", Status: MemberBound},
 		{Type: "Gateway", Name: "InstanceId", Status: MemberBound},
 		{Type: "Gateway", Name: "IsManaged", Status: MemberBound},
+		{Type: "LastError", Name: "PolicyId", Status: MemberBound},
 		{Type: "LastError", Name: "Message", Status: MemberBound},
 		{Type: "LastError", Name: "Reason", Status: MemberBound},
 		{Type: "LastError", Name: "Scope", Status: MemberBound},
@@ -83,6 +84,7 @@ func Allowlist() []Member {
 		{Type: "Product", Name: "Name", Status: MemberBound},
 		{Type: "Product", Name: "State", Status: MemberBound},
 		{Type: "Product", Name: "SubscriptionRequired", Status: MemberBound},
+		{Type: "Product", Name: "SubscriptionLimit", Status: MemberBound},
 		{Type: "Product", Name: "SubscriptionsLimit", Status: MemberBound},
 		{Type: "Request", Name: "Body", Status: MemberBound},
 		{Type: "Request", Name: "Certificate", Status: MemberBound},
@@ -123,6 +125,7 @@ func Allowlist() []Member {
 		{Type: "Certificate", Name: "Subject", Status: MemberFramework},
 		{Type: "Certificate", Name: "Thumbprint", Status: MemberFramework},
 		{Type: "Certificate", Name: "Verify", Status: MemberFramework},
+		{Type: "Certificate", Name: "VerifyNoRevocation", Status: MemberBound},
 		{Type: "Url", Name: "Host", Status: MemberBound},
 		{Type: "Url", Name: "Path", Status: MemberBound},
 		{Type: "Url", Name: "Port", Status: MemberBound},
@@ -144,6 +147,10 @@ func Allowlist() []Member {
 		{Type: "Certificates", Name: "ContainsKey", Status: MemberBound},
 		{Type: "Certificates", Name: "Count", Status: MemberBound},
 		{Type: "Variables", Name: "ContainsKey", Status: MemberBound},
+		{Type: "Variables", Name: "GetValueOrDefault", Status: MemberBound},
+		{Type: "Query", Name: "GetValueOrDefault", Status: MemberBound},
+		{Type: "Query", Name: "ContainsKey", Status: MemberFramework},
+		{Type: "Query", Name: "Count", Status: MemberFramework},
 		{Type: "value", Name: "ToString", Status: MemberBound},
 		{Type: "string", Name: "Length", Status: MemberBound},
 	}
@@ -158,6 +165,11 @@ func frameworkTypeOf(typ string) (string, bool) {
 	switch typ {
 	case "Certificate":
 		return "System.Security.Cryptography.X509Certificates.X509Certificate2", true
+	case "Query":
+		// Microsoft types `IUrl.Query` as IReadOnlyDictionary<string, string[]>,
+		// so its dictionary members come from .NET rather than from an APIM
+		// document.
+		return "System.Collections.Generic.IReadOnlyDictionary<TKey, TValue>", true
 	}
 	return "", false
 }

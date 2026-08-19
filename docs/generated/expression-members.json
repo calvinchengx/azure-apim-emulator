@@ -170,7 +170,7 @@
     {
       "type": "Certificate",
       "name": "VerifyNoRevocation",
-      "status": "planned"
+      "status": "bound"
     },
     {
       "type": "Certificates",
@@ -340,7 +340,7 @@
     {
       "type": "LastError",
       "name": "PolicyId",
-      "status": "planned"
+      "status": "bound"
     },
     {
       "type": "LastError",
@@ -430,7 +430,7 @@
     {
       "type": "Product",
       "name": "SubscriptionLimit",
-      "status": "planned"
+      "status": "bound"
     },
     {
       "type": "Product",
@@ -444,8 +444,18 @@
     },
     {
       "type": "Query",
+      "name": "ContainsKey",
+      "status": "framework"
+    },
+    {
+      "type": "Query",
+      "name": "Count",
+      "status": "framework"
+    },
+    {
+      "type": "Query",
       "name": "GetValueOrDefault",
-      "status": "planned"
+      "status": "bound"
     },
     {
       "type": "Request",
@@ -665,7 +675,7 @@
     {
       "type": "Variables",
       "name": "GetValueOrDefault",
-      "status": "planned"
+      "status": "bound"
     },
     {
       "type": "Workspace",

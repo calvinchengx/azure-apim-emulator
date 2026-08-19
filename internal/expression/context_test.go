@@ -28,7 +28,9 @@ func TestRequestEnvBindings(t *testing.T) {
 		{"@(context.Request.Url.Path)", "/match"},
 		{"@(context.Request.Url.Host)", "api.example"},
 		{"@(context.Request.Url.Scheme)", "https"},
-		{"@(context.Request.Url.Query)", "x=1"},
+		{"@(context.Request.Url.Query.GetValueOrDefault('x', ''))", "1"},
+		{"@(context.Request.Url.Query['x'][0])", "1"},
+		{"@(context.Request.Url.Query.Count)", float64(1)},
 		{"@(context.Request.Url.QueryString)", "?x=1"},
 		{"@(context.Request.IpAddress)", "10.0.0.8"},
 		{"@(context.Request.Headers['X-Test'])", "yes"},
@@ -603,5 +605,80 @@ func TestDeploymentRejectsUnknownMembers(t *testing.T) {
 	env := Bind(Context{Deployment: &DeploymentContext{ServiceName: "emulator"}})
 	if _, err := EvalEnv("@(context.Deployment.Nonexistent)", env); err == nil {
 		t.Fatal("an unknown deployment member was accepted")
+	}
+}
+
+// The query string is a dictionary of NAME to VALUES, because a parameter may
+// legitimately repeat. Microsoft types it that way and this used to return the
+// raw text instead, which a member-name inventory cannot catch.
+func TestQueryStringIsADictionary(t *testing.T) {
+	request := httptest.NewRequest(http.MethodGet, "https://api.example/match?x=1&x=2&y=3", nil)
+	env := RequestEnv(request, nil)
+	for _, test := range []struct {
+		source string
+		want   any
+	}{
+		{"@(context.Request.Url.Query.Count)", float64(2)},
+		{"@(context.Request.Url.Query['x'].Count)", float64(2)},
+		{"@(context.Request.Url.Query['x'][1])", "2"},
+		{"@(context.Request.Url.Query.ContainsKey('y'))", true},
+		{"@(context.Request.Url.Query.ContainsKey('absent'))", false},
+		{"@(context.Request.Url.Query.GetValueOrDefault('x'))", "1"},
+		{"@(context.Request.Url.Query.GetValueOrDefault('absent', 'fallback'))", "fallback"},
+		// No fallback given reads as empty, matching the header dictionary.
+		{"@(context.Request.Url.Query.GetValueOrDefault('absent'))", ""},
+		// An absent parameter is null rather than an empty collection, so
+		// `== null` is a question a policy can ask.
+		{"@(context.Request.Url.Query['absent'] == null)", true},
+		// The raw text still reads through QueryString.
+		{"@(context.Request.Url.QueryString)", "?x=1&x=2&y=3"},
+	} {
+		got, err := EvalEnv(test.source, env)
+		if err != nil {
+			t.Fatalf("%s: %v", test.source, err)
+		}
+		if got.Interface() != test.want {
+			t.Fatalf("%s = %#v, want %#v", test.source, got.Interface(), test.want)
+		}
+	}
+	for _, test := range []struct{ source, contains string }{
+		{"@(context.Request.Url.Query.Nonexistent)", "unknown member"},
+		{"@(context.Request.Url.Query[0])", "indexed by parameter name"},
+		{"@(context.Request.Url.Query.ContainsKey(1))", "requires a query parameter name"},
+		{"@(context.Request.Url.Query.GetValueOrDefault())", "requires a query parameter name"},
+		{"@(context.Request.Body.As<string>('extra'))", "takes no arguments"},
+	} {
+		if _, err := EvalEnv(test.source, env); err == nil {
+			t.Fatalf("accepted %s", test.source)
+		} else if !strings.Contains(err.Error(), test.contains) {
+			t.Fatalf("%s failed with %q, want %q", test.source, err, test.contains)
+		}
+	}
+}
+
+// Variables answer GetValueOrDefault, which Microsoft documents and a policy
+// reaches for whenever a variable may not have been set.
+func TestVariablesGetValueOrDefault(t *testing.T) {
+	env := RequestEnv(httptest.NewRequest(http.MethodGet, "/", nil), map[string]string{"route": "blue"})
+	for _, test := range []struct {
+		source string
+		want   any
+	}{
+		{"@(context.Variables.GetValueOrDefault('route', 'green'))", "blue"},
+		{"@(context.Variables.GetValueOrDefault('missing', 'green'))", "green"},
+		// With no fallback an absent variable is null, not an empty string: the
+		// documented signature takes the default as the caller's choice.
+		{"@(context.Variables.GetValueOrDefault('missing') == null)", true},
+	} {
+		got, err := EvalEnv(test.source, env)
+		if err != nil {
+			t.Fatalf("%s: %v", test.source, err)
+		}
+		if got.Interface() != test.want {
+			t.Fatalf("%s = %#v, want %#v", test.source, got.Interface(), test.want)
+		}
+	}
+	if _, err := EvalEnv("@(context.Variables.GetValueOrDefault())", env); err == nil {
+		t.Fatal("GetValueOrDefault accepted no arguments")
 	}
 }
