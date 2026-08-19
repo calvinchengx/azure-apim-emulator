@@ -1,0 +1,726 @@
+{
+  "note": "Corpus expressions that EVALUATE, not merely parse. See policy-corpus.json for the parse measure.",
+  "parsed": 298,
+  "evaluated": 173,
+  "gaps": [
+    {
+      "reason": "member access on null",
+      "count": 31
+    },
+    {
+      "reason": "GetValueOrDefault is not a generic member",
+      "count": 22
+    },
+    {
+      "reason": "value is not indexable",
+      "count": 16
+    },
+    {
+      "reason": "unbound identifier Guid",
+      "count": 12
+    },
+    {
+      "reason": "unbound identifier DateTimeOffset",
+      "count": 7
+    },
+    {
+      "reason": "cannot cast 0 to int",
+      "count": 5
+    },
+    {
+      "reason": "position 1 is outside a collection of 1 parts",
+      "count": 5
+    },
+    {
+      "reason": "unbound identifier DateTime",
+      "count": 4
+    },
+    {
+      "reason": "unbound identifier System",
+      "count": 3
+    },
+    {
+      "reason": "value is not callable",
+      "count": 3
+    },
+    {
+      "reason": "\"\" is not an integer",
+      "count": 2
+    },
+    {
+      "reason": "unknown member Length",
+      "count": 2
+    },
+    {
+      "reason": "unknown member Select",
+      "count": 2
+    },
+    {
+      "reason": "unknown member ToString",
+      "count": 2
+    },
+    {
+      "reason": "cannot cast 0 to long",
+      "count": 1
+    },
+    {
+      "reason": "position 2 is outside a collection of 1 parts",
+      "count": 1
+    },
+    {
+      "reason": "unbound identifier Regex",
+      "count": 1
+    },
+    {
+      "reason": "unbound identifier SHA256",
+      "count": 1
+    },
+    {
+      "reason": "unbound identifier long",
+      "count": 1
+    },
+    {
+      "reason": "unknown member Encrypt",
+      "count": 1
+    },
+    {
+      "reason": "unknown member First",
+      "count": 1
+    },
+    {
+      "reason": "unknown member Path",
+      "count": 1
+    },
+    {
+      "reason": "unknown member SelectToken",
+      "count": 1
+    }
+  ],
+  "blockers": [
+    {
+      "digest": "28f4d91b0a37",
+      "reason": "\"\" is not an integer",
+      "excerpt": "@(int.Parse((string)context.Variables[\"SAPBearerTokenExpiry\"]))"
+    },
+    {
+      "digest": "59d13e07f2cc",
+      "reason": "\"\" is not an integer",
+      "excerpt": "@(int.Parse((string)context.Variables[\"SAPOAuthRefreshExpiry\"]) - (int)context.V"
+    },
+    {
+      "digest": "0a4b7e9c8f8e",
+      "reason": "GetValueOrDefault is not a generic member",
+      "excerpt": "@(context.Variables.GetValueOrDefault\u003cJArray\u003e(\"Request\")[0])"
+    },
+    {
+      "digest": "13c15cffdbfe",
+      "reason": "GetValueOrDefault is not a generic member",
+      "excerpt": "@(context.Variables.GetValueOrDefault\u003cJObject\u003e(\"Event\")[\"id\"].ToString())"
+    },
+    {
+      "digest": "16823c3e93f9",
+      "reason": "GetValueOrDefault is not a generic member",
+      "excerpt": "@(context.Variables.GetValueOrDefault\u003cJObject\u003e(\"Event\")[\"subject\"].ToString())"
+    },
+    {
+      "digest": "3256fce30ac8",
+      "reason": "GetValueOrDefault is not a generic member",
+      "excerpt": "@{ return context.Variables.GetValueOrDefault\u003cstring\u003e(\"originalXForwardedForValu"
+    },
+    {
+      "digest": "3a60b6edf798",
+      "reason": "GetValueOrDefault is not a generic member",
+      "excerpt": "@(context.Variables.GetValueOrDefault\u003cJObject\u003e(\"Event\")[\"dataVersion\"].ToString("
+    },
+    {
+      "digest": "50b7f8fcb2c7",
+      "reason": "GetValueOrDefault is not a generic member",
+      "excerpt": "@(context.Variables.GetValueOrDefault\u003cstring\u003e(\"original-error-source\"))"
+    },
+    {
+      "digest": "51518542b452",
+      "reason": "GetValueOrDefault is not a generic member",
+      "excerpt": "@(context.Variables.GetValueOrDefault\u003cint\u003e(\"urlId\") == 2)"
+    },
+    {
+      "digest": "5ba8bda48ca5",
+      "reason": "GetValueOrDefault is not a generic member",
+      "excerpt": "@(context.Variables.GetValueOrDefault\u003cint\u003e(\"urlId\") == 1)"
+    },
+    {
+      "digest": "699e11b15983",
+      "reason": "GetValueOrDefault is not a generic member",
+      "excerpt": "@(context.Variables.GetValueOrDefault\u003cstring\u003e(\"original-error-reason\"))"
+    },
+    {
+      "digest": "6d1c8a7d75c6",
+      "reason": "GetValueOrDefault is not a generic member",
+      "excerpt": "@(context.Variables.GetValueOrDefault\u003cJObject\u003e(\"Event\")[\"metadataVersion\"].ToStr"
+    },
+    {
+      "digest": "6fcd68b936ea",
+      "reason": "GetValueOrDefault is not a generic member",
+      "excerpt": "@(context.Variables.GetValueOrDefault\u003cstring\u003e(\"replay-url\"))"
+    },
+    {
+      "digest": "79c210ac54ce",
+      "reason": "GetValueOrDefault is not a generic member",
+      "excerpt": "@(context.Variables.GetValueOrDefault\u003cJObject\u003e(\"Event\")[\"eventType\"].ToString() "
+    },
+    {
+      "digest": "7b06b2beb323",
+      "reason": "GetValueOrDefault is not a generic member",
+      "excerpt": "@(context.Variables.GetValueOrDefault\u003cJArray\u003e(\"Request\").Count != 1)"
+    },
+    {
+      "digest": "8c0a97678a11",
+      "reason": "GetValueOrDefault is not a generic member",
+      "excerpt": "@(context.Variables.GetValueOrDefault\u003cbool\u003e(\"is-weu-down\"))"
+    },
+    {
+      "digest": "a39e59f09e4c",
+      "reason": "GetValueOrDefault is not a generic member",
+      "excerpt": "@(context.Variables.GetValueOrDefault\u003cstring\u003e(\"requestDateString\"))"
+    },
+    {
+      "digest": "a645bd051784",
+      "reason": "GetValueOrDefault is not a generic member",
+      "excerpt": "@{ var validationResponse = new JObject(new JProperty(\"validationResponse\",conte"
+    },
+    {
+      "digest": "b9de30a48d3a",
+      "reason": "GetValueOrDefault is not a generic member",
+      "excerpt": "@(context.Variables.GetValueOrDefault\u003cJObject\u003e(\"Event\")[\"eventTime\"].ToString())"
+    },
+    {
+      "digest": "cc2688a61f85",
+      "reason": "GetValueOrDefault is not a generic member",
+      "excerpt": "@(context.Variables.GetValueOrDefault\u003cJObject\u003e(\"Event\")[\"topic\"].ToString())"
+    },
+    {
+      "digest": "ea9abfcb3a3f",
+      "reason": "GetValueOrDefault is not a generic member",
+      "excerpt": "@(int.Parse(context.Variables.GetValueOrDefault\u003cstring\u003e(\"bodySize\"))\u003c256000)"
+    },
+    {
+      "digest": "ee98e3f90520",
+      "reason": "GetValueOrDefault is not a generic member",
+      "excerpt": "@(context.Variables.GetValueOrDefault\u003cbool\u003e(\"is-eus-down\"))"
+    },
+    {
+      "digest": "f43386960c5a",
+      "reason": "GetValueOrDefault is not a generic member",
+      "excerpt": "@(context.Variables.GetValueOrDefault\u003cJObject\u003e(\"Event\")[\"eventType\"].ToString())"
+    },
+    {
+      "digest": "fcbaa0e38026",
+      "reason": "GetValueOrDefault is not a generic member",
+      "excerpt": "@(context.Variables.GetValueOrDefault\u003cJObject\u003e(\"Event\")[\"data\"].ToString())"
+    },
+    {
+      "digest": "092e20f974cb",
+      "reason": "cannot cast 0 to int",
+      "excerpt": "@(new Random().Next(0,(int)context.Variables[\"iSAPBearerTokenExpiry\"]/3))"
+    },
+    {
+      "digest": "10c4108a3a41",
+      "reason": "cannot cast 0 to int",
+      "excerpt": "@((int)context.Variables[\"iSAPBearerTokenExpiry\"] - (int)context.Variables[\"Rand"
+    },
+    {
+      "digest": "c7249d5b084c",
+      "reason": "cannot cast 0 to int",
+      "excerpt": "@((int)context.Variables[\"tokenDurationSeconds\"])"
+    },
+    {
+      "digest": "e08a7eafe084",
+      "reason": "cannot cast 0 to int",
+      "excerpt": "@((int)context.Variables[\"iSAPBearerTokenExpiry\"] - (int)context.Variables[\"Rand"
+    },
+    {
+      "digest": "fa5941171d55",
+      "reason": "cannot cast 0 to int",
+      "excerpt": "@((int)context.Variables[\"refreshTime\"])"
+    },
+    {
+      "digest": "a3c4718f8032",
+      "reason": "cannot cast 0 to long",
+      "excerpt": "@($\"{(string)context.Variables[\"cacheKey\"]}.{(string)context.Variables[\"ivTokens"
+    },
+    {
+      "digest": "03aa58ee3b61",
+      "reason": "member access on null",
+      "excerpt": "@(((IResponse)context.Variables[\"blobdata\"]).StatusCode == 404)"
+    },
+    {
+      "digest": "0772113bedea",
+      "reason": "member access on null",
+      "excerpt": "@(((IResponse)context.Variables[\"keyvaultsecret\"]).Body.As\u003cstring\u003e())"
+    },
+    {
+      "digest": "12cc56487bbe",
+      "reason": "member access on null",
+      "excerpt": "@(((IResponse)context.Variables[\"blobdata\"]).StatusCode == 403)"
+    },
+    {
+      "digest": "13e8895ad3db",
+      "reason": "member access on null",
+      "excerpt": "@(((IResponse)context.Variables[\"keyVaultCertResponse\"]).Body.As\u003cJObject\u003e ()[\"va"
+    },
+    {
+      "digest": "1b8b2b1a6a4c",
+      "reason": "member access on null",
+      "excerpt": "@(((Jwt)context.Variables[\"idTokenJwt\"]).Claims[\"preferred_username\"][0])"
+    },
+    {
+      "digest": "24879aedaf48",
+      "reason": "member access on null",
+      "excerpt": "@(((IResponse)context.Variables[\"tokens\"]).Body.As\u003cJObject\u003e())"
+    },
+    {
+      "digest": "336b306bdc35",
+      "reason": "member access on null",
+      "excerpt": "@(((IResponse)context.Variables[\"SAPCSRFToken\"]).StatusCode == 200)"
+    },
+    {
+      "digest": "38128421da43",
+      "reason": "member access on null",
+      "excerpt": "@(((IResponse)context.Variables[\"var\"]).StatusCode == 202)"
+    },
+    {
+      "digest": "3998e3a68cce",
+      "reason": "member access on null",
+      "excerpt": "@($\"{((IResponse)context.Variables[\"blobdata\"]).Body.As\u003cJObject\u003e() }\")"
+    },
+    {
+      "digest": "39c97b432c7a",
+      "reason": "member access on null",
+      "excerpt": "@(context.Request.Body.AsFormUrlEncodedContent()[\"state\"].Single())"
+    },
+    {
+      "digest": "45426a875338",
+      "reason": "member access on null",
+      "excerpt": "@(((IResponse)context.Variables[\"result\"]).Headers.GetValueOrDefault(\"x-ms-meta-"
+    },
+    {
+      "digest": "4d8f75042053",
+      "reason": "member access on null",
+      "excerpt": "@{ string rawcookie = ((IResponse)context.Variables[\"SAPCSRFToken\"]).Headers.Get"
+    },
+    {
+      "digest": "5894023b2437",
+      "reason": "member access on null",
+      "excerpt": "@(((IResponse)context.Variables[\"fetchSAPBearer\"]).Body.As\u003cJObject\u003e())"
+    },
+    {
+      "digest": "6c01636b7253",
+      "reason": "member access on null",
+      "excerpt": "@(((IResponse)context.Variables[\"keyVaultCertResponse\"]).Body.As\u003cJObject\u003e()[\"val"
+    },
+    {
+      "digest": "7138c3a3160e",
+      "reason": "member access on null",
+      "excerpt": "@(((IResponse)context.Variables[\"userdelegationkey\"]).StatusCode == 403)"
+    },
+    {
+      "digest": "73ab504f05cf",
+      "reason": "member access on null",
+      "excerpt": "@(((IResponse)context.Variables[\"result\"]).Headers.GetValueOrDefault(\"x-ms-meta-"
+    },
+    {
+      "digest": "8b899e869d40",
+      "reason": "member access on null",
+      "excerpt": "@(((IResponse)context.Variables[\"tokens\"]).StatusCode != 200)"
+    },
+    {
+      "digest": "9fb54ea195ad",
+      "reason": "member access on null",
+      "excerpt": "@{ var jwt = (Jwt)context.Variables[\"valid-jwt\"]; var permissions = jwt.Claims[\""
+    },
+    {
+      "digest": "a2013e0b53f8",
+      "reason": "member access on null",
+      "excerpt": "@(((IResponse)context.Variables[\"tokenResponse\"]).Body.As\u003cJObject\u003e()[\"access_tok"
+    },
+    {
+      "digest": "a739e238b040",
+      "reason": "member access on null",
+      "excerpt": "@(((JObject)context.Variables[\"finalResponseData\"]).SelectToken(\"reason\").ToStri"
+    },
+    {
+      "digest": "aa54326a40a2",
+      "reason": "member access on null",
+      "excerpt": "@(((JObject)context.Variables[\"finalResponseData\"]).SelectToken(\"body\").ToString"
+    },
+    {
+      "digest": "ad3020033e11",
+      "reason": "member access on null",
+      "excerpt": "@(((IResponse)context.Variables[\"response\"]).Body.As\u003cJObject\u003e()[\"status\"].ToStri"
+    },
+    {
+      "digest": "b9de932cd461",
+      "reason": "member access on null",
+      "excerpt": "@{ string rawcookie = ((IResponse)context.Variables[\"SAPCSRFToken\"]).Headers.Get"
+    },
+    {
+      "digest": "c08870a029e1",
+      "reason": "member access on null",
+      "excerpt": "@(((Jwt)context.Variables[\"idTokenJwt\"]).Claims.ContainsKey(\"preferred_username\""
+    },
+    {
+      "digest": "ca4f443c55fe",
+      "reason": "member access on null",
+      "excerpt": "@((int)((JObject)context.Variables[\"finalResponseData\"]).SelectToken(\"status\"))"
+    },
+    {
+      "digest": "cf59afe66611",
+      "reason": "member access on null",
+      "excerpt": "@((((string)context.Variables[\"idToken\"]).AsJwt()).Claims.GetValueOrDefault(\"non"
+    },
+    {
+      "digest": "cf6cc0904602",
+      "reason": "member access on null",
+      "excerpt": "@(((IResponse)context.Variables[\"accessTokenResult\"]).Body.As\u003cJObject\u003e())"
+    },
+    {
+      "digest": "d4b095cc2212",
+      "reason": "member access on null",
+      "excerpt": "@((string)((IResponse)context.Variables[\"fetchSAMLAssertion\"]).Body.As\u003cJObject\u003e("
+    },
+    {
+      "digest": "f0dc9d5ce195",
+      "reason": "member access on null",
+      "excerpt": "@(((IResponse)context.Variables[\"fetchrefreshedSAPBearer\"]).Body.As\u003cJObject\u003e())"
+    },
+    {
+      "digest": "f83730a49a1b",
+      "reason": "member access on null",
+      "excerpt": "@(((IResponse)context.Variables[\"SAPCSRFToken\"]).Headers.GetValueOrDefault(\"x-cs"
+    },
+    {
+      "digest": "f8e6cce940b9",
+      "reason": "member access on null",
+      "excerpt": "@(((Jwt)context.Variables[\"idTokenJwt\"]).Claims[\"name\"][0])"
+    },
+    {
+      "digest": "1fa97ae680b1",
+      "reason": "position 1 is outside a collection of 1 parts",
+      "excerpt": "@(((string)context.Variables[\"incomingFullSessionCookie\"]).Split('.')[1])"
+    },
+    {
+      "digest": "2932ba25e9db",
+      "reason": "position 1 is outside a collection of 1 parts",
+      "excerpt": "@(((string)context.Variables[\"encryptedIncomingFullSessionCookie\"]).Split('.')[1"
+    },
+    {
+      "digest": "700f17b4a52d",
+      "reason": "position 1 is outside a collection of 1 parts",
+      "excerpt": "@{ var tokenParts = ((string)context.Variables[\"encryptedIdToken\"]).Split('.'); "
+    },
+    {
+      "digest": "dadd8284a5a3",
+      "reason": "position 1 is outside a collection of 1 parts",
+      "excerpt": "@{ var tokenParts = ((string)context.Variables[\"encryptedRefreshToken\"]).Split('"
+    },
+    {
+      "digest": "e19d304b5381",
+      "reason": "position 1 is outside a collection of 1 parts",
+      "excerpt": "@{ var tokenParts = ((string)context.Variables[\"encryptedAccessToken\"]).Split('."
+    },
+    {
+      "digest": "50903a640f01",
+      "reason": "position 2 is outside a collection of 1 parts",
+      "excerpt": "@(((string)context.Variables[\"encryptedIncomingFullSessionCookie\"]).Split('.')[2"
+    },
+    {
+      "digest": "20494cd749aa",
+      "reason": "unbound identifier DateTime",
+      "excerpt": "@{ return \"\u003cKeyInfo\u003e\" + \"\u003cStart\u003e\" + DateTime.UtcNow.ToString(\"u\").Replace(\" \", \""
+    },
+    {
+      "digest": "557142df1374",
+      "reason": "unbound identifier DateTime",
+      "excerpt": "@(DateTime.UtcNow.ToString(\"R\"))"
+    },
+    {
+      "digest": "669eeff80d2b",
+      "reason": "unbound identifier DateTime",
+      "excerpt": "@(DateTime.UtcNow.AddDays(1).ToString(\"yyyy-MM-ddTHH:mm:ssZ\"))"
+    },
+    {
+      "digest": "7d8f327d1535",
+      "reason": "unbound identifier DateTime",
+      "excerpt": "@(DateTime.UtcNow.ToString(\"r\"))"
+    },
+    {
+      "digest": "1e2908573f77",
+      "reason": "unbound identifier DateTimeOffset",
+      "excerpt": "@(DateTimeOffset.UtcNow.AddSeconds((int)context.Variables[\"refreshTime\"] / 2).To"
+    },
+    {
+      "digest": "622981360b25",
+      "reason": "unbound identifier DateTimeOffset",
+      "excerpt": "@(DateTimeOffset.UtcNow.AddSeconds(1).ToUnixTimeMilliseconds())"
+    },
+    {
+      "digest": "7ad8cea7335c",
+      "reason": "unbound identifier DateTimeOffset",
+      "excerpt": "@(DateTimeOffset.UtcNow \u003e DateTimeOffset.FromUnixTimeMilliseconds((long)context."
+    },
+    {
+      "digest": "90ff368ac93b",
+      "reason": "unbound identifier DateTimeOffset",
+      "excerpt": "@($\"1={(string)context.Variables[\"encryptedCookie\"]}; SameSite=Lax; secure; path"
+    },
+    {
+      "digest": "97a02000cc7f",
+      "reason": "unbound identifier DateTimeOffset",
+      "excerpt": "@($\"1-{(string)context.Variables[\"state\"]}={(string)context.Variables[\"cookie\"]}"
+    },
+    {
+      "digest": "9d850b609a82",
+      "reason": "unbound identifier DateTimeOffset",
+      "excerpt": "@(DateTimeOffset.UtcNow \u003e DateTimeOffset.FromUnixTimeSeconds((long)context.Varia"
+    },
+    {
+      "digest": "aa5389077db6",
+      "reason": "unbound identifier DateTimeOffset",
+      "excerpt": "@($\"1={(string)context.Variables[\"encryptedCookie\"]}; SameSite=Lax; secure; path"
+    },
+    {
+      "digest": "0384f098dcb9",
+      "reason": "unbound identifier Guid",
+      "excerpt": "@(Guid.NewGuid().ToString())"
+    },
+    {
+      "digest": "19fd742b3f35",
+      "reason": "unbound identifier Guid",
+      "excerpt": "@{ return Guid.NewGuid().ToString(); }"
+    },
+    {
+      "digest": "27420f9da0f6",
+      "reason": "unbound identifier Guid",
+      "excerpt": "@{return Guid.NewGuid().ToString();}"
+    },
+    {
+      "digest": "4fa908604352",
+      "reason": "unbound identifier Guid",
+      "excerpt": "@{ var token = Encoding.UTF8.GetBytes((string)context.Variables[\"idtoken\"]); var"
+    },
+    {
+      "digest": "570428e3f583",
+      "reason": "unbound identifier Guid",
+      "excerpt": "@{ var cookie = Encoding.UTF8.GetBytes((string)context.Variables[\"cookie-prefix\""
+    },
+    {
+      "digest": "9d69f02b4bda",
+      "reason": "unbound identifier Guid",
+      "excerpt": "@{ var token = Encoding.UTF8.GetBytes((string)context.Variables[\"idtoken\"]); var"
+    },
+    {
+      "digest": "a02b4d1e3ab2",
+      "reason": "unbound identifier Guid",
+      "excerpt": "@{ var token = Encoding.UTF8.GetBytes((string)context.Variables[\"refreshToken\"])"
+    },
+    {
+      "digest": "a6bb2d06f629",
+      "reason": "unbound identifier Guid",
+      "excerpt": "@{ var cookie = Encoding.UTF8.GetBytes((string)context.Variables[\"cookie-prefix\""
+    },
+    {
+      "digest": "b1f6141bbf27",
+      "reason": "unbound identifier Guid",
+      "excerpt": "@(Guid.NewGuid().ToString() + Guid.NewGuid().ToString())"
+    },
+    {
+      "digest": "c59d4218421b",
+      "reason": "unbound identifier Guid",
+      "excerpt": "@{ var token = Encoding.UTF8.GetBytes((string)context.Variables[\"accessToken\"]);"
+    },
+    {
+      "digest": "d99e6d0a939d",
+      "reason": "unbound identifier Guid",
+      "excerpt": "@{ var token = Encoding.UTF8.GetBytes((string)context.Variables[\"accessToken\"]);"
+    },
+    {
+      "digest": "e14e6577dc08",
+      "reason": "unbound identifier Guid",
+      "excerpt": "@{ var token = Encoding.UTF8.GetBytes((string)context.Variables[\"refreshToken\"])"
+    },
+    {
+      "digest": "ed1e100de87f",
+      "reason": "unbound identifier Regex",
+      "excerpt": "@{ var header = context.Response.Headers.GetValueOrDefault(\"Cache-Control\",\"\"); "
+    },
+    {
+      "digest": "066d8c514c65",
+      "reason": "unbound identifier SHA256",
+      "excerpt": "@(Convert.ToBase64String(SHA256.Create().ComputeHash(Encoding.UTF8.GetBytes((str"
+    },
+    {
+      "digest": "5eeddeb0894c",
+      "reason": "unbound identifier System",
+      "excerpt": "@(context.Deployment.Region.Equals(\"east us\", System.StringComparison.InvariantC"
+    },
+    {
+      "digest": "85e2cc610c4d",
+      "reason": "unbound identifier System",
+      "excerpt": "@(context.Deployment.Region.Equals(\"west europe\", System.StringComparison.Invari"
+    },
+    {
+      "digest": "c83f068357aa",
+      "reason": "unbound identifier System",
+      "excerpt": "@{ return string.Format(\"?sv={0}\u0026sp={1}\u0026se={2}\u0026tn={3}\u0026sig={4}\", (string)context."
+    },
+    {
+      "digest": "9e6ecc57d31e",
+      "reason": "unbound identifier long",
+      "excerpt": "@(long.Parse(((string)context.Variables[\"incomingFullSessionCookie\"]).Split('.')"
+    },
+    {
+      "digest": "012c5e916498",
+      "reason": "unknown member Encrypt",
+      "excerpt": "@{ string goober = (string)context.Request.MatchedParameters[\"Goober\"]; byte[] g"
+    },
+    {
+      "digest": "ae099e6898a4",
+      "reason": "unknown member First",
+      "excerpt": "@(context.Request.Headers.ContainsKey(\"cookie\") ? context.Request.Headers[\"cooki"
+    },
+    {
+      "digest": "49bd20b4f225",
+      "reason": "unknown member Length",
+      "excerpt": "@(((string)context.Variables[\"encryptedIncomingFullSessionCookie\"]).Split('.').L"
+    },
+    {
+      "digest": "6b6276374b38",
+      "reason": "unknown member Length",
+      "excerpt": "@(((string)context.Variables[\"incomingFullSessionCookie\"]).Split('.').Length != "
+    },
+    {
+      "digest": "6d792be246c5",
+      "reason": "unknown member Path",
+      "excerpt": "@(context.LastError.Path)"
+    },
+    {
+      "digest": "3fb11089217b",
+      "reason": "unknown member Select",
+      "excerpt": "@(context.Request.Headers.ContainsKey(\"cookie\") ? context.Request.Headers.GetVal"
+    },
+    {
+      "digest": "5312454a1061",
+      "reason": "unknown member Select",
+      "excerpt": "@(context.Request.Headers.GetValueOrDefault(\"cookie\", \"\").Split(';').Select(x =\u003e"
+    },
+    {
+      "digest": "a57620f625e1",
+      "reason": "unknown member SelectToken",
+      "excerpt": "@{ byte[] inBytes = Convert.FromBase64String(context.Request.Body.As\u003cJObject\u003e()."
+    },
+    {
+      "digest": "112028fd322d",
+      "reason": "unknown member ToString",
+      "excerpt": "@($\"/oauth/signin?redirect={Uri.EscapeDataString(context.Request.OriginalUrl.ToS"
+    },
+    {
+      "digest": "bd5475548965",
+      "reason": "unknown member ToString",
+      "excerpt": "@(context.Request.Url.ToString())"
+    },
+    {
+      "digest": "a95d6d8f6ea5",
+      "reason": "value is not callable",
+      "excerpt": "@(\"Bearer \" + (String)((IResponse)context.Variables[\"bearerToken\"]).Body.As\u003cJObj"
+    },
+    {
+      "digest": "c0ace6e6ca7c",
+      "reason": "value is not callable",
+      "excerpt": "@((String)((IResponse)context.Variables[\"bearerToken\"]).Body.As\u003cJObject\u003e ()[\"acc"
+    },
+    {
+      "digest": "cc60892eb0fd",
+      "reason": "value is not callable",
+      "excerpt": "@{ return \"https://1.blob.core.windows.net/\" + (string)context.Request.MatchedPa"
+    },
+    {
+      "digest": "107488cd6c16",
+      "reason": "value is not indexable",
+      "excerpt": "@((bool)((JObject)context.Variables[\"jsonResponse\"])[\"conditionValue\"])"
+    },
+    {
+      "digest": "1843e853bd8e",
+      "reason": "value is not indexable",
+      "excerpt": "@(((JObject)context.Variables[\"SAPResponseObject\"])[\"expires_in\"].ToString())"
+    },
+    {
+      "digest": "1b4af1e62891",
+      "reason": "value is not indexable",
+      "excerpt": "@(context.Request.Headers[\"Content-Length\"][0])"
+    },
+    {
+      "digest": "3ee9b31437e8",
+      "reason": "value is not indexable",
+      "excerpt": "@(((JObject)context.Variables[\"SAPRefreshedResponseObject\"])[\"refresh_token\"].To"
+    },
+    {
+      "digest": "49c5e48f577a",
+      "reason": "value is not indexable",
+      "excerpt": "@((int)((JObject)context.Variables[\"accessToken\"])[\"expires_in\"])"
+    },
+    {
+      "digest": "59bbebec4a34",
+      "reason": "value is not indexable",
+      "excerpt": "@((int)((JObject)context.Variables[\"tokenResponse\"])[\"expires_in\"])"
+    },
+    {
+      "digest": "59ea0cb981b9",
+      "reason": "value is not indexable",
+      "excerpt": "@(context.Response.Headers[\"location\"][0])"
+    },
+    {
+      "digest": "6fcfec3b0a8f",
+      "reason": "value is not indexable",
+      "excerpt": "@(((JObject)context.Variables[\"SAPResponseObject\"])[\"refresh_token\"].ToString())"
+    },
+    {
+      "digest": "74d40b88d2a6",
+      "reason": "value is not indexable",
+      "excerpt": "@((string)((JObject)context.Variables[\"tokenResponse\"] )[\"id_token\"])"
+    },
+    {
+      "digest": "99bf0400f00d",
+      "reason": "value is not indexable",
+      "excerpt": "@( ((JObject)context.Variables[\"tokenResponse\"])[\"id_token\"].ToString())"
+    },
+    {
+      "digest": "bb75af8bcc74",
+      "reason": "value is not indexable",
+      "excerpt": "@((string)((JObject)context.Variables[\"accessToken\"])[\"access_token\"])"
+    },
+    {
+      "digest": "bd4ca6d98417",
+      "reason": "value is not indexable",
+      "excerpt": "@( ((JObject)context.Variables[\"tokenResponse\"])[\"access_token\"].ToString())"
+    },
+    {
+      "digest": "c4d6d7210ff9",
+      "reason": "value is not indexable",
+      "excerpt": "@(((JObject)context.Variables[\"SAPRefreshedResponseObject\"])[\"access_token\"].ToS"
+    },
+    {
+      "digest": "d5d842afaaf8",
+      "reason": "value is not indexable",
+      "excerpt": "@( ((JObject)context.Variables[\"tokenResponse\"])[\"refresh_token\"].ToString())"
+    },
+    {
+      "digest": "f7d0b666cef4",
+      "reason": "value is not indexable",
+      "excerpt": "@(((JObject)context.Variables[\"SAPRefreshedResponseObject\"])[\"expires_in\"].ToStr"
+    },
+    {
+      "digest": "fec70c314430",
+      "reason": "value is not indexable",
+      "excerpt": "@(((JObject)context.Variables[\"SAPResponseObject\"])[\"access_token\"].ToString())"
+    }
+  ]
+}
