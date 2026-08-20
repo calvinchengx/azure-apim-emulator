@@ -111,6 +111,17 @@ type Action struct {
 	PerSubscription bool
 	// The rate-limit pair reports its own counters back to the caller. Body
 	// carries retry-after-header-name; these carry the rest.
+	// IncrementCondition and IncrementCount are the by-key family's control over
+	// WHETHER and BY HOW MUCH a request counts. Empty means count every request
+	// by one.
+	IncrementCondition string
+	IncrementCount     string
+	// IncrementDeferred is set when either is an expression. Microsoft postpones
+	// evaluation and the increment "to end of outbound pipeline to allow for
+	// policy expressions based on the response", and says the limit-exceeded
+	// check then happens on the next call instead, so a 429 arrives one call
+	// later than it otherwise would.
+	IncrementDeferred bool
 	// LimitFixedWindow marks the quota family, which counts in a fixed window
 	// anchored at a point in time rather than one sliding with each call. A
 	// zero LimitPeriod on one of these is an infinite window, not an invalid one.
@@ -268,21 +279,27 @@ type State struct {
 	ValueCacheGet           func(string) (string, bool)
 	ValueCacheSet           func(string, string, time.Duration)
 	ValueCacheRemove        func(string)
-	RateLimit               func(string, int, time.Duration) LimitDecision
-	BandwidthLimit          func(string, int64, int64, time.Duration) LimitDecision
-	AcquireConcurrency      func(string, int) func()
-	ConcurrencyReleases     []func()
-	CacheGet                func(string) (int, http.Header, string, bool)
-	CacheSet                func(string, int, http.Header, string, time.Duration)
-	CacheKey                string
-	LastError               error
-	Api                     *expr.ApiContext
-	Operation               *expr.OperationContext
-	Product                 *expr.ProductContext
-	Subscription            *expr.SubscriptionContext
-	User                    *expr.UserContext
-	Deployment              *expr.DeploymentContext
-	GraphQL                 *expr.GraphQLContext
+	// RateLimit checks a counter and adds `increment` to it in one step. An
+	// increment of 0 checks without counting, which is what a postponed
+	// increment-condition needs on the way in.
+	RateLimit           func(key string, calls int, period time.Duration, increment int) LimitDecision
+	BandwidthLimit      func(string, int64, int64, time.Duration) LimitDecision
+	AcquireConcurrency  func(string, int) func()
+	ConcurrencyReleases []func()
+	// PendingIncrements are counter increments the by-key limits postponed to
+	// the end of the pipeline. RunPendingIncrements applies them.
+	PendingIncrements []func()
+	CacheGet          func(string) (int, http.Header, string, bool)
+	CacheSet          func(string, int, http.Header, string, time.Duration)
+	CacheKey          string
+	LastError         error
+	Api               *expr.ApiContext
+	Operation         *expr.OperationContext
+	Product           *expr.ProductContext
+	Subscription      *expr.SubscriptionContext
+	User              *expr.UserContext
+	Deployment        *expr.DeploymentContext
+	GraphQL           *expr.GraphQLContext
 	// TokenLimit reports the tokens still available to a counter key and
 	// whether this request may proceed. Supplied by the gateway, which owns
 	// the windows. The estimate is what an `estimate-prompt-tokens="true"`
@@ -1156,6 +1173,24 @@ func compileLimit(item node) (Action, bool, error) {
 	if period == 0 && !fixedWindow {
 		return unsupported(item.Name), true, nil
 	}
+	incrementCondition, err := compileValue(item.Attrs["increment-condition"])
+	if err != nil {
+		return Action{}, false, err
+	}
+	incrementCount, err := compileValue(item.Attrs["increment-count"])
+	if err != nil {
+		return Action{}, false, err
+	}
+	if incrementCount != "" && !expression(incrementCount) {
+		if parsed, convErr := strconv.Atoi(strings.TrimSpace(incrementCount)); convErr != nil || parsed < 0 {
+			return Action{}, false, fmt.Errorf("invalid %s increment-count", item.Name)
+		}
+	}
+	if incrementCondition != "" && !expression(incrementCondition) {
+		if _, convErr := strconv.ParseBool(strings.TrimSpace(incrementCondition)); convErr != nil {
+			return Action{}, false, fmt.Errorf("invalid %s increment-condition", item.Name)
+		}
+	}
 	anchor := item.Attrs["first-period-start"]
 	if anchor != "" {
 		if _, err := time.Parse(time.RFC3339, anchor); err != nil {
@@ -1188,6 +1223,8 @@ func compileLimit(item node) (Action, bool, error) {
 		Kind: ActionRateLimit, Value: key, LimitCalls: calls, LimitBandwidth: bandwidth, LimitPeriod: period,
 		StatusCode: status, Body: retryAfter, Children: children, PerSubscription: perSubscription,
 		LimitFixedWindow: fixedWindow, LimitAnchor: anchor,
+		IncrementCondition: incrementCondition, IncrementCount: incrementCount,
+		IncrementDeferred:      expression(incrementCondition) || expression(incrementCount),
 		RetryAfterVariable:     item.Attrs["retry-after-variable-name"],
 		RemainingCallsHeader:   item.Attrs["remaining-calls-header-name"],
 		RemainingCallsVariable: item.Attrs["remaining-calls-variable-name"],
@@ -2628,11 +2665,21 @@ func executeLimit(action Action, state *State) error {
 	// next window empty rather than ageing calls out one at a time.
 	suffix, remaining := limitWindow(action, state)
 	key += suffix
+	// How much this request adds to the counter. A postponed increment adds
+	// nothing on the way in: it is evaluated and applied after outbound, once
+	// the response its expression reads actually exists.
+	increment := 1
+	if action.IncrementDeferred {
+		increment = 0
+		state.PendingIncrements = append(state.PendingIncrements, deferredIncrement(action, state, key))
+	} else {
+		increment = literalIncrement(action)
+	}
 	if action.LimitCalls > 0 {
 		if state.RateLimit == nil {
 			return fmt.Errorf("rate-limit requires a configured limiter")
 		}
-		decision := state.RateLimit(key, action.LimitCalls, action.LimitPeriod)
+		decision := state.RateLimit(key, action.LimitCalls, action.LimitPeriod, increment)
 		decision.RetryAfter = windowRetryAfter(action, decision.RetryAfter, remaining)
 		// Reported "after each policy execution", so on every request and not
 		// only on the one that trips the limit.
@@ -2645,7 +2692,13 @@ func executeLimit(action Action, state *State) error {
 		if state.BandwidthLimit == nil {
 			return fmt.Errorf("quota bandwidth requires a configured limiter")
 		}
-		if decision := state.BandwidthLimit(key, requestSize(state), action.LimitBandwidth, action.LimitPeriod); decision.Exceeded {
+		// increment-condition gates the bandwidth counter too: a request that is
+		// not counted adds no bytes, though the budget is still checked.
+		size := int64(0)
+		if increment > 0 {
+			size = requestSize(state)
+		}
+		if decision := state.BandwidthLimit(key, size, action.LimitBandwidth, action.LimitPeriod); decision.Exceeded {
 			decision.RetryAfter = windowRetryAfter(action, decision.RetryAfter, remaining)
 			return limitExceeded(action, state, decision)
 		}
@@ -2990,4 +3043,83 @@ func windowRetryAfter(action Action, sliding, remaining time.Duration) time.Dura
 		return remaining
 	}
 	return sliding
+}
+
+// literalIncrement is the increment for attributes that are not expressions.
+// Both were checked when the policy compiled, so neither can fail here, which is
+// why the Atoi error is dropped rather than handled.
+//
+// Zero means increment-condition said not to count this request, which is not
+// the same as the limit not applying: the counter is still checked, so a caller
+// already over the limit stays over it.
+func literalIncrement(action Action) int {
+	if action.IncrementCondition != "" && !strings.EqualFold(strings.TrimSpace(action.IncrementCondition), "true") {
+		return 0
+	}
+	if action.IncrementCount == "" {
+		return 1
+	}
+	count, _ := strconv.Atoi(strings.TrimSpace(action.IncrementCount))
+	return count
+}
+
+// limitIncrement evaluates a postponed increment, where the attributes are
+// expressions and so can fail at runtime.
+func limitIncrement(action Action, state *State) (int, error) {
+	if action.IncrementCondition != "" {
+		counted, err := evalValue(action.IncrementCondition, state)
+		if err != nil {
+			return 0, err
+		}
+		if !strings.EqualFold(strings.TrimSpace(counted), "true") {
+			return 0, nil
+		}
+	}
+	if action.IncrementCount == "" {
+		return 1, nil
+	}
+	rendered, err := evalValue(action.IncrementCount, state)
+	if err != nil {
+		return 0, err
+	}
+	count, err := strconv.Atoi(strings.TrimSpace(rendered))
+	if err != nil || count < 0 {
+		return 0, fmt.Errorf("invalid increment-count %q", rendered)
+	}
+	return count, nil
+}
+
+// deferredIncrement builds the work postponed to the end of the pipeline. It
+// swallows an evaluation failure rather than returning it: by the time this
+// runs the response is already decided, so there is nothing left to fail, and
+// the trace is where a broken increment-condition can still be seen.
+func deferredIncrement(action Action, state *State, key string) func() {
+	return func() {
+		increment, err := limitIncrement(action, state)
+		if err != nil {
+			if state.Trace != nil {
+				state.Trace("rate-limit", "postponed increment not applied: "+err.Error())
+			}
+			return
+		}
+		if increment == 0 {
+			return
+		}
+		if action.LimitCalls > 0 && state.RateLimit != nil {
+			state.RateLimit(key, action.LimitCalls, action.LimitPeriod, increment)
+		}
+		if action.LimitBandwidth > 0 && state.BandwidthLimit != nil {
+			state.BandwidthLimit(key, requestSize(state), action.LimitBandwidth, action.LimitPeriod)
+		}
+	}
+}
+
+// RunPendingIncrements applies the increments the by-key limits postponed, and
+// is called once the response is settled. Running them in order keeps a policy
+// document's counters updated in the order it declared them.
+func RunPendingIncrements(state *State) {
+	for _, apply := range state.PendingIncrements {
+		apply()
+	}
+	state.PendingIncrements = nil
 }

@@ -232,7 +232,7 @@ func (r *Runtime) SetPolicyTokenValidator(validate func(string) error) {
 	r.policyTokenValidator = validate
 }
 
-func (r *Runtime) rateLimit(key string, calls int, period time.Duration) policy.LimitDecision {
+func (r *Runtime) rateLimit(key string, calls int, period time.Duration, increment int) policy.LimitDecision {
 	now := time.Now()
 	r.rateMu.Lock()
 	defer r.rateMu.Unlock()
@@ -258,8 +258,15 @@ func (r *Runtime) rateLimit(key string, calls int, period time.Duration) policy.
 		}
 		return policy.LimitDecision{Exceeded: true, RetryAfter: wait}
 	}
-	r.rateWindows[key] = append(kept, now)
-	return policy.LimitDecision{Remaining: calls - len(kept) - 1}
+	for i := 0; i < increment; i++ {
+		kept = append(kept, now)
+	}
+	r.rateWindows[key] = kept
+	remaining := calls - len(kept)
+	if remaining < 0 {
+		remaining = 0
+	}
+	return policy.LimitDecision{Remaining: remaining}
 }
 
 func (r *Runtime) bandwidthLimit(key string, add, budget int64, period time.Duration) policy.LimitDecision {
@@ -1017,6 +1024,10 @@ func (r *Runtime) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	apiCtx, operationCtx, productCtx, subscriptionCtx, userCtx, deploymentCtx := bindRequestContext(service, route, operation, req, selfHosted)
 	state := &policy.State{Request: req, BackendURL: route.API.ServiceURL, Path: relative, Headers: make(http.Header), ValidateToken: r.policyTokenValidator, SendRequest: r.policySendRequest, FetchCredential: r.credentialFetcher(req, route.API.ServiceID), Trace: func(phase, detail string) { traceEvent(trace, phase, detail) }, RateLimit: r.rateLimit, BandwidthLimit: r.bandwidthLimit, AcquireConcurrency: r.acquireConcurrency, CacheGet: r.cacheGet, CacheSet: r.cacheSet, ValueCacheGet: r.valueCacheGet, ValueCacheSet: r.valueCacheSet, ValueCacheRemove: r.valueCacheRemove, CacheKey: cacheKey, TokenLimit: r.tokenLimit, Timestamp: diagnosticStart, Elapsed: func() time.Duration { return time.Since(diagnosticStart) }, RequestId: requestID, Tracing: trace != nil, OriginalUrl: originalRequestURL(req), MatchedParameters: matchedParameters, Certificates: serviceCertificates(service), Backends: backendContexts(service), Api: apiCtx, Operation: operationCtx, Product: productCtx, Subscription: subscriptionCtx, User: userCtx, Deployment: deploymentCtx}
 	defer func() {
+		// After outbound has run, so an increment-condition reading the response
+		// sees it. Microsoft postpones these precisely so the counter can depend
+		// on how the call turned out.
+		policy.RunPendingIncrements(state)
 		for index := len(state.ConcurrencyReleases) - 1; index >= 0; index-- {
 			state.ConcurrencyReleases[index]()
 		}
