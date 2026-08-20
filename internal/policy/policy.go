@@ -1104,15 +1104,16 @@ func compileLimit(item node) (Action, bool, error) {
 	if err != nil {
 		return Action{}, false, err
 	}
+	// Each limit policy documents its own attributes, and they differ: bandwidth
+	// is on the quota pair only, counter-key and increment-* on the by-key pair,
+	// the response and variable attributes on the rate-limit pair. Accepting an
+	// attribute Azure rejects lets a policy pass here and fail the tenant.
+	if extra := undocumentedLimitAttribute(item.Name, "attributes", item.Attrs); extra != "" {
+		return unsupported(item.Name + "/@" + extra), true, nil
+	}
 	key := item.Attrs["counter-key"]
 	perSubscription := item.Name == "rate-limit" || item.Name == "quota"
 	if perSubscription {
-		// counter-key belongs to the by-key variants. Neither keyless reference
-		// mentions it, so Azure rejects it; accepting it here would let a policy
-		// pass the emulator and fail the tenant.
-		if key != "" {
-			return unsupported(item.Name + "/@counter-key"), true, nil
-		}
 		key = item.Name
 	}
 	key, err = compileValue(key)
@@ -1124,7 +1125,7 @@ func compileLimit(item node) (Action, bool, error) {
 	}
 	children := make([]Action, 0, len(item.Children))
 	for _, child := range item.Children {
-		if child.Name != "api" && child.Name != "operation" {
+		if child.Name != "api" && child.Name != "operation" || !limitDocumentsSection(item.Name, child.Name) {
 			return unsupported(item.Name + "/" + child.Name), true, nil
 		}
 		nested, err := compileNestedLimit(item.Name, period, child, perSubscription)
@@ -1148,6 +1149,15 @@ func compileLimit(item node) (Action, bool, error) {
 }
 
 func compileNestedLimit(parent string, parentPeriod time.Duration, item node, perSubscription bool) (Action, error) {
+	// The nested api/operation tables are their own attribute surface: quota's
+	// children take bandwidth, rate-limit's do not.
+	root := parent
+	if cut := strings.Index(root, "/"); cut >= 0 {
+		root = root[:cut]
+	}
+	if extra := undocumentedLimitAttribute(root, item.Name, item.Attrs); extra != "" {
+		return unsupported(parent + "/" + item.Name + "/@" + extra), nil
+	}
 	name := strings.TrimSpace(item.Attrs["name"])
 	if name == "" {
 		return unsupported(parent + "/" + item.Name), nil

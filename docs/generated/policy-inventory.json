@@ -40,7 +40,7 @@
     },
     {
       "name": "rate-limit-by-key",
-      "status": "implemented",
+      "status": "partial",
       "sections": [
         "inbound",
         "outbound"
@@ -53,7 +53,8 @@
       ],
       "expression_fields": [
         "counter-key"
-      ]
+      ],
+      "notes": "counter-key, calls, renewal-period and retry-after-header-name are honoured; increment-condition, increment-count and the remaining-calls, total-calls and retry-after variable attributes are accepted and ignored, so a policy that asks for conditional counting counts every request"
     },
     {
       "name": "quota",
@@ -74,7 +75,7 @@
     },
     {
       "name": "quota-by-key",
-      "status": "implemented",
+      "status": "partial",
       "sections": [
         "inbound",
         "outbound"
@@ -87,7 +88,8 @@
       ],
       "expression_fields": [
         "counter-key"
-      ]
+      ],
+      "notes": "counter-key, calls, bandwidth and renewal-period are honoured; increment-condition, increment-count and first-period-start are accepted and ignored, and the renewal window is sliding rather than anchored to first-period-start"
     },
     {
       "name": "limit-concurrency",
