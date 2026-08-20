@@ -330,9 +330,9 @@ func TestValidateJWTPolicy(t *testing.T) {
 		t.Fatal(err)
 	}
 	request := httptest.NewRequest(http.MethodGet, "/", nil)
-	request.Header.Set("Authorization", "Bearer good")
+	request.Header.Set("Authorization", "Bearer "+goodJWT(t))
 	state := &State{Request: request, ValidateToken: func(token string) error {
-		if token != "good" {
+		if token != goodJWT(t) {
 			return errors.New("bad token")
 		}
 		return nil
@@ -340,7 +340,7 @@ func TestValidateJWTPolicy(t *testing.T) {
 	if err := Execute(plan.Inbound, state); err != nil || state.Returned {
 		t.Fatalf("valid token = %+v, %v", state, err)
 	}
-	request.Header.Set("Authorization", "Bearer bad")
+	request.Header.Set("Authorization", "Bearer "+badJWT(t))
 	state = &State{Request: request, ValidateToken: func(string) error { return errors.New("bad token") }}
 	if err := Execute(plan.Inbound, state); err != nil || !state.Returned || state.StatusCode != http.StatusForbidden || state.Body != "token rejected" {
 		t.Fatalf("invalid token = %+v, %v", state, err)
@@ -388,7 +388,7 @@ func TestValidateJWTPolicy(t *testing.T) {
 		t.Fatalf("audiences wrapper = %+v, %v", wrapped, err)
 	}
 	notJWT := httptest.NewRequest(http.MethodGet, "/", nil)
-	notJWT.Header.Set("Authorization", "Bearer good")
+	notJWT.Header.Set("Authorization", "Bearer "+goodJWT(t))
 	notJWTState := &State{Request: notJWT, ValidateToken: func(string) error { return nil }}
 	if err := Execute(constrained.Inbound, notJWTState); err != nil || !notJWTState.Returned {
 		t.Fatalf("non-jwt with constraints = %+v, %v", notJWTState, err)
@@ -442,8 +442,29 @@ func TestValidateJWTPolicy(t *testing.T) {
 	}
 }
 
+// goodJWT is a token that passes validate-jwt's lifetime check: real JWT shape
+// and an exp in the future, which the policy requires by default.
+func goodJWT(t *testing.T) string {
+	t.Helper()
+	return testJWT(t, map[string]any{"exp": time.Now().Add(time.Hour).Unix()})
+}
+
+func badJWT(t *testing.T) string {
+	t.Helper()
+	return testJWT(t, map[string]any{"exp": time.Now().Add(time.Hour).Unix(), "sub": "rejected"})
+}
+
 func testJWT(t *testing.T, claims map[string]any) string {
 	t.Helper()
+	// validate-jwt requires an exp by default, so a token built for some other
+	// purpose gets a valid one unless the caller is testing expiry itself.
+	if value, given := claims["exp"]; !given {
+		claims["exp"] = time.Now().Add(time.Hour).Unix()
+	} else if value == nil {
+		// An explicit nil means the caller is testing a token that carries no
+		// expiry at all, which the default above would otherwise hide.
+		delete(claims, "exp")
+	}
 	header, err := json.Marshal(map[string]string{"alg": "none", "typ": "JWT"})
 	if err != nil {
 		t.Fatal(err)
@@ -2376,9 +2397,9 @@ func TestAzureADTokenExpressionPolicies(t *testing.T) {
 		t.Fatal(err)
 	}
 	request := httptest.NewRequest(http.MethodGet, "/", nil)
-	request.Header.Set("X-Token", "Bearer good")
+	request.Header.Set("X-Token", "Bearer "+goodJWT(t))
 	state := &State{Request: request, Variables: map[string]string{"tenant": "organizations", "header": "X-Token"}, ValidateToken: func(token string) error {
-		if token != "good" {
+		if token != goodJWT(t) {
 			return errors.New("bad token")
 		}
 		return nil
@@ -2545,9 +2566,9 @@ func TestIntegrationPolicies(t *testing.T) {
 		t.Fatalf("validate-azure-ad-token action = %+v, %v", entra, err)
 	}
 	request := httptest.NewRequest(http.MethodGet, "/", nil)
-	request.Header.Set("X-Token", "Bearer good")
+	request.Header.Set("X-Token", "Bearer "+goodJWT(t))
 	aad := &State{Request: request, ValidateToken: func(token string) error {
-		if token != "good" {
+		if token != goodJWT(t) {
 			return errors.New("bad token")
 		}
 		return nil
@@ -2559,9 +2580,9 @@ func TestIntegrationPolicies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	queryReq := httptest.NewRequest(http.MethodGet, "/?access_token=good", nil)
+	queryReq := httptest.NewRequest(http.MethodGet, "/?access_token="+goodJWT(t), nil)
 	queryState := &State{Request: queryReq, ValidateToken: func(token string) error {
-		if token != "good" {
+		if token != goodJWT(t) {
 			return errors.New("bad token")
 		}
 		return nil
@@ -2576,10 +2597,10 @@ func TestIntegrationPolicies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	exprReq := httptest.NewRequest(http.MethodGet, "/?access_token=good", nil)
+	exprReq := httptest.NewRequest(http.MethodGet, "/?access_token="+goodJWT(t), nil)
 	exprReq.Header.Set("X-Token", "Bearer ignored")
 	exprState := &State{Request: exprReq, Variables: map[string]string{"tenant": "organizations", "header": "X-Token", "query": "access_token", "code": "403", "msg": "aad rejected"}, ValidateToken: func(token string) error {
-		if token != "good" {
+		if token != goodJWT(t) {
 			return errors.New("bad token")
 		}
 		return nil
@@ -3360,5 +3381,217 @@ func TestPostponedIncrementVariants(t *testing.T) {
 	RunPendingIncrements(bwState)
 	if len(bytes) != 2 || bytes[1] != 4 {
 		t.Fatalf("postponed bandwidth = %v, want the 4 byte body charged after outbound", bytes)
+	}
+}
+
+// TestTokenLifetimeIsEnforced covers what the reference says validate-jwt
+// requires of a token's lifetime: "the `exp` registered claim is included in
+// the JWT, unless `require-expiration-time` attribute is specified and set to
+// `false`".
+func TestTokenLifetimeIsEnforced(t *testing.T) {
+	now := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+	run := func(attrs string, claims map[string]any) bool {
+		plan, err := Compile(`<policies><inbound><validate-jwt `+attrs+`/></inbound></policies>`, true)
+		if err != nil {
+			t.Fatalf("%s: %v", attrs, err)
+		}
+		request := httptest.NewRequest(http.MethodGet, "/", nil)
+		request.Header.Set("Authorization", "Bearer "+testJWT(t, claims))
+		state := &State{Request: request, Timestamp: now, ValidateToken: func(string) error { return nil }}
+		if err := Execute(plan.Inbound, state); err != nil {
+			t.Fatal(err)
+		}
+		return !state.Returned
+	}
+
+	if !run(``, map[string]any{"exp": now.Add(time.Hour).Unix()}) {
+		t.Fatal("a token expiring in an hour was rejected")
+	}
+	if run(``, map[string]any{"exp": now.Add(-time.Second).Unix()}) {
+		t.Fatal("an expired token was accepted")
+	}
+	// A token with no exp at all is rejected by default, and accepted only when
+	// the policy says so.
+	if run(``, map[string]any{"sub": "no-expiry", "exp": nil}) {
+		t.Fatal("a token with no exp was accepted by default")
+	}
+	if !run(`require-expiration-time="false"`, map[string]any{"sub": "no-expiry", "exp": nil}) {
+		t.Fatal("require-expiration-time=false did not allow a token with no exp")
+	}
+	// clock-skew forgives a token that expired within the allowance.
+	if run(``, map[string]any{"exp": now.Add(-30 * time.Second).Unix()}) {
+		t.Fatal("a token 30s expired was accepted with no clock-skew")
+	}
+	if !run(`clock-skew="60"`, map[string]any{"exp": now.Add(-30 * time.Second).Unix()}) {
+		t.Fatal("clock-skew=60 did not forgive a token 30s expired")
+	}
+	// nbf is honoured in the same way.
+	if run(``, map[string]any{"exp": now.Add(time.Hour).Unix(), "nbf": now.Add(time.Minute).Unix()}) {
+		t.Fatal("a token not yet valid was accepted")
+	}
+	if !run(`clock-skew="120"`, map[string]any{"exp": now.Add(time.Hour).Unix(), "nbf": now.Add(time.Minute).Unix()}) {
+		t.Fatal("clock-skew did not forgive an nbf just ahead")
+	}
+	// Neither attribute takes a value that is not what it claims to be.
+	for _, attrs := range []string{`require-expiration-time="soon"`, `clock-skew="a while"`, `clock-skew="-5"`} {
+		compiled, err := Compile(`<policies><inbound><validate-jwt `+attrs+`/></inbound></policies>`, false)
+		if err == nil && compiled.Inbound[0].Kind != ActionUnsupported {
+			t.Errorf("accepted %s", attrs)
+		}
+	}
+}
+
+// TestTokenLifetimeEdges covers the shapes a claim can arrive in and the
+// attribute forms the compiler must refuse.
+func TestTokenLifetimeEdges(t *testing.T) {
+	now := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+	accepted := func(claims map[string]any) bool {
+		plan, err := Compile(`<policies><inbound><validate-jwt/></inbound></policies>`, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		request := httptest.NewRequest(http.MethodGet, "/", nil)
+		request.Header.Set("Authorization", "Bearer "+testJWT(t, claims))
+		state := &State{Request: request, Timestamp: now, ValidateToken: func(string) error { return nil }}
+		if err := Execute(plan.Inbound, state); err != nil {
+			t.Fatal(err)
+		}
+		return !state.Returned
+	}
+	// Some issuers render NumericDate as a string.
+	if !accepted(map[string]any{"exp": fmt.Sprintf("%d", now.Add(time.Hour).Unix())}) {
+		t.Fatal("a string exp in the future was rejected")
+	}
+	if accepted(map[string]any{"exp": fmt.Sprintf("%d", now.Add(-time.Hour).Unix())}) {
+		t.Fatal("a string exp in the past was accepted")
+	}
+	// An exp that is neither a number nor a numeric string is not an expiry.
+	if accepted(map[string]any{"exp": map[string]any{"nested": true}}) {
+		t.Fatal("a token whose exp is an object was accepted")
+	}
+	// A token that is not a JWT at all cannot have its lifetime read.
+	plan, err := Compile(`<policies><inbound><validate-jwt/></inbound></policies>`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	request.Header.Set("Authorization", "Bearer not-a-jwt")
+	state := &State{Request: request, Timestamp: now, ValidateToken: func(string) error { return nil }}
+	if err := Execute(plan.Inbound, state); err != nil || !state.Returned {
+		t.Fatalf("a non-JWT was accepted: %+v", state)
+	}
+	// With no clock configured the check still runs rather than being skipped.
+	noClock := &State{Request: request, ValidateToken: func(string) error { return nil }}
+	if err := Execute(plan.Inbound, noClock); err != nil || !noClock.Returned {
+		t.Fatalf("a non-JWT was accepted without a clock: %+v", noClock)
+	}
+}
+
+// TestOpenIDConfigCompileRefusals covers the element's own attribute rules.
+func TestOpenIDConfigCompileRefusals(t *testing.T) {
+	for _, element := range []string{
+		`<openid-config/>`,
+		`<openid-config url=""/>`,
+		`<openid-config url="https://issuer.test/.well-known/openid-configuration" validate-connectivity="perhaps"/>`,
+	} {
+		compiled, err := Compile(`<policies><inbound><validate-jwt>`+element+`</validate-jwt></inbound></policies>`, false)
+		if err == nil && compiled.Inbound[0].Kind != ActionUnsupported {
+			t.Errorf("accepted %s", element)
+		}
+	}
+	// validate-connectivity is optional and defaults to true.
+	plan, err := Compile(`<policies><inbound><validate-jwt><openid-config url="https://issuer.test/c"/></validate-jwt></inbound></policies>`, true)
+	if err != nil || len(plan.Inbound[0].OpenIDConfigs) != 1 || !plan.Inbound[0].OpenIDConfigs[0].ValidateConnectivity {
+		t.Fatalf("openid-config default = %+v, %v", plan.Inbound[0].OpenIDConfigs, err)
+	}
+	off, err := Compile(`<policies><inbound><validate-jwt><openid-config url="https://issuer.test/c" validate-connectivity="false"/></validate-jwt></inbound></policies>`, true)
+	if err != nil || off.Inbound[0].OpenIDConfigs[0].ValidateConnectivity {
+		t.Fatalf("validate-connectivity=false = %+v, %v", off.Inbound[0].OpenIDConfigs, err)
+	}
+	// A policy naming a discovery endpoint needs a runtime that can fetch it.
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	if err := Execute(plan.Inbound, &State{Request: request}); err == nil {
+		t.Fatal("openid-config ran without a configured fetcher")
+	}
+	// And one that names none still needs the ordinary validator.
+	plain, err := Compile(`<policies><inbound><validate-jwt/></inbound></policies>`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := Execute(plain.Inbound, &State{Request: request}); err == nil {
+		t.Fatal("validate-jwt ran without any validator")
+	}
+}
+
+// TestValidateJWTOpenIDPath drives validate-jwt through a discovery-backed
+// validator, which is the branch the gateway's own tests reach directly rather
+// than through a compiled policy.
+func TestValidateJWTOpenIDPath(t *testing.T) {
+	plan, err := Compile(`<policies><inbound><validate-jwt failed-validation-httpcode="401">`+
+		`<openid-config url="https://issuer.test/.well-known/openid-configuration"/>`+
+		`</validate-jwt></inbound></policies>`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+	call := func(claims map[string]any, issuers []string, fetchErr error) *State {
+		request := httptest.NewRequest(http.MethodGet, "/", nil)
+		request.Header.Set("Authorization", "Bearer "+testJWT(t, claims))
+		state := &State{Request: request, Timestamp: now,
+			ValidateTokenAgainst: func(string, []OpenIDConfig) ([]string, error) { return issuers, fetchErr }}
+		if err := Execute(plan.Inbound, state); err != nil {
+			t.Fatal(err)
+		}
+		return state
+	}
+
+	// The issuer comes from the endpoint, so a token from it is accepted...
+	ok := call(map[string]any{"iss": "https://issuer.test", "exp": now.Add(time.Hour).Unix()}, []string{"https://issuer.test"}, nil)
+	if ok.Returned {
+		t.Fatalf("a token from the discovered issuer was rejected: %+v", ok)
+	}
+	// ...and one from anywhere else is not, even though no <issuers> was given.
+	other := call(map[string]any{"iss": "https://elsewhere.test", "exp": now.Add(time.Hour).Unix()}, []string{"https://issuer.test"}, nil)
+	if !other.Returned || other.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("a token from another issuer was accepted: %+v", other)
+	}
+	// A signature that does not verify against the endpoint's keys.
+	bad := call(map[string]any{"iss": "https://issuer.test", "exp": now.Add(time.Hour).Unix()}, nil, errors.New("no key"))
+	if !bad.Returned {
+		t.Fatalf("a token the endpoint could not verify was accepted: %+v", bad)
+	}
+	// validate-jwt needs a request to read the token from.
+	if err := Execute(plan.Inbound, &State{ValidateTokenAgainst: func(string, []OpenIDConfig) ([]string, error) { return nil, nil }}); err == nil {
+		t.Fatal("validate-jwt ran without a request")
+	}
+}
+
+// TestValidateJWTSingularChildren covers the singular <audience> and <issuer>
+// forms, which the reference allows alongside the plural containers.
+func TestValidateJWTSingularChildren(t *testing.T) {
+	plan, err := Compile(`<policies><inbound><validate-jwt><audience>api://one</audience><issuer>https://issuer.test</issuer></validate-jwt></inbound></policies>`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.Inbound[0].Audiences) != 1 || plan.Inbound[0].Audiences[0] != "api://one" {
+		t.Fatalf("audiences = %v", plan.Inbound[0].Audiences)
+	}
+	if len(plan.Inbound[0].Issuers) != 1 || plan.Inbound[0].Issuers[0] != "https://issuer.test" {
+		t.Fatalf("issuers = %v", plan.Inbound[0].Issuers)
+	}
+}
+
+// TestValidateAzureADTokenLifetimeAttributes covers the same lifetime rules on
+// the Entra-specific policy, which compiles them separately.
+func TestValidateAzureADTokenLifetimeAttributes(t *testing.T) {
+	for _, attrs := range []string{`clock-skew="soon"`, `require-expiration-time="maybe"`} {
+		compiled, err := Compile(`<policies><inbound><validate-azure-ad-token tenant-id="t" `+attrs+`/></inbound></policies>`, false)
+		if err == nil && compiled.Inbound[0].Kind != ActionUnsupported {
+			t.Errorf("accepted %s", attrs)
+		}
+	}
+	good, err := Compile(`<policies><inbound><validate-azure-ad-token tenant-id="t" clock-skew="30"/></inbound></policies>`, true)
+	if err != nil || good.Inbound[0].ClockSkew != 30*time.Second || !good.Inbound[0].RequireExpiry {
+		t.Fatalf("clock-skew on validate-azure-ad-token = %+v, %v", good.Inbound[0], err)
 	}
 }

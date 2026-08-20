@@ -275,6 +275,12 @@
     "stable `2024-05-01` operation inventory": [
       "ci:operation-inventory",
       "go:TestOperationInventoryCoverage"
+    ],
+    "policy XML/inheritance": [
+      "ci:openid-witness",
+      "go:TestValidateJWTPolicy",
+      "go:TestOpenIDConfigSelectsTheKeyByKid",
+      "go:TestTokenLifetimeIsEnforced"
     ]
   }
 }

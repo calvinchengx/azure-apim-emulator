@@ -167,33 +167,42 @@ type Action struct {
 	ParameterRules          []ParameterRule
 	CertificateThumbprints  []string
 	Audiences               []string
-	Issuers                 []string
-	ClientAppIDs            []string
-	Claims                  []ClaimConstraint
-	Branches                []ChooseBranch
-	Otherwise               []Action
-	TraceSource             string
-	TraceSeverity           string
-	TraceMessage            string
-	AuthUsername            string
-	AuthPassword            string
-	AuthResource            string
-	AuthClientID            string
-	AuthClientSecret        string
-	AuthTokenEndpoint       string
-	AuthCertificateID       string
-	ReplaceFrom             string
-	ReplaceTo               string
-	TransformRoot           string
-	JSONPParameter          string
-	ValueCacheKey           string
-	ValueCacheValue         string
-	ValueCacheDuration      time.Duration
-	Children                []Action
-	RetryCount              int
-	RetryInterval           time.Duration
-	Condition               string
-	Source                  string
+	// RequireExpiry is validate-jwt's require-expiration-time, default true:
+	// "requires that the `exp` registered claim is included in the JWT".
+	RequireExpiry bool
+	// ClockSkew is the allowed difference between the issuer's clock and ours.
+	ClockSkew time.Duration
+	// OpenIDConfigs are the discovery endpoints a validate-jwt names. When any
+	// is present the signing keys come from them rather than from the gateway's
+	// own validator.
+	OpenIDConfigs      []OpenIDConfig
+	Issuers            []string
+	ClientAppIDs       []string
+	Claims             []ClaimConstraint
+	Branches           []ChooseBranch
+	Otherwise          []Action
+	TraceSource        string
+	TraceSeverity      string
+	TraceMessage       string
+	AuthUsername       string
+	AuthPassword       string
+	AuthResource       string
+	AuthClientID       string
+	AuthClientSecret   string
+	AuthTokenEndpoint  string
+	AuthCertificateID  string
+	ReplaceFrom        string
+	ReplaceTo          string
+	TransformRoot      string
+	JSONPParameter     string
+	ValueCacheKey      string
+	ValueCacheValue    string
+	ValueCacheDuration time.Duration
+	Children           []Action
+	RetryCount         int
+	RetryInterval      time.Duration
+	Condition          string
+	Source             string
 }
 
 // Header is a set-header result.
@@ -269,8 +278,13 @@ type State struct {
 	// FetchCredential resolves a stored credential to a usable token. Supplied
 	// by the gateway, which owns the store and the OAuth2 client; the policy
 	// package must not reach for either.
-	FetchCredential         func(providerID, authorizationID string) (expr.AuthorizationContext, error)
-	ValidateToken           func(string) error
+	FetchCredential func(providerID, authorizationID string) (expr.AuthorizationContext, error)
+	ValidateToken   func(string) error
+	// ValidateTokenAgainst verifies a token against the signing keys published
+	// by OpenID configuration endpoints, returning the issuers those endpoints
+	// name. Microsoft says both "signing keys and issuer" come from there, so
+	// the issuer it returns is what an <issuers>-less policy accepts.
+	ValidateTokenAgainst    func(token string, configs []OpenIDConfig) ([]string, error)
 	SendRequest             func(*http.Request) (*http.Response, error)
 	Trace                   func(string, string)
 	AcquireToken            func(string) (string, error)
@@ -1360,7 +1374,11 @@ func compileValidateJWT(item node) (Action, bool, error) {
 	if source != "" {
 		return unsupported(source), true, nil
 	}
-	return Action{Kind: ActionValidateJWT, Value: item.Attrs["failed-validation-error-message"], FailedCode: code, Audiences: constraints.Audiences, Issuers: constraints.Issuers, Claims: constraints.Claims}, true, nil
+	require, skew, ok := jwtLifetime(item)
+	if !ok {
+		return unsupported(item.Name), true, nil
+	}
+	return Action{Kind: ActionValidateJWT, Value: item.Attrs["failed-validation-error-message"], FailedCode: code, Audiences: constraints.Audiences, Issuers: constraints.Issuers, Claims: constraints.Claims, OpenIDConfigs: constraints.OpenIDConfigs, RequireExpiry: require, ClockSkew: skew}, true, nil
 }
 
 func compileValidateAzureADToken(item node) (Action, bool, error) {
@@ -1395,7 +1413,11 @@ func compileValidateAzureADToken(item node) (Action, bool, error) {
 	if source != "" {
 		return unsupported(source), true, nil
 	}
-	action := Action{Kind: ActionValidateJWT, Name: headerName, Variable: queryName, Value: message, Body: tenantID, FailedCode: http.StatusUnauthorized, Audiences: constraints.Audiences, Issuers: constraints.Issuers, ClientAppIDs: constraints.ClientAppIDs, Claims: constraints.Claims}
+	require, skew, ok := jwtLifetime(item)
+	if !ok {
+		return unsupported(item.Name), true, nil
+	}
+	action := Action{Kind: ActionValidateJWT, Name: headerName, Variable: queryName, Value: message, Body: tenantID, FailedCode: http.StatusUnauthorized, Audiences: constraints.Audiences, Issuers: constraints.Issuers, ClientAppIDs: constraints.ClientAppIDs, Claims: constraints.Claims, OpenIDConfigs: constraints.OpenIDConfigs, RequireExpiry: require, ClockSkew: skew}
 	if expression(httpcode) {
 		action.Reason = httpcode
 		action.FailedCode = 0
@@ -1410,10 +1432,44 @@ func compileValidateAzureADToken(item node) (Action, bool, error) {
 }
 
 type tokenConstraints struct {
-	Audiences    []string
-	Issuers      []string
-	ClientAppIDs []string
-	Claims       []ClaimConstraint
+	Audiences     []string
+	Issuers       []string
+	ClientAppIDs  []string
+	Claims        []ClaimConstraint
+	OpenIDConfigs []OpenIDConfig
+}
+
+// OpenIDConfig is one <openid-config> element: an OpenID Connect discovery
+// endpoint "from which signing keys and issuer can be obtained". A policy may
+// name more than one, and each is tried in turn.
+type OpenIDConfig struct {
+	URL string
+	// ValidateConnectivity defaults to true. Microsoft lets a policy set it
+	// false "to disable check of endpoint availability if URL can't be resolved
+	// via public DNS", which is about reachability, not about skipping the keys.
+	ValidateConnectivity bool
+}
+
+// jwtLifetime reads validate-jwt's expiry attributes. require-expiration-time
+// defaults to true, which is why the zero value cannot be used for it.
+func jwtLifetime(item node) (bool, time.Duration, bool) {
+	require := true
+	if raw := strings.TrimSpace(item.Attrs["require-expiration-time"]); raw != "" {
+		parsed, err := strconv.ParseBool(raw)
+		if err != nil {
+			return false, 0, false
+		}
+		require = parsed
+	}
+	skew := time.Duration(0)
+	if raw := strings.TrimSpace(item.Attrs["clock-skew"]); raw != "" {
+		seconds, err := strconv.Atoi(raw)
+		if err != nil || seconds < 0 {
+			return false, 0, false
+		}
+		skew = time.Duration(seconds) * time.Second
+	}
+	return require, skew, true
 }
 
 func compileTokenConstraints(item node) (tokenConstraints, string) {
@@ -1421,7 +1477,19 @@ func compileTokenConstraints(item node) (tokenConstraints, string) {
 	for _, child := range item.Children {
 		switch child.Name {
 		case "openid-config":
-			return tokenConstraints{}, item.Name + "/openid-config"
+			url := strings.TrimSpace(child.Attrs["url"])
+			if url == "" {
+				return tokenConstraints{}, item.Name + "/openid-config"
+			}
+			connectivity := true
+			if raw := strings.TrimSpace(child.Attrs["validate-connectivity"]); raw != "" {
+				parsed, err := strconv.ParseBool(raw)
+				if err != nil {
+					return tokenConstraints{}, item.Name + "/openid-config"
+				}
+				connectivity = parsed
+			}
+			result.OpenIDConfigs = append(result.OpenIDConfigs, OpenIDConfig{URL: url, ValidateConnectivity: connectivity})
 		case "audience":
 			if text := strings.TrimSpace(child.Text); text != "" {
 				result.Audiences = append(result.Audiences, text)
@@ -1581,15 +1649,19 @@ func writeNodeXML(body *strings.Builder, item node) {
 	body.WriteByte('>')
 }
 
-func enforceTokenConstraints(action Action, token string) bool {
-	if len(action.Audiences)+len(action.Issuers)+len(action.ClientAppIDs)+len(action.Claims) == 0 {
+// enforceTokenConstraints checks the claims a policy demands. `discovered` are
+// the issuers an openid-config endpoint named: a policy that gives no <issuers>
+// still only accepts tokens from the issuer its discovery document declares,
+// because otherwise any token signed by those keys would pass.
+func enforceTokenConstraints(action Action, claims map[string]any, discovered []string) bool {
+	if len(action.Audiences)+len(action.Issuers)+len(action.ClientAppIDs)+len(action.Claims)+len(discovered) == 0 {
 		return true
 	}
-	claims, err := jwtPayload(token)
-	if err != nil {
-		return false
+	allowedIssuers := action.Issuers
+	if len(allowedIssuers) == 0 {
+		allowedIssuers = discovered
 	}
-	if len(action.Issuers) > 0 && !containsAny(claimStrings(claims["iss"], ""), action.Issuers) {
+	if len(allowedIssuers) > 0 && !containsAny(claimStrings(claims["iss"], ""), allowedIssuers) {
 		return false
 	}
 	if len(action.Audiences) > 0 && !containsAny(claimStrings(claims["aud"], ""), action.Audiences) {
@@ -1937,8 +2009,14 @@ func executeActions(actions []Action, state *State) error {
 				return nil
 			}
 		case ActionValidateJWT:
-			if state.Request == nil || state.ValidateToken == nil {
+			if state.Request == nil {
+				return fmt.Errorf("validate-jwt requires a request")
+			}
+			if len(action.OpenIDConfigs) == 0 && state.ValidateToken == nil {
 				return fmt.Errorf("validate-jwt requires a configured token validator")
+			}
+			if len(action.OpenIDConfigs) > 0 && state.ValidateTokenAgainst == nil {
+				return fmt.Errorf("validate-jwt openid-config requires a configured discovery fetcher")
 			}
 			if action.Body != "" {
 				tenantID, err := evalValue(action.Body, state)
@@ -1972,7 +2050,16 @@ func executeActions(actions []Action, state *State) error {
 				return err
 			}
 			token := tokenFromRequest(state.Request, Action{Name: headerName, Variable: queryName})
-			if state.ValidateToken(token) != nil || !enforceTokenConstraints(action, token) {
+			var discovered []string
+			signatureOK := false
+			if len(action.OpenIDConfigs) > 0 {
+				issuers, err := state.ValidateTokenAgainst(token, action.OpenIDConfigs)
+				signatureOK, discovered = err == nil, issuers
+			} else {
+				signatureOK = state.ValidateToken(token) == nil
+			}
+			claims, claimsErr := jwtPayload(token)
+			if !signatureOK || claimsErr != nil || !tokenIsCurrent(action, claims, state) || !enforceTokenConstraints(action, claims, discovered) {
 				state.Returned, state.StatusCode, state.Body = true, code, message
 				return nil
 			}
@@ -3122,4 +3209,44 @@ func RunPendingIncrements(state *State) {
 		apply()
 	}
 	state.PendingIncrements = nil
+}
+
+// tokenIsCurrent checks the token's lifetime. The reference states that
+// validate-jwt "requires that the `exp` registered claim is included in the
+// JWT, unless `require-expiration-time` attribute is specified and set to
+// `false`", so a token with no expiry is rejected by default rather than
+// treated as one that never expires.
+//
+// The clock is state.Timestamp, which the gateway always sets. It falls back to
+// the wall clock rather than skipping the check: a missing clock must never be
+// the reason an expired token is accepted.
+func tokenIsCurrent(action Action, claims map[string]any, state *State) bool {
+	now := state.Timestamp
+	if now.IsZero() {
+		now = time.Now()
+	}
+	expiry, hasExpiry := claimSeconds(claims["exp"])
+	if !hasExpiry {
+		return !action.RequireExpiry
+	}
+	if now.Add(-action.ClockSkew).Unix() >= expiry {
+		return false
+	}
+	if notBefore, ok := claimSeconds(claims["nbf"]); ok && now.Add(action.ClockSkew).Unix() < notBefore {
+		return false
+	}
+	return true
+}
+
+// claimSeconds reads a NumericDate claim. JSON numbers decode as float64, and a
+// token may also carry one as a string.
+func claimSeconds(value any) (int64, bool) {
+	switch typed := value.(type) {
+	case float64:
+		return int64(typed), true
+	case string:
+		parsed, err := strconv.ParseInt(strings.TrimSpace(typed), 10, 64)
+		return parsed, err == nil
+	}
+	return 0, false
 }

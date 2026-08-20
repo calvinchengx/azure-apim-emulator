@@ -1,0 +1,13 @@
+{
+  "name": "azure-apim-emulator-openid-witness",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "preinstall": "npx only-allow pnpm",
+    "test": "node witness.js"
+  },
+  "dependencies": {
+    "jose": "5.9.6",
+    "oidc-provider": "9.11.3"
+  }
+}
