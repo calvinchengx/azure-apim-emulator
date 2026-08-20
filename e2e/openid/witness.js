@@ -200,6 +200,35 @@ const expired = await new SignJWT({ aud: RESOURCE, iss: issuer })
   .sign(first.privateKey);
 assert.equal(await call(expired), 401, "an expired token was accepted");
 
+// ---------------------------------------------------------------------------
+// require-scheme and output-token-variable-name, against the same real tokens.
+await arm(`${base}/apis/guarded/policies/policy`, "PUT", {
+  properties: {
+    format: "rawxml",
+    value: `<policies><inbound><validate-jwt failed-validation-httpcode="401" require-scheme="Bearer" output-token-variable-name="jwt">
+      <openid-config url="${discoveryURL}" />
+      <audiences><audience>${RESOURCE}</audience></audiences>
+    </validate-jwt>
+    </inbound><backend><forward-request /></backend>
+    <outbound><set-header name="X-Token-Subject" exists-action="override"><value>@(((Jwt)context.Variables["jwt"]).Subject)</value></set-header></outbound></policies>`,
+  },
+});
+
+async function callWith(scheme, value) {
+  return fetch(`${gateway}/guarded`, { headers: { authorization: `${scheme} ${value}` } });
+}
+
+const fresh = await mintToken();
+const accepted = await callWith("Bearer", fresh);
+assert.equal(accepted.status, 200, "the required scheme was rejected");
+// The Jwt object reached a later policy, which is what storing it is for. The
+// provider decides the subject, so this is its value and not one we asserted.
+const subject = accepted.headers.get("x-token-subject");
+assert.ok(subject && subject.length > 0, `output-token-variable-name produced ${subject}`);
+
+const wrongScheme = await callWith("Token", fresh);
+assert.equal(wrongScheme.status, 401, "a scheme other than the required one was accepted");
+
 console.log(`openid-config witness: provider at ${issuer}, discovery fetched ${fetched.discovery}x, jwks ${fetched.jwks}x`);
 backend.close();
 app.close();

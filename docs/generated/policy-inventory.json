@@ -202,7 +202,7 @@
         "failed-validation-httpcode",
         "failed-validation-error-message"
       ],
-      "notes": "client-application-ids and required-claims are enforced from the payload, openid-config endpoints and the exp/nbf checks work as they do for validate-jwt; non-empty token-value remains unsupported"
+      "notes": "client-application-ids and required-claims are enforced from the payload, and openid-config, the exp/nbf checks, require-scheme, require-signed-tokens and output-token-variable-name work as they do for validate-jwt; non-empty token-value remains unsupported"
     },
     {
       "name": "validate-jwt",
@@ -218,7 +218,7 @@
         "workspace"
       ],
       "expression_fields": [],
-      "notes": "audiences, issuers and required-claims are enforced from the payload, signing keys and issuer are fetched from openid-config endpoints and cached, and exp/nbf are checked honouring require-expiration-time and clock-skew; issuer-signing-keys and decryption-keys are rejected as unsupported, while require-scheme, require-signed-tokens and output-token-variable-name are accepted and silently ignored"
+      "notes": "audiences, issuers and required-claims are enforced from the payload, signing keys and issuer come from openid-config endpoints and are cached, exp/nbf are checked honouring require-expiration-time and clock-skew, require-scheme and require-signed-tokens are honoured and output-token-variable-name stores the token as a Jwt; issuer-signing-keys and decryption-keys are rejected as unsupported, so a policy carrying inline or decryption keys will not compile"
     },
     {
       "name": "validate-client-certificate",
