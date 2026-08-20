@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/calvinchengx/azure-apim-emulator/internal/llm"
@@ -147,6 +148,12 @@ func (r *Runtime) finishLLMAccounting(governance *policy.LLMGovernance, usage ll
 	total := usage.Total()
 	if governance.CounterKey != "" {
 		r.recordTokens(governance.CounterKey, total)
+		// The quota is charged what the model actually spent, the same as the
+		// per-minute counter. Without this a quota would only ever count the
+		// estimates, and a policy that asked for none would never spend.
+		if governance.QuotaPeriod != "" {
+			r.chargeTokenQuota(governance.CounterKey, governance.QuotaPeriod, total)
+		}
 	}
 	if headers != nil {
 		if name := governance.Config.ConsumedHeader; name != "" {
@@ -209,4 +216,87 @@ func (r *Runtime) TokenMetrics() []TokenMetric {
 	r.metricMu.Lock()
 	defer r.metricMu.Unlock()
 	return append([]TokenMetric(nil), r.tokenMetrics...)
+}
+
+// tokenQuotaWindow is the start of the fixed period a moment falls in.
+// Microsoft: "The start time of a quota period is calculated as the UTC
+// timestamp truncated to the unit (hour, day, etc.) used for the period." So a
+// Daily quota resets at midnight UTC, not 24 hours after the first request.
+func tokenQuotaWindow(period string, now time.Time) (time.Time, time.Duration, bool) {
+	utc := now.UTC()
+	switch strings.ToLower(strings.TrimSpace(period)) {
+	case "hourly":
+		start := time.Date(utc.Year(), utc.Month(), utc.Day(), utc.Hour(), 0, 0, 0, time.UTC)
+		return start, start.Add(time.Hour).Sub(utc), true
+	case "daily":
+		start := time.Date(utc.Year(), utc.Month(), utc.Day(), 0, 0, 0, 0, time.UTC)
+		return start, start.AddDate(0, 0, 1).Sub(utc), true
+	case "weekly":
+		// Truncated to the unit means the start of the week. ISO weeks begin on
+		// Monday, and Go counts Sunday as 0.
+		offset := (int(utc.Weekday()) + 6) % 7
+		start := time.Date(utc.Year(), utc.Month(), utc.Day(), 0, 0, 0, 0, time.UTC).AddDate(0, 0, -offset)
+		return start, start.AddDate(0, 0, 7).Sub(utc), true
+	case "monthly":
+		start := time.Date(utc.Year(), utc.Month(), 1, 0, 0, 0, 0, time.UTC)
+		return start, start.AddDate(0, 1, 0).Sub(utc), true
+	case "yearly":
+		start := time.Date(utc.Year(), 1, 1, 0, 0, 0, 0, time.UTC)
+		return start, start.AddDate(1, 0, 0).Sub(utc), true
+	}
+	return time.Time{}, 0, false
+}
+
+// tokenQuota reports the tokens left against a token-quota for the period the
+// request falls in, and whether it may proceed.
+//
+// The counter is keyed by the window's start, so crossing a boundary starts the
+// next period empty rather than ageing spends out one at a time.
+func (r *Runtime) tokenQuota(key string, quota int, period string, estimate int) (int, int, bool) {
+	now := time.Now()
+	start, remainingInWindow, ok := tokenQuotaWindow(period, now)
+	if !ok {
+		// An unusable period cannot be enforced, and pretending otherwise would
+		// let a policy through that governs nothing.
+		return 0, 0, false
+	}
+	r.rateMu.Lock()
+	defer r.rateMu.Unlock()
+	if r.tokenQuotas == nil {
+		r.tokenQuotas = map[string]int{}
+	}
+	bucket := key + "/" + start.Format(time.RFC3339)
+	spent := r.tokenQuotas[bucket]
+	if spent >= quota {
+		// The quota frees at the boundary, which is the first moment the caller
+		// could succeed. Rounded up for the same reason the rate limit rounds.
+		return 0, int(remainingInWindow.Seconds()) + 1, false
+	}
+	if estimate > 0 {
+		r.tokenQuotas[bucket] = spent + estimate
+		spent += estimate
+	}
+	remaining := quota - spent
+	if remaining < 0 {
+		remaining = 0
+	}
+	return remaining, 0, true
+}
+
+// chargeTokenQuota adds what a request actually spent, once the model has
+// answered. Estimates charged up front are the exception, not the rule.
+func (r *Runtime) chargeTokenQuota(key, period string, tokens int) {
+	if tokens <= 0 {
+		return
+	}
+	start, _, ok := tokenQuotaWindow(period, time.Now())
+	if !ok {
+		return
+	}
+	r.rateMu.Lock()
+	defer r.rateMu.Unlock()
+	if r.tokenQuotas == nil {
+		r.tokenQuotas = map[string]int{}
+	}
+	r.tokenQuotas[key+"/"+start.Format(time.RFC3339)] += tokens
 }

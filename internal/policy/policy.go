@@ -327,6 +327,10 @@ type State struct {
 	// the windows. The estimate is what an `estimate-prompt-tokens="true"`
 	// policy wants charged up front, and is 0 otherwise.
 	TokenLimit func(key string, tokensPerMinute, estimate int) (remaining, retryAfter int, allowed bool)
+	// TokenQuota is the same for a token-quota over its fixed period, which is
+	// a separate budget from the per-minute rate and can refuse a request the
+	// rate would have allowed.
+	TokenQuota func(key string, quota int, period string, estimate int) (remaining, retryAfter int, allowed bool)
 	// Section is the policy section currently running, which a failure reports
 	// through `context.LastError.Section`.
 	Section string
