@@ -244,3 +244,8 @@ func (b *basicCredentialsHost) member(name string) (Value, error) {
 		return Null(), fmt.Errorf("unknown member %s on basic credentials", name)
 	}
 }
+
+// JwtValue builds the `Jwt` object a validated token becomes when a policy names
+// an output-token-variable-name. It is the same object `AsJwt()` produces, so a
+// later expression reads the variable exactly as it would read AsJwt's result.
+func JwtValue(token string) Value { return asJwt(token) }

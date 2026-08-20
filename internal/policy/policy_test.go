@@ -2590,7 +2590,7 @@ func TestIntegrationPolicies(t *testing.T) {
 	if err := Execute(query.Inbound, queryState); err != nil || queryState.Returned {
 		t.Fatalf("query token = %+v, %v", queryState, err)
 	}
-	if tokenFromRequest(&http.Request{}, Action{Variable: "access_token"}) != "" {
+	if got, _ := tokenFromRequest(&http.Request{}, Action{Variable: "access_token"}, ""); got != "" {
 		t.Fatal("nil URL should yield an empty token")
 	}
 	expressed, err := Compile(`<policies><inbound><validate-azure-ad-token tenant-id="@(context.Variables['tenant'])" header-name="@(context.Variables['header'])" query-parameter-name="@(context.Variables['query'])" failed-validation-httpcode="@(context.Variables['code'])" failed-validation-error-message="@(context.Variables['msg'])"/></inbound></policies>`, true)
@@ -3593,5 +3593,159 @@ func TestValidateAzureADTokenLifetimeAttributes(t *testing.T) {
 	good, err := Compile(`<policies><inbound><validate-azure-ad-token tenant-id="t" clock-skew="30"/></inbound></policies>`, true)
 	if err != nil || good.Inbound[0].ClockSkew != 30*time.Second || !good.Inbound[0].RequireExpiry {
 		t.Fatalf("clock-skew on validate-azure-ad-token = %+v, %v", good.Inbound[0], err)
+	}
+}
+
+// TestValidateJWTPresentationAttributes covers the three attributes validate-jwt
+// used to accept and silently ignore, so a policy asking for them got nothing.
+func TestValidateJWTPresentationAttributes(t *testing.T) {
+	now := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+	token := testJWT(t, map[string]any{"exp": now.Add(time.Hour).Unix(), "sub": "witness"})
+
+	run := func(attrs, header string) *State {
+		plan, err := Compile(`<policies><inbound><validate-jwt failed-validation-httpcode="401" `+attrs+`/></inbound></policies>`, true)
+		if err != nil {
+			t.Fatalf("%s: %v", attrs, err)
+		}
+		request := httptest.NewRequest(http.MethodGet, "/", nil)
+		if header != "" {
+			request.Header.Set("Authorization", header)
+		}
+		state := &State{Request: request, Timestamp: now, ValidateToken: func(string) error { return nil }}
+		if err := Execute(plan.Inbound, state); err != nil {
+			t.Fatal(err)
+		}
+		return state
+	}
+
+	// require-scheme: the named scheme must be the one the caller sent.
+	if run(`require-scheme="Bearer"`, "Bearer "+token).Returned {
+		t.Fatal("the required scheme was rejected")
+	}
+	if !run(`require-scheme="Bearer"`, "Token "+token).Returned {
+		t.Fatal("a different scheme was accepted where Bearer was required")
+	}
+	if !run(`require-scheme="Bearer"`, token).Returned {
+		t.Fatal("a token with no scheme was accepted where one was required")
+	}
+	// Schemes are case-insensitive.
+	if run(`require-scheme="Bearer"`, "bearer "+token).Returned {
+		t.Fatal("a lowercase scheme was rejected")
+	}
+	// A non-Bearer scheme works when that is what the policy asked for, which
+	// the old unconditional "Bearer " strip could not do.
+	if run(`require-scheme="Token"`, "Token "+token).Returned {
+		t.Fatal("a custom scheme the policy required was rejected")
+	}
+	// An expression is allowed.
+	if run(`require-scheme="@(&quot;Bearer&quot;)"`, "Bearer "+token).Returned {
+		t.Fatal("an expression scheme was rejected")
+	}
+
+	// require-signed-tokens: with it off the signature is not consulted, which
+	// is the only way an unverifiable token can pass.
+	unsigned := &State{
+		Request:   httptest.NewRequest(http.MethodGet, "/", nil),
+		Timestamp: now,
+	}
+	unsigned.Request.Header.Set("Authorization", "Bearer "+token)
+	unsignedPlan, err := Compile(`<policies><inbound><validate-jwt require-signed-tokens="false"/></inbound></policies>`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// No validator configured at all: with signatures not required, none is needed.
+	if err := Execute(unsignedPlan.Inbound, unsigned); err != nil || unsigned.Returned {
+		t.Fatalf("require-signed-tokens=false still demanded a signature: %+v, %v", unsigned, err)
+	}
+	// The default is true, so the same token without the attribute is refused
+	// when the validator rejects it.
+	refusing := &State{Request: unsigned.Request, Timestamp: now, ValidateToken: func(string) error { return errors.New("bad") }}
+	signedPlan, err := Compile(`<policies><inbound><validate-jwt/></inbound></policies>`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := Execute(signedPlan.Inbound, refusing); err != nil || !refusing.Returned {
+		t.Fatalf("a signature failure was ignored by default: %+v", refusing)
+	}
+	// A literal that is not a boolean is refused at compile time.
+	if _, err := Compile(`<policies><inbound><validate-jwt require-signed-tokens="sometimes"/></inbound></policies>`, true); err == nil {
+		t.Fatal("accepted a non-boolean require-signed-tokens")
+	}
+
+	// output-token-variable-name: the validated token becomes a Jwt object a
+	// later expression can read.
+	stored := run(`output-token-variable-name="jwt"`, "Bearer "+token)
+	if stored.Returned {
+		t.Fatalf("validation failed: %+v", stored)
+	}
+	if _, ok := stored.VariableObjects["jwt"]; !ok {
+		t.Fatalf("no jwt variable was set: %v", stored.VariableObjects)
+	}
+	// Read it the way a policy author would, through an expression, rather than
+	// by reaching into the value: that is what "an object of type Jwt" has to
+	// mean to be worth storing.
+	reader, err := Compile(`<policies><inbound><validate-jwt output-token-variable-name="jwt"/>`+
+		`<set-variable name="sub"><value>@(((Jwt)context.Variables["jwt"]).Subject)</value></set-variable></inbound></policies>`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	readRequest := httptest.NewRequest(http.MethodGet, "/", nil)
+	readRequest.Header.Set("Authorization", "Bearer "+token)
+	readState := &State{Request: readRequest, Timestamp: now, ValidateToken: func(string) error { return nil }}
+	if err := Execute(reader.Inbound, readState); err != nil {
+		t.Fatal(err)
+	}
+	if readState.Variables["sub"] != "witness" {
+		t.Fatalf("an expression read Jwt.Subject as %q, want the token's sub", readState.Variables["sub"])
+	}
+	// Nothing is stored when validation fails.
+	failed := &State{Request: unsigned.Request, Timestamp: now, ValidateToken: func(string) error { return errors.New("bad") }}
+	outPlan, err := Compile(`<policies><inbound><validate-jwt output-token-variable-name="jwt"/></inbound></policies>`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := Execute(outPlan.Inbound, failed); err != nil {
+		t.Fatal(err)
+	}
+	if _, set := failed.VariableObjects["jwt"]; set {
+		t.Fatal("a rejected token was still stored in the output variable")
+	}
+}
+
+// TestValidateJWTAttributeFailures covers the ways the three presentation
+// attributes can be wrong: at compile time when the expression will not parse,
+// and at run time when it parses but cannot be evaluated or is not a boolean.
+func TestValidateJWTAttributeFailures(t *testing.T) {
+	// An expression that does not parse is refused when the policy compiles,
+	// for both policies that carry these attributes.
+	for _, document := range []string{
+		`<validate-jwt require-scheme="@(1 + )"/>`,
+		`<validate-jwt require-signed-tokens="@(1 + )"/>`,
+		`<validate-azure-ad-token tenant-id="t" require-scheme="@(1 + )"/>`,
+		`<validate-azure-ad-token tenant-id="t" require-signed-tokens="@(1 + )"/>`,
+	} {
+		if _, err := Compile(`<policies><inbound>`+document+`</inbound></policies>`, true); err == nil {
+			t.Errorf("accepted %s", document)
+		}
+	}
+
+	// One that parses but fails when it runs stops the request rather than
+	// quietly deciding the policy did not ask for anything.
+	now := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+	for _, attrs := range []string{
+		`require-scheme="@(1 / 0)"`,
+		`require-signed-tokens="@(1 / 0)"`,
+		`require-signed-tokens="@(&quot;maybe&quot;)"`,
+	} {
+		plan, err := Compile(`<policies><inbound><validate-jwt `+attrs+`/></inbound></policies>`, true)
+		if err != nil {
+			t.Fatalf("%s: %v", attrs, err)
+		}
+		request := httptest.NewRequest(http.MethodGet, "/", nil)
+		request.Header.Set("Authorization", "Bearer "+testJWT(t, map[string]any{"exp": now.Add(time.Hour).Unix()}))
+		state := &State{Request: request, Timestamp: now, ValidateToken: func(string) error { return nil }}
+		if err := Execute(plan.Inbound, state); err == nil {
+			t.Errorf("%s ran without reporting a failure", attrs)
+		}
 	}
 }

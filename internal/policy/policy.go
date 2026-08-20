@@ -167,6 +167,14 @@ type Action struct {
 	ParameterRules          []ParameterRule
 	CertificateThumbprints  []string
 	Audiences               []string
+	// RequireScheme is the token scheme the Authorization header must carry,
+	// "Bearer" being the usual one. Empty means the policy did not ask.
+	RequireScheme string
+	// RequireSignedTokens defaults to true. Held as the compiled attribute
+	// rather than a bool because policy expressions are allowed in it.
+	RequireSignedTokens string
+	// OutputTokenVariable receives the validated token as a Jwt object.
+	OutputTokenVariable string
 	// RequireExpiry is validate-jwt's require-expiration-time, default true:
 	// "requires that the `exp` registered claim is included in the JWT".
 	RequireExpiry bool
@@ -1378,7 +1386,11 @@ func compileValidateJWT(item node) (Action, bool, error) {
 	if !ok {
 		return unsupported(item.Name), true, nil
 	}
-	return Action{Kind: ActionValidateJWT, Value: item.Attrs["failed-validation-error-message"], FailedCode: code, Audiences: constraints.Audiences, Issuers: constraints.Issuers, Claims: constraints.Claims, OpenIDConfigs: constraints.OpenIDConfigs, RequireExpiry: require, ClockSkew: skew}, true, nil
+	scheme, signed, output, err := jwtScheme(item)
+	if err != nil {
+		return Action{}, false, err
+	}
+	return Action{Kind: ActionValidateJWT, Value: item.Attrs["failed-validation-error-message"], FailedCode: code, Audiences: constraints.Audiences, Issuers: constraints.Issuers, Claims: constraints.Claims, OpenIDConfigs: constraints.OpenIDConfigs, RequireExpiry: require, ClockSkew: skew, RequireScheme: scheme, RequireSignedTokens: signed, OutputTokenVariable: output}, true, nil
 }
 
 func compileValidateAzureADToken(item node) (Action, bool, error) {
@@ -1417,7 +1429,11 @@ func compileValidateAzureADToken(item node) (Action, bool, error) {
 	if !ok {
 		return unsupported(item.Name), true, nil
 	}
-	action := Action{Kind: ActionValidateJWT, Name: headerName, Variable: queryName, Value: message, Body: tenantID, FailedCode: http.StatusUnauthorized, Audiences: constraints.Audiences, Issuers: constraints.Issuers, ClientAppIDs: constraints.ClientAppIDs, Claims: constraints.Claims, OpenIDConfigs: constraints.OpenIDConfigs, RequireExpiry: require, ClockSkew: skew}
+	scheme, signed, output, err := jwtScheme(item)
+	if err != nil {
+		return Action{}, false, err
+	}
+	action := Action{Kind: ActionValidateJWT, Name: headerName, Variable: queryName, Value: message, Body: tenantID, FailedCode: http.StatusUnauthorized, Audiences: constraints.Audiences, Issuers: constraints.Issuers, ClientAppIDs: constraints.ClientAppIDs, Claims: constraints.Claims, OpenIDConfigs: constraints.OpenIDConfigs, RequireExpiry: require, ClockSkew: skew, RequireScheme: scheme, RequireSignedTokens: signed, OutputTokenVariable: output}
 	if expression(httpcode) {
 		action.Reason = httpcode
 		action.FailedCode = 0
@@ -1452,6 +1468,26 @@ type OpenIDConfig struct {
 
 // jwtLifetime reads validate-jwt's expiry attributes. require-expiration-time
 // defaults to true, which is why the zero value cannot be used for it.
+// jwtScheme reads the three attributes that govern how a token is presented and
+// what becomes of it. require-scheme and require-signed-tokens allow policy
+// expressions, so they are carried compiled rather than resolved here;
+// output-token-variable-name does not.
+func jwtScheme(item node) (scheme, signed, output string, err error) {
+	if scheme, err = compileValue(item.Attrs["require-scheme"]); err != nil {
+		return "", "", "", err
+	}
+	if signed, err = compileValue(item.Attrs["require-signed-tokens"]); err != nil {
+		return "", "", "", err
+	}
+	// A literal must be a boolean. An expression is checked when it runs.
+	if signed != "" && !expression(signed) {
+		if _, convErr := strconv.ParseBool(strings.TrimSpace(signed)); convErr != nil {
+			return "", "", "", fmt.Errorf("invalid %s require-signed-tokens", item.Name)
+		}
+	}
+	return scheme, signed, strings.TrimSpace(item.Attrs["output-token-variable-name"]), nil
+}
+
 func jwtLifetime(item node) (bool, time.Duration, bool) {
 	require := true
 	if raw := strings.TrimSpace(item.Attrs["require-expiration-time"]); raw != "" {
@@ -1751,18 +1787,34 @@ func matchClaimValues(actual, required []string, matchAny bool) bool {
 	return true
 }
 
-func tokenFromRequest(request *http.Request, action Action) string {
+// tokenFromRequest pulls the token out of the request. `scheme` is the policy's
+// require-scheme: when set, the header must carry exactly that scheme, and the
+// second result reports whether it did. When empty the long-standing behaviour
+// applies, which strips a "Bearer " prefix if one is there.
+func tokenFromRequest(request *http.Request, action Action, scheme string) (string, bool) {
 	if action.Variable != "" {
 		if request.URL == nil {
-			return ""
+			return "", true
 		}
-		return strings.TrimSpace(request.URL.Query().Get(action.Variable))
+		// A query parameter carries no scheme, so there is nothing to require.
+		return strings.TrimSpace(request.URL.Query().Get(action.Variable)), true
 	}
 	name := action.Name
 	if name == "" {
 		name = "Authorization"
 	}
-	return strings.TrimSpace(strings.TrimPrefix(request.Header.Get(name), "Bearer "))
+	raw := strings.TrimSpace(request.Header.Get(name))
+	if scheme = strings.TrimSpace(scheme); scheme != "" {
+		prefix := scheme + " "
+		// Schemes are case-insensitive in RFC 7235, and a client that sends
+		// "bearer" is not making a different request from one that sends
+		// "Bearer".
+		if len(raw) < len(prefix) || !strings.EqualFold(raw[:len(prefix)], prefix) {
+			return "", false
+		}
+		return strings.TrimSpace(raw[len(prefix):]), true
+	}
+	return strings.TrimSpace(strings.TrimPrefix(raw, "Bearer ")), true
 }
 
 func requestBaseURL(request *http.Request) string {
@@ -2012,12 +2064,6 @@ func executeActions(actions []Action, state *State) error {
 			if state.Request == nil {
 				return fmt.Errorf("validate-jwt requires a request")
 			}
-			if len(action.OpenIDConfigs) == 0 && state.ValidateToken == nil {
-				return fmt.Errorf("validate-jwt requires a configured token validator")
-			}
-			if len(action.OpenIDConfigs) > 0 && state.ValidateTokenAgainst == nil {
-				return fmt.Errorf("validate-jwt openid-config requires a configured discovery fetcher")
-			}
 			if action.Body != "" {
 				tenantID, err := evalValue(action.Body, state)
 				if err != nil {
@@ -2049,10 +2095,47 @@ func executeActions(actions []Action, state *State) error {
 			if err != nil {
 				return err
 			}
-			token := tokenFromRequest(state.Request, Action{Name: headerName, Variable: queryName})
+			// require-scheme governs how the token is presented: "the policy
+			// will ensure that specified scheme is present in the Authorization
+			// header value".
+			scheme, err := evalValue(action.RequireScheme, state)
+			if err != nil {
+				return err
+			}
+			token, schemeOK := tokenFromRequest(state.Request, Action{Name: headerName, Variable: queryName}, scheme)
+			if !schemeOK {
+				state.Returned, state.StatusCode, state.Body = true, code, message
+				return nil
+			}
+			// require-signed-tokens defaults to true. A policy that turns it off
+			// is asking for the claims to be trusted unsigned, which is its
+			// choice to make and not one to make silently on its behalf.
+			mustBeSigned := true
+			if action.RequireSignedTokens != "" {
+				rendered, err := evalValue(action.RequireSignedTokens, state)
+				if err != nil {
+					return err
+				}
+				parsed, convErr := strconv.ParseBool(strings.TrimSpace(rendered))
+				if convErr != nil {
+					return fmt.Errorf("invalid require-signed-tokens %q", rendered)
+				}
+				mustBeSigned = parsed
+			}
+			// A validator is only needed when a signature is going to be
+			// checked, which is why these are here rather than at the top.
+			if mustBeSigned && len(action.OpenIDConfigs) == 0 && state.ValidateToken == nil {
+				return fmt.Errorf("validate-jwt requires a configured token validator")
+			}
+			if mustBeSigned && len(action.OpenIDConfigs) > 0 && state.ValidateTokenAgainst == nil {
+				return fmt.Errorf("validate-jwt openid-config requires a configured discovery fetcher")
+			}
 			var discovered []string
-			signatureOK := false
-			if len(action.OpenIDConfigs) > 0 {
+			signatureOK := !mustBeSigned
+			if !mustBeSigned {
+				// Nothing to check the signature against, so nothing names an
+				// issuer either: an <issuers> the policy gave still applies.
+			} else if len(action.OpenIDConfigs) > 0 {
 				issuers, err := state.ValidateTokenAgainst(token, action.OpenIDConfigs)
 				signatureOK, discovered = err == nil, issuers
 			} else {
@@ -2062,6 +2145,16 @@ func executeActions(actions []Action, state *State) error {
 			if !signatureOK || claimsErr != nil || !tokenIsCurrent(action, claims, state) || !enforceTokenConstraints(action, claims, discovered) {
 				state.Returned, state.StatusCode, state.Body = true, code, message
 				return nil
+			}
+			// "Name of context variable that will receive token value as an
+			// object of type Jwt upon successful token validation."
+			if action.OutputTokenVariable != "" {
+				value := expr.JwtValue(token)
+				if state.VariableObjects == nil {
+					state.VariableObjects = map[string]expr.Value{}
+				}
+				state.VariableObjects[action.OutputTokenVariable] = value
+
 			}
 		case ActionIPFilter:
 			if state.Request == nil {
