@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -544,20 +545,32 @@ func TestGatewayFaultControls(t *testing.T) {
 	if hosts := customHostnames(map[string]any{"properties": map[string]any{"hostnameConfigurations": []any{"invalid", map[string]any{"hostName": "portal.example"}}}}); !hosts["portal.example"] {
 		t.Fatalf("custom host extraction = %#v", hosts)
 	}
-	if runtime.rateLimit("client", 2, time.Minute) || runtime.rateLimit("client", 2, time.Minute) || !runtime.rateLimit("client", 2, time.Minute) {
+	if runtime.rateLimit("client", 2, time.Minute).Exceeded || runtime.rateLimit("client", 2, time.Minute).Exceeded || !runtime.rateLimit("client", 2, time.Minute).Exceeded {
 		t.Fatal("rate limiter did not enforce calls")
 	}
-	if runtime.rateLimit("other", 1, time.Minute) {
+	if runtime.rateLimit("other", 1, time.Minute).Exceeded {
 		t.Fatal("separate rate key was limited")
 	}
-	if runtime.bandwidthLimit("bw", -1, 4, time.Minute) || runtime.bandwidthLimit("bw", 3, 4, time.Minute) || !runtime.bandwidthLimit("bw", 2, 4, time.Minute) {
+	// The counters the rate-limit attributes report come from here, so they are
+	// worth asserting as values and not just as a tripped/not-tripped flag.
+	firstCall := runtime.rateLimit("counted", 3, time.Minute)
+	secondCall := runtime.rateLimit("counted", 3, time.Minute)
+	if firstCall.Remaining != 2 || secondCall.Remaining != 1 || firstCall.RetryAfter != 0 {
+		t.Fatalf("remaining calls = %+v then %+v", firstCall, secondCall)
+	}
+	runtime.rateLimit("counted", 3, time.Minute)
+	fullWindow := runtime.rateLimit("counted", 3, time.Minute)
+	if !fullWindow.Exceeded || fullWindow.Remaining != 0 || fullWindow.RetryAfter <= 0 || fullWindow.RetryAfter > time.Minute {
+		t.Fatalf("exhausted window = %+v", fullWindow)
+	}
+	if runtime.bandwidthLimit("bw", -1, 4, time.Minute).Exceeded || runtime.bandwidthLimit("bw", 3, 4, time.Minute).Exceeded || !runtime.bandwidthLimit("bw", 2, 4, time.Minute).Exceeded {
 		t.Fatal("bandwidth limiter did not enforce budget")
 	}
-	if runtime.bandwidthLimit("other-bw", 1, 4, time.Minute) {
+	if runtime.bandwidthLimit("other-bw", 1, 4, time.Minute).Exceeded {
 		t.Fatal("separate bandwidth key was limited")
 	}
 	runtime.bandwidthWindows["expired-bw"] = []bandwidthStamp{{at: time.Now().Add(-time.Hour), bytes: 8}}
-	if runtime.bandwidthLimit("expired-bw", 1, 4, time.Second) {
+	if runtime.bandwidthLimit("expired-bw", 1, 4, time.Second).Exceeded {
 		t.Fatal("expired bandwidth window was limited")
 	}
 	runtime.cacheSet("cache", http.StatusOK, http.Header{"X-Test": {"yes"}}, "body", time.Minute)
@@ -2240,6 +2253,7 @@ func TestKeylessRateLimitCountsPerSubscription(t *testing.T) {
 			}},
 		},
 	}})
+	var lastResponse *httptest.ResponseRecorder
 	call := func(key string) int {
 		response := httptest.NewRecorder()
 		request := httptest.NewRequest(http.MethodGet, "http://emulator.example.test/api", nil)
@@ -2247,6 +2261,7 @@ func TestKeylessRateLimitCountsPerSubscription(t *testing.T) {
 			request.Header.Set("Ocp-Apim-Subscription-Key", key)
 		}
 		runtime.ServeHTTP(response, request)
+		lastResponse = response
 		return response.Code
 	}
 	if code := call("key-a"); code != http.StatusOK {
@@ -2254,6 +2269,13 @@ func TestKeylessRateLimitCountsPerSubscription(t *testing.T) {
 	}
 	if code := call("key-a"); code != http.StatusTooManyRequests {
 		t.Fatalf("second call for sub-a = %d, want 429", code)
+	}
+	// The 429 carries a wait the caller can act on. It was the literal string
+	// "true" until the limiter started reporting an interval.
+	retryAfter := lastResponse.Header().Get("Retry-After")
+	seconds, err := strconv.Atoi(retryAfter)
+	if err != nil || seconds < 1 || seconds > 60 {
+		t.Fatalf("Retry-After on the throttled response = %q", retryAfter)
 	}
 	if code := call("key-b"); code != http.StatusOK {
 		t.Fatalf("sub-b throttled by sub-a's traffic = %d", code)

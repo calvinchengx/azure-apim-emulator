@@ -615,12 +615,14 @@ func TestRateLimitPolicies(t *testing.T) {
 	}
 	state := &State{Request: httptest.NewRequest(http.MethodGet, "/", nil)}
 	count := 0
-	state.RateLimit = func(key string, calls int, period time.Duration) bool {
+	state.RateLimit = func(key string, calls int, period time.Duration) LimitDecision {
 		if key != "client" || calls != 2 || period != time.Minute {
 			t.Fatalf("limiter args = %q %d %s", key, calls, period)
 		}
 		count++
-		return count > 2
+		// 41.5s rounds up to 42: Retry-After is a whole number of seconds, and
+		// rounding down would tell the caller to retry while still limited.
+		return LimitDecision{Exceeded: count > 2, RetryAfter: 41500 * time.Millisecond}
 	}
 	if err := Execute(plan.Inbound, state); err != nil || state.Returned {
 		t.Fatalf("first limit = %+v, %v", state, err)
@@ -628,7 +630,7 @@ func TestRateLimitPolicies(t *testing.T) {
 	if err := Execute(plan.Inbound, state); err != nil || state.Returned {
 		t.Fatalf("second limit = %+v, %v", state, err)
 	}
-	if err := Execute(plan.Inbound, state); err != nil || !state.Returned || state.StatusCode != http.StatusTooManyRequests || state.Headers.Get("Retry-After") != "true" {
+	if err := Execute(plan.Inbound, state); err != nil || !state.Returned || state.StatusCode != http.StatusTooManyRequests || state.Headers.Get("Retry-After") != "42" {
 		t.Fatalf("limited request = %+v, %v", state, err)
 	}
 	for _, value := range []string{
@@ -644,16 +646,18 @@ func TestRateLimitPolicies(t *testing.T) {
 		t.Fatal(err)
 	}
 	exprKey := ""
-	if err := Execute(exprLimit.Inbound, &State{RateLimit: func(key string, _ int, _ time.Duration) bool {
+	if err := Execute(exprLimit.Inbound, &State{RateLimit: func(key string, _ int, _ time.Duration) LimitDecision {
 		exprKey = key
-		return false
+		return LimitDecision{Exceeded: false}
 	}}); err != nil || exprKey != "1" {
 		t.Fatalf("quota-by-key expression key = %q, %v", exprKey, err)
 	}
 	if err := Execute(plan.Inbound, &State{}); err == nil {
 		t.Fatal("rate-limit without limiter accepted")
 	}
-	emptyKey := &State{Request: httptest.NewRequest(http.MethodGet, "/", nil), RateLimit: func(key string, _ int, _ time.Duration) bool { return key == "127.0.0.1:0" }}
+	emptyKey := &State{Request: httptest.NewRequest(http.MethodGet, "/", nil), RateLimit: func(key string, _ int, _ time.Duration) LimitDecision {
+		return LimitDecision{Exceeded: key == "127.0.0.1:0"}
+	}}
 	emptyKey.Request.RemoteAddr = "127.0.0.1:0"
 	if err := Execute([]Action{{Kind: ActionRateLimit, LimitCalls: 1, LimitPeriod: time.Minute, StatusCode: http.StatusTooManyRequests}}, emptyKey); err != nil || !emptyKey.Returned {
 		t.Fatalf("empty counter key = %+v, %v", emptyKey, err)
@@ -673,11 +677,15 @@ func TestSharedLimitAndResponsePolicies(t *testing.T) {
 	if err != nil || quota.Inbound[0].Value != "quota" || quota.Inbound[0].StatusCode != http.StatusForbidden || quota.Inbound[0].LimitPeriod != time.Hour {
 		t.Fatalf("quota action = %+v, %v", quota, err)
 	}
-	limited := &State{Subscription: &expr.SubscriptionContext{Id: "sub-a"}, RateLimit: func(key string, _ int, _ time.Duration) bool { return key == "sub-a/rate-limit" }}
-	if err := Execute(rate.Inbound, limited); err != nil || !limited.Returned || limited.StatusCode != http.StatusTooManyRequests || limited.Headers.Get("X-Retry") != "true" {
+	limited := &State{Subscription: &expr.SubscriptionContext{Id: "sub-a"}, RateLimit: func(key string, _ int, _ time.Duration) LimitDecision {
+		return LimitDecision{Exceeded: key == "sub-a/rate-limit"}
+	}}
+	if err := Execute(rate.Inbound, limited); err != nil || !limited.Returned || limited.StatusCode != http.StatusTooManyRequests || limited.Headers.Get("X-Retry") != "1" {
 		t.Fatalf("rate-limit execute = %+v, %v", limited, err)
 	}
-	quotaState := &State{Subscription: &expr.SubscriptionContext{Id: "sub-a"}, RateLimit: func(key string, _ int, _ time.Duration) bool { return key == "sub-a/quota" }}
+	quotaState := &State{Subscription: &expr.SubscriptionContext{Id: "sub-a"}, RateLimit: func(key string, _ int, _ time.Duration) LimitDecision {
+		return LimitDecision{Exceeded: key == "sub-a/quota"}
+	}}
 	if err := Execute(quota.Inbound, quotaState); err != nil || !quotaState.Returned || quotaState.StatusCode != http.StatusForbidden {
 		t.Fatalf("quota execute = %+v, %v", quotaState, err)
 	}
@@ -751,9 +759,9 @@ func TestSharedLimitAndResponsePolicies(t *testing.T) {
 		t.Fatalf("nested rate-limit = %+v, %v", nested, err)
 	}
 	nestedHits := map[string]int{}
-	nestedState := &State{Subscription: &expr.SubscriptionContext{Id: "sub-a"}, RateLimit: func(key string, _ int, _ time.Duration) bool {
+	nestedState := &State{Subscription: &expr.SubscriptionContext{Id: "sub-a"}, RateLimit: func(key string, _ int, _ time.Duration) LimitDecision {
 		nestedHits[key]++
-		return false
+		return LimitDecision{Exceeded: false}
 	}}
 	if err := Execute(nested.Inbound, nestedState); err != nil || nestedHits["sub-a/rate-limit"] != 1 || nestedHits["sub-a/rate-limit/api/demo"] != 1 || nestedHits["sub-a/rate-limit/api/operation/get"] != 1 {
 		t.Fatalf("nested rate-limit execute = %v %v", nestedHits, err)
@@ -766,9 +774,9 @@ func TestSharedLimitAndResponsePolicies(t *testing.T) {
 		t.Fatal("quota bandwidth without limiter accepted")
 	}
 	used := int64(0)
-	bwState := &State{Subscription: &expr.SubscriptionContext{Id: "sub-a"}, Request: httptest.NewRequest(http.MethodPost, "/", strings.NewReader("abcd")), BandwidthLimit: func(key string, add, budget int64, _ time.Duration) bool {
+	bwState := &State{Subscription: &expr.SubscriptionContext{Id: "sub-a"}, Request: httptest.NewRequest(http.MethodPost, "/", strings.NewReader("abcd")), BandwidthLimit: func(key string, add, budget int64, _ time.Duration) LimitDecision {
 		used += add
-		return used > budget
+		return LimitDecision{Exceeded: used > budget}
 	}}
 	if err := Execute(bandwidth.Inbound, bwState); err != nil || bwState.Returned {
 		t.Fatalf("first bandwidth = %+v, %v", bwState, err)
@@ -819,8 +827,8 @@ func TestSharedLimitAndResponsePolicies(t *testing.T) {
 	if err := Execute(anyLost.Inbound, &State{}); err == nil {
 		t.Fatal("wait any lost last error")
 	}
-	sizeState := &State{Request: httptest.NewRequest(http.MethodPost, "/", strings.NewReader("xyz")), BandwidthLimit: func(_ string, add, _ int64, _ time.Duration) bool {
-		return add != 3
+	sizeState := &State{Request: httptest.NewRequest(http.MethodPost, "/", strings.NewReader("xyz")), BandwidthLimit: func(_ string, add, _ int64, _ time.Duration) LimitDecision {
+		return LimitDecision{Exceeded: add != 3}
 	}}
 	if err := Execute(bandwidth.Inbound, sizeState); err != nil || sizeState.Returned {
 		t.Fatalf("content-length bandwidth = %+v, %v", sizeState, err)
@@ -887,18 +895,18 @@ func TestSharedLimitAndResponsePolicies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := Execute(childErr.Inbound, &State{Subscription: &expr.SubscriptionContext{Id: "sub-a"}, BandwidthLimit: func(string, int64, int64, time.Duration) bool { return false }}); err == nil {
+	if err := Execute(childErr.Inbound, &State{Subscription: &expr.SubscriptionContext{Id: "sub-a"}, BandwidthLimit: func(string, int64, int64, time.Duration) LimitDecision { return LimitDecision{Exceeded: false} }}); err == nil {
 		t.Fatal("nested calls without rate limiter accepted")
 	}
 	limitState := &State{Request: httptest.NewRequest(http.MethodGet, "/", nil)}
 	limitState.Request.RemoteAddr = "10.0.0.8"
-	if err := Execute([]Action{{Kind: ActionRateLimit, LimitCalls: 1, LimitPeriod: time.Second, StatusCode: http.StatusTooManyRequests, Body: "Retry-After"}}, &State{Request: limitState.Request, RateLimit: func(key string, _ int, _ time.Duration) bool {
-		return key != "10.0.0.8"
+	if err := Execute([]Action{{Kind: ActionRateLimit, LimitCalls: 1, LimitPeriod: time.Second, StatusCode: http.StatusTooManyRequests, Body: "Retry-After"}}, &State{Request: limitState.Request, RateLimit: func(key string, _ int, _ time.Duration) LimitDecision {
+		return LimitDecision{Exceeded: key != "10.0.0.8"}
 	}}); err != nil {
 		t.Fatalf("empty key remote addr = %v", err)
 	}
-	exceeded := &State{RateLimit: func(string, int, time.Duration) bool { return true }}
-	if err := Execute([]Action{{Kind: ActionRateLimit, Value: "k", LimitCalls: 1, LimitPeriod: time.Second, StatusCode: http.StatusTooManyRequests, Body: "Retry-After"}}, exceeded); err != nil || exceeded.Headers.Get("Retry-After") != "true" {
+	exceeded := &State{RateLimit: func(string, int, time.Duration) LimitDecision { return LimitDecision{Exceeded: true} }}
+	if err := Execute([]Action{{Kind: ActionRateLimit, Value: "k", LimitCalls: 1, LimitPeriod: time.Second, StatusCode: http.StatusTooManyRequests, Body: "Retry-After"}}, exceeded); err != nil || exceeded.Headers.Get("Retry-After") != "1" {
 		t.Fatalf("limitExceeded headers = %+v, %v", exceeded, err)
 	}
 	busy, err := Compile(`<policies><inbound><limit-concurrency key="k" max-count="1"><wait><choose><when condition="@(1 / 0)"/></choose></wait></limit-concurrency></inbound></policies>`, true)
@@ -2219,8 +2227,8 @@ func TestAccessExpressionPolicies(t *testing.T) {
 		request.Header.Set("Origin", "https://app.example")
 		state := &State{
 			Request: request,
-			RateLimit: func(string, int, time.Duration) bool {
-				return false
+			RateLimit: func(string, int, time.Duration) LimitDecision {
+				return LimitDecision{Exceeded: false}
 			},
 			AcquireConcurrency: func(string, int) func() {
 				return func() {}
@@ -2722,7 +2730,7 @@ func TestKeylessLimitsAreScopedToTheSubscription(t *testing.T) {
 
 		// An anonymous caller is not counted at all: the limiter is never asked.
 		asked := false
-		anonymous := &State{RateLimit: func(string, int, time.Duration) bool { asked = true; return true }}
+		anonymous := &State{RateLimit: func(string, int, time.Duration) LimitDecision { asked = true; return LimitDecision{Exceeded: true} }}
 		if err := Execute(plan.Inbound, anonymous); err != nil || anonymous.Returned || asked {
 			t.Fatalf("%s counted an anonymous caller: returned=%v asked=%v err=%v", name, anonymous.Returned, asked, err)
 		}
@@ -2731,9 +2739,9 @@ func TestKeylessLimitsAreScopedToTheSubscription(t *testing.T) {
 		// untouched. A shared bucket would throttle a caller for someone else's
 		// traffic.
 		seen := map[string]int{}
-		limiter := func(key string, calls int, _ time.Duration) bool {
+		limiter := func(key string, calls int, _ time.Duration) LimitDecision {
 			seen[key]++
-			return seen[key] > calls
+			return LimitDecision{Exceeded: seen[key] > calls}
 		}
 		for _, id := range []string{"sub-a", "sub-a", "sub-b"} {
 			state := &State{Subscription: &expr.SubscriptionContext{Id: id}, RateLimit: limiter}
@@ -2752,7 +2760,10 @@ func TestKeylessLimitsAreScopedToTheSubscription(t *testing.T) {
 		// because the counter is the subscription and not the presented key.
 		shared := map[string]int{}
 		for _, key := range []string{"primary", "secondary"} {
-			state := &State{Subscription: &expr.SubscriptionContext{Id: "sub-c", Key: key}, RateLimit: func(k string, _ int, _ time.Duration) bool { shared[k]++; return false }}
+			state := &State{Subscription: &expr.SubscriptionContext{Id: "sub-c", Key: key}, RateLimit: func(k string, _ int, _ time.Duration) LimitDecision {
+				shared[k]++
+				return LimitDecision{Exceeded: false}
+			}}
 			if err := Execute(plan.Inbound, state); err != nil {
 				t.Fatal(err)
 			}
@@ -2782,8 +2793,51 @@ func TestKeylessLimitsAreScopedToTheSubscription(t *testing.T) {
 		t.Fatalf("rate-limit-by-key scoped to a subscription: %+v, %v", byKey.Inbound[0], err)
 	}
 	keyed := ""
-	state := &State{RateLimit: func(k string, _ int, _ time.Duration) bool { keyed = k; return false }}
+	state := &State{RateLimit: func(k string, _ int, _ time.Duration) LimitDecision { keyed = k; return LimitDecision{Exceeded: false} }}
 	if err := Execute(byKey.Inbound, state); err != nil || keyed != "fixed" {
 		t.Fatalf("rate-limit-by-key counter = %q, %v", keyed, err)
+	}
+}
+
+// TestRateLimitReportsItsCounters covers the five attributes the rate-limit pair
+// uses to report a counter back to the caller. Retry-After carried the literal
+// string "true" before this, which no client can wait on.
+func TestRateLimitReportsItsCounters(t *testing.T) {
+	plan, err := Compile(`<policies><inbound><rate-limit-by-key calls="3" renewal-period="60" counter-key="k"`+
+		` retry-after-header-name="X-Retry" retry-after-variable-name="retryIn"`+
+		` remaining-calls-header-name="X-Remaining" remaining-calls-variable-name="left"`+
+		` total-calls-header-name="X-Total"/></inbound></policies>`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Not limited: the remaining and total counters are reported anyway, because
+	// the reference says they are written after each policy execution.
+	allowed := &State{Headers: make(http.Header), RateLimit: func(string, int, time.Duration) LimitDecision {
+		return LimitDecision{Remaining: 2}
+	}}
+	if err := Execute(plan.Inbound, allowed); err != nil || allowed.Returned {
+		t.Fatalf("allowed request = %+v, %v", allowed, err)
+	}
+	if allowed.Headers.Get("X-Remaining") != "2" || allowed.Headers.Get("X-Total") != "3" || allowed.Variables["left"] != "2" {
+		t.Fatalf("counters on an allowed request = %v %v", allowed.Headers, allowed.Variables)
+	}
+	if allowed.Headers.Get("X-Retry") != "" || allowed.Variables["retryIn"] != "" {
+		t.Fatalf("retry-after reported without a limit: %v %v", allowed.Headers, allowed.Variables)
+	}
+
+	// Limited: the wait comes from the limiter and is a whole number of seconds,
+	// rounded up so the caller does not retry while still limited.
+	limited := &State{Headers: make(http.Header), RateLimit: func(string, int, time.Duration) LimitDecision {
+		return LimitDecision{Exceeded: true, RetryAfter: 2500 * time.Millisecond}
+	}}
+	if err := Execute(plan.Inbound, limited); err != nil || !limited.Returned || limited.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("limited request = %+v, %v", limited, err)
+	}
+	if limited.Headers.Get("X-Retry") != "3" || limited.Variables["retryIn"] != "3" {
+		t.Fatalf("retry-after = %q header, %q variable", limited.Headers.Get("X-Retry"), limited.Variables["retryIn"])
+	}
+	if limited.Headers.Get("X-Remaining") != "0" || limited.Headers.Get("X-Total") != "3" {
+		t.Fatalf("counters on a limited request = %v", limited.Headers)
 	}
 }
