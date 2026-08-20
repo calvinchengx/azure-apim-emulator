@@ -545,21 +545,30 @@ func TestGatewayFaultControls(t *testing.T) {
 	if hosts := customHostnames(map[string]any{"properties": map[string]any{"hostnameConfigurations": []any{"invalid", map[string]any{"hostName": "portal.example"}}}}); !hosts["portal.example"] {
 		t.Fatalf("custom host extraction = %#v", hosts)
 	}
-	if runtime.rateLimit("client", 2, time.Minute).Exceeded || runtime.rateLimit("client", 2, time.Minute).Exceeded || !runtime.rateLimit("client", 2, time.Minute).Exceeded {
+	if runtime.rateLimit("client", 2, time.Minute, 1).Exceeded || runtime.rateLimit("client", 2, time.Minute, 1).Exceeded || !runtime.rateLimit("client", 2, time.Minute, 1).Exceeded {
 		t.Fatal("rate limiter did not enforce calls")
 	}
-	if runtime.rateLimit("other", 1, time.Minute).Exceeded {
+	if runtime.rateLimit("other", 1, time.Minute, 1).Exceeded {
 		t.Fatal("separate rate key was limited")
 	}
 	// The counters the rate-limit attributes report come from here, so they are
 	// worth asserting as values and not just as a tripped/not-tripped flag.
-	firstCall := runtime.rateLimit("counted", 3, time.Minute)
-	secondCall := runtime.rateLimit("counted", 3, time.Minute)
+	firstCall := runtime.rateLimit("counted", 3, time.Minute, 1)
+	secondCall := runtime.rateLimit("counted", 3, time.Minute, 1)
 	if firstCall.Remaining != 2 || secondCall.Remaining != 1 || firstCall.RetryAfter != 0 {
 		t.Fatalf("remaining calls = %+v then %+v", firstCall, secondCall)
 	}
-	runtime.rateLimit("counted", 3, time.Minute)
-	fullWindow := runtime.rateLimit("counted", 3, time.Minute)
+	// An increment-count larger than the allowance overshoots it, and remaining
+	// reports 0 rather than a negative number of calls.
+	over := runtime.rateLimit("overshoot", 2, time.Minute, 5)
+	if over.Exceeded || over.Remaining != 0 {
+		t.Fatalf("overshooting increment = %+v, want remaining 0", over)
+	}
+	if next := runtime.rateLimit("overshoot", 2, time.Minute, 1); !next.Exceeded {
+		t.Fatalf("call after an overshooting increment = %+v, want exceeded", next)
+	}
+	runtime.rateLimit("counted", 3, time.Minute, 1)
+	fullWindow := runtime.rateLimit("counted", 3, time.Minute, 1)
 	if !fullWindow.Exceeded || fullWindow.Remaining != 0 || fullWindow.RetryAfter <= 0 || fullWindow.RetryAfter > time.Minute {
 		t.Fatalf("exhausted window = %+v", fullWindow)
 	}
@@ -2279,5 +2288,51 @@ func TestKeylessRateLimitCountsPerSubscription(t *testing.T) {
 	}
 	if code := call("key-b"); code != http.StatusOK {
 		t.Fatalf("sub-b throttled by sub-a's traffic = %d", code)
+	}
+}
+
+// TestPostponedIncrementDependsOnTheResponse drives the reason Microsoft
+// postpones an expression increment at all: the counter can depend on how the
+// call turned out. A backend that keeps failing never consumes the caller's
+// allowance, so the caller is never throttled for it.
+func TestPostponedIncrementDependsOnTheResponse(t *testing.T) {
+	status := http.StatusInternalServerError
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(status)
+	}))
+	defer backend.Close()
+
+	plan, err := policy.Compile(`<policies><inbound><rate-limit-by-key calls="1" renewal-period="60" counter-key="caller" `+
+		`increment-condition="@(context.Response.StatusCode == 200)"/></inbound></policies>`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime := New("fallback", nil)
+	runtime.current.Store(&Snapshot{Services: map[string]*Service{
+		"emulator": {Name: "emulator", Hostnames: map[string]bool{"emulator.example.test": true}, Routes: []*Route{{
+			API:        model.API{Path: "api", ServiceURL: backend.URL},
+			Operations: []model.Operation{{Method: http.MethodGet, URLTemplate: "/"}},
+			Plan:       plan,
+		}}},
+	}})
+	call := func() int {
+		response := httptest.NewRecorder()
+		runtime.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "http://emulator.example.test/api", nil))
+		return response.Code
+	}
+
+	// Failures are not counted, so the allowance of one is never consumed.
+	for attempt := 1; attempt <= 4; attempt++ {
+		if code := call(); code != http.StatusInternalServerError {
+			t.Fatalf("failing call %d = %d, want the backend's 500 rather than a throttle", attempt, code)
+		}
+	}
+	// The first success consumes it, and the next call is throttled.
+	status = http.StatusOK
+	if code := call(); code != http.StatusOK {
+		t.Fatalf("first successful call = %d", code)
+	}
+	if code := call(); code != http.StatusTooManyRequests {
+		t.Fatalf("call after the allowance was consumed = %d, want 429", code)
 	}
 }

@@ -25,8 +25,7 @@
       "name": "rate-limit",
       "status": "implemented",
       "sections": [
-        "inbound",
-        "outbound"
+        "inbound"
       ],
       "gateways": [
         "classic",
@@ -39,10 +38,9 @@
     },
     {
       "name": "rate-limit-by-key",
-      "status": "partial",
+      "status": "implemented",
       "sections": [
-        "inbound",
-        "outbound"
+        "inbound"
       ],
       "gateways": [
         "classic",
@@ -52,15 +50,13 @@
       ],
       "expression_fields": [
         "counter-key"
-      ],
-      "notes": "increment-condition and increment-count are accepted and ignored, so a policy that counts only some requests counts all of them"
+      ]
     },
     {
       "name": "quota",
       "status": "implemented",
       "sections": [
-        "inbound",
-        "outbound"
+        "inbound"
       ],
       "gateways": [
         "classic",
@@ -73,10 +69,9 @@
     },
     {
       "name": "quota-by-key",
-      "status": "partial",
+      "status": "implemented",
       "sections": [
-        "inbound",
-        "outbound"
+        "inbound"
       ],
       "gateways": [
         "classic",
@@ -86,8 +81,7 @@
       ],
       "expression_fields": [
         "counter-key"
-      ],
-      "notes": "increment-condition and increment-count are accepted and ignored, so a policy that counts only some requests counts all of them"
+      ]
     },
     {
       "name": "limit-concurrency",
