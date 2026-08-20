@@ -337,7 +337,7 @@ func TestSOAPBackendClientAndOutboundFailures(t *testing.T) {
 
 		if _, err := fixture.store.UpsertPolicy(model.Policy{
 			ScopeID: serviceID + "/apis/orders",
-			Value:   `<policies><outbound><validate-jwt header-name="Authorization" /></outbound></policies>`,
+			Value:   `<policies><outbound><xsl-transform/></outbound></policies>`,
 		}); err != nil {
 			t.Fatal(err)
 		}

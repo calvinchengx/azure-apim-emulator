@@ -1,0 +1,286 @@
+{
+  "commit": "f31ac8723a622ba3950df57ba0389d8347f546ab",
+  "policies": {
+    "authentication-basic": [
+      "inbound"
+    ],
+    "authentication-certificate": [
+      "inbound"
+    ],
+    "authentication-managed-identity": [
+      "inbound"
+    ],
+    "azure-openai-emit-token-metric": [
+      "inbound"
+    ],
+    "azure-openai-token-limit": [
+      "inbound"
+    ],
+    "cache-lookup": [
+      "inbound"
+    ],
+    "cache-lookup-value": [
+      "inbound",
+      "backend",
+      "outbound",
+      "on-error"
+    ],
+    "cache-remove-value": [
+      "inbound",
+      "backend",
+      "outbound",
+      "on-error"
+    ],
+    "cache-store": [
+      "outbound"
+    ],
+    "cache-store-value": [
+      "inbound",
+      "backend",
+      "outbound",
+      "on-error"
+    ],
+    "check-header": [
+      "inbound"
+    ],
+    "choose": [
+      "inbound",
+      "backend",
+      "outbound",
+      "on-error"
+    ],
+    "cors": [
+      "inbound"
+    ],
+    "cosmosdb-data-source": [],
+    "cross-domain": [
+      "inbound"
+    ],
+    "emit-metric": [
+      "inbound",
+      "backend",
+      "outbound",
+      "on-error"
+    ],
+    "find-and-replace": [
+      "inbound",
+      "backend",
+      "outbound",
+      "on-error"
+    ],
+    "forward-request": [
+      "backend"
+    ],
+    "get-authorization-context": [
+      "inbound"
+    ],
+    "http-data-source": [],
+    "include-fragment": [
+      "inbound",
+      "backend",
+      "outbound",
+      "on-error"
+    ],
+    "invoke-dapr-binding": [
+      "inbound",
+      "outbound",
+      "on-error"
+    ],
+    "ip-filter": [
+      "inbound"
+    ],
+    "json-to-xml": [
+      "inbound",
+      "outbound",
+      "on-error"
+    ],
+    "jsonp": [
+      "outbound"
+    ],
+    "limit-concurrency": [
+      "inbound",
+      "backend",
+      "outbound",
+      "on-error"
+    ],
+    "llm-content-safety": [
+      "inbound",
+      "outbound"
+    ],
+    "llm-emit-token-metric": [
+      "inbound"
+    ],
+    "llm-semantic-cache-lookup": [
+      "inbound"
+    ],
+    "llm-semantic-cache-store": [
+      "outbound"
+    ],
+    "llm-token-limit": [
+      "inbound"
+    ],
+    "log-to-eventhub": [
+      "inbound",
+      "backend",
+      "outbound",
+      "on-error"
+    ],
+    "mock-response": [
+      "inbound",
+      "outbound",
+      "on-error"
+    ],
+    "proxy": [
+      "inbound"
+    ],
+    "publish-event": [],
+    "publish-to-dapr": [
+      "inbound"
+    ],
+    "quota": [
+      "inbound"
+    ],
+    "quota-by-key": [
+      "inbound"
+    ],
+    "rate-limit": [
+      "inbound"
+    ],
+    "rate-limit-by-key": [
+      "inbound"
+    ],
+    "redirect-content-urls": [
+      "inbound",
+      "outbound"
+    ],
+    "retry": [
+      "inbound",
+      "backend",
+      "outbound",
+      "on-error"
+    ],
+    "return-response": [
+      "inbound",
+      "backend",
+      "outbound",
+      "on-error"
+    ],
+    "rewrite-uri": [
+      "inbound"
+    ],
+    "send-one-way-request": [
+      "inbound",
+      "backend",
+      "outbound",
+      "on-error"
+    ],
+    "send-request": [
+      "inbound",
+      "backend",
+      "outbound",
+      "on-error"
+    ],
+    "send-service-bus-message": [
+      "inbound",
+      "outbound",
+      "on-error"
+    ],
+    "set-backend-service": [
+      "inbound",
+      "backend"
+    ],
+    "set-body": [
+      "inbound",
+      "backend",
+      "outbound"
+    ],
+    "set-header": [
+      "inbound",
+      "backend",
+      "outbound",
+      "on-error"
+    ],
+    "set-method": [
+      "inbound",
+      "on-error"
+    ],
+    "set-query-parameter": [
+      "inbound",
+      "backend"
+    ],
+    "set-status": [
+      "inbound",
+      "backend",
+      "outbound",
+      "on-error"
+    ],
+    "set-variable": [
+      "inbound",
+      "backend",
+      "outbound",
+      "on-error"
+    ],
+    "sql-data-source": [],
+    "trace": [
+      "inbound",
+      "backend",
+      "outbound",
+      "on-error"
+    ],
+    "validate-azure-ad-token": [
+      "inbound"
+    ],
+    "validate-client-certificate": [
+      "inbound"
+    ],
+    "validate-content": [
+      "inbound",
+      "outbound",
+      "on-error"
+    ],
+    "validate-graphql-request": [
+      "inbound"
+    ],
+    "validate-headers": [
+      "outbound",
+      "on-error"
+    ],
+    "validate-jwt": [
+      "inbound"
+    ],
+    "validate-odata-request": [
+      "inbound"
+    ],
+    "validate-parameters": [
+      "inbound"
+    ],
+    "validate-status-code": [
+      "outbound",
+      "on-error"
+    ],
+    "wait": [
+      "inbound",
+      "backend",
+      "outbound"
+    ],
+    "xml-to-json": [
+      "inbound",
+      "outbound",
+      "on-error"
+    ],
+    "xsl-transform": [
+      "inbound",
+      "outbound"
+    ]
+  },
+  "snippets": {
+    "commit": "87225c2090e45add095919e8767c37d9ece42e0c",
+    "source": "Azure/api-management-policy-snippets",
+    "widens": {
+      "trace": [
+        "on-error"
+      ]
+    }
+  },
+  "source": "MicrosoftDocs/azure-docs articles/api-management"
+}

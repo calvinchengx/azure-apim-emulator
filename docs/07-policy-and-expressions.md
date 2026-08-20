@@ -56,11 +56,26 @@ mutability and lifetime. Policies never receive the storage layer directly.
 ## Policy inventory
 
 All policies in Microsoft's live policy reference are classified in the checked-in
-inventory (`docs/generated/policy-inventory.json`) with status, section hints,
-gateway support, and known expression-bearing fields. `scripts/check_policy_inventory.py
---strict` fails CI when any stable name is `unclassified` or when compiler
-recognition drifts from `implemented`/`partial`. XML schema, remaining
-expression-bearing fields, dependencies, and roadmap owner columns remain open.
+inventory (`docs/generated/policy-inventory.json`) with status, the sections the
+policy is valid in, gateway support, and known expression-bearing fields.
+`scripts/check_policy_inventory.py --strict` fails CI when any stable name is
+`unclassified` or when compiler recognition drifts from `implemented`/`partial`.
+XML schema, remaining expression-bearing fields, dependencies, and roadmap owner
+columns remain open.
+
+The `sections` field is DERIVED, not written. Every policy reference page carries
+a `Policy sections:` line naming where that policy may appear, and Azure rejects a
+document that puts one anywhere else. The hand-written field was wrong for all
+four limit policies -- the only four anyone had checked -- so
+`scripts/derive_policy_sections.py` reads the line out of the vendored pages and
+writes both the ledger's field and `internal/policy/policy_sections.json`, which
+the compiler embeds. A policy in a section its page does not name compiles to an
+unsupported node, the same as any other policy this emulator will not run.
+`<base/>`, the emulator's own composition names, and the GraphQL resolver
+policies document no section and are never rejected for where they appear.
+
+Gateway support is still hand-written, and unverified in the same way the sections
+were.
 
 Implementation tracks include:
 

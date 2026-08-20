@@ -241,7 +241,7 @@
       "name": "authentication-basic",
       "status": "implemented",
       "sections": [
-        "backend"
+        "inbound"
       ],
       "gateways": [
         "classic",
@@ -259,7 +259,7 @@
       "name": "authentication-certificate",
       "status": "implemented",
       "sections": [
-        "backend"
+        "inbound"
       ],
       "gateways": [
         "classic",
@@ -276,7 +276,7 @@
       "name": "authentication-managed-identity",
       "status": "implemented",
       "sections": [
-        "backend"
+        "inbound"
       ],
       "gateways": [
         "classic",
@@ -312,7 +312,8 @@
       "name": "llm-content-safety",
       "status": "external-adapter",
       "sections": [
-        "inbound"
+        "inbound",
+        "outbound"
       ],
       "gateways": [
         "classic",
@@ -328,7 +329,8 @@
       "status": "implemented",
       "sections": [
         "inbound",
-        "outbound"
+        "outbound",
+        "on-error"
       ],
       "gateways": [
         "classic",
@@ -387,7 +389,8 @@
       "name": "validate-headers",
       "status": "implemented",
       "sections": [
-        "outbound"
+        "outbound",
+        "on-error"
       ],
       "gateways": [
         "classic",
@@ -402,7 +405,8 @@
       "name": "validate-status-code",
       "status": "implemented",
       "sections": [
-        "outbound"
+        "outbound",
+        "on-error"
       ],
       "gateways": [
         "classic",
@@ -451,7 +455,7 @@
       "name": "proxy",
       "status": "unsupported",
       "sections": [
-        "backend"
+        "inbound"
       ],
       "gateways": [
         "classic",
@@ -586,7 +590,8 @@
       "name": "set-method",
       "status": "implemented",
       "sections": [
-        "inbound"
+        "inbound",
+        "on-error"
       ],
       "gateways": [
         "classic",
@@ -644,8 +649,7 @@
       "sections": [
         "inbound",
         "backend",
-        "outbound",
-        "on-error"
+        "outbound"
       ],
       "gateways": [
         "classic",
@@ -680,7 +684,8 @@
       "name": "set-query-parameter",
       "status": "implemented",
       "sections": [
-        "inbound"
+        "inbound",
+        "backend"
       ],
       "gateways": [
         "classic",
@@ -715,7 +720,8 @@
       "status": "implemented",
       "sections": [
         "inbound",
-        "outbound"
+        "outbound",
+        "on-error"
       ],
       "gateways": [
         "classic",
@@ -733,7 +739,8 @@
       "status": "implemented",
       "sections": [
         "inbound",
-        "outbound"
+        "outbound",
+        "on-error"
       ],
       "gateways": [
         "classic",
@@ -749,7 +756,9 @@
       "status": "implemented",
       "sections": [
         "inbound",
-        "outbound"
+        "backend",
+        "outbound",
+        "on-error"
       ],
       "gateways": [
         "classic",
@@ -767,6 +776,7 @@
       "name": "redirect-content-urls",
       "status": "implemented",
       "sections": [
+        "inbound",
         "outbound"
       ],
       "gateways": [
@@ -817,7 +827,8 @@
       "status": "partial",
       "sections": [
         "inbound",
-        "outbound"
+        "outbound",
+        "on-error"
       ],
       "gateways": [
         "classic",
@@ -957,8 +968,8 @@
       "status": "external-adapter",
       "sections": [
         "inbound",
-        "backend",
-        "outbound"
+        "outbound",
+        "on-error"
       ],
       "gateways": [
         "classic"
@@ -969,8 +980,7 @@
       "name": "publish-to-dapr",
       "status": "external-adapter",
       "sections": [
-        "inbound",
-        "backend"
+        "inbound"
       ],
       "gateways": [
         "self-hosted"
@@ -982,7 +992,8 @@
       "status": "external-adapter",
       "sections": [
         "inbound",
-        "backend"
+        "outbound",
+        "on-error"
       ],
       "gateways": [
         "self-hosted"
@@ -1062,9 +1073,7 @@
     {
       "name": "sql-data-source",
       "status": "unsupported",
-      "sections": [
-        "inbound"
-      ],
+      "sections": [],
       "gateways": [
         "classic",
         "v2"
@@ -1074,9 +1083,7 @@
     {
       "name": "cosmosdb-data-source",
       "status": "unsupported",
-      "sections": [
-        "inbound"
-      ],
+      "sections": [],
       "gateways": [
         "classic",
         "v2"
@@ -1086,9 +1093,7 @@
     {
       "name": "http-data-source",
       "status": "unsupported",
-      "sections": [
-        "inbound"
-      ],
+      "sections": [],
       "gateways": [
         "classic",
         "v2",
@@ -1099,9 +1104,7 @@
     {
       "name": "publish-event",
       "status": "unsupported",
-      "sections": [
-        "inbound"
-      ],
+      "sections": [],
       "gateways": [
         "classic",
         "v2",
@@ -1151,7 +1154,10 @@
       "name": "retry",
       "status": "implemented",
       "sections": [
-        "backend"
+        "inbound",
+        "backend",
+        "outbound",
+        "on-error"
       ],
       "gateways": [
         "classic",
@@ -1170,8 +1176,7 @@
       "sections": [
         "inbound",
         "backend",
-        "outbound",
-        "on-error"
+        "outbound"
       ],
       "gateways": [
         "classic",

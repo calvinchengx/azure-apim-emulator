@@ -108,6 +108,7 @@ check-inventory:
 	python3 scripts/check_operation_inventory.py --strict
 	python3 scripts/derive_expression_surface.py --check
 	python3 scripts/derive_limit_attributes.py --check
+	python3 scripts/derive_policy_sections.py --check
 
 # check-format fails on anything gofmt would rewrite. go vet does not look at
 # formatting, so without this an alignment change rides into main unnoticed:

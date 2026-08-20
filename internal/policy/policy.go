@@ -481,30 +481,36 @@ func compileRoot(root node, strict bool) (Plan, error) {
 			return Plan{}, fmt.Errorf("duplicate <%s> section", section.Name)
 		}
 		seen[section.Name] = true
-		actions, err := compileNodes(section.Children, strict)
-		if err != nil {
-			return Plan{}, fmt.Errorf("%s: %w", section.Name, err)
-		}
+		// The section name is settled before its children are compiled, because
+		// the children are now compiled AGAINST it: in an unknown section every
+		// policy is out of place, and reporting one of those would bury the
+		// section that is the actual fault.
+		var target *[]Action
 		switch section.Name {
 		case "inbound":
-			plan.Inbound = actions
+			target = &plan.Inbound
 		case "backend":
-			plan.Backend = actions
+			target = &plan.Backend
 		case "outbound":
-			plan.Outbound = actions
+			target = &plan.Outbound
 		case "on-error":
-			plan.OnError = actions
+			target = &plan.OnError
 		default:
 			return Plan{}, fmt.Errorf("unknown policy section <%s>", section.Name)
 		}
+		actions, err := compileNodes(section.Children, section.Name, strict)
+		if err != nil {
+			return Plan{}, fmt.Errorf("%s: %w", section.Name, err)
+		}
+		*target = actions
 	}
 	return plan, nil
 }
 
-func compileNodes(nodes []node, strict bool) ([]Action, error) {
+func compileNodes(nodes []node, section string, strict bool) ([]Action, error) {
 	var actions []Action
 	for _, item := range nodes {
-		action, _, err := compileNode(item, strict)
+		action, _, err := compileNode(item, section, strict)
 		if err != nil {
 			return nil, err
 		}
@@ -521,7 +527,16 @@ func compileNodes(nodes []node, strict bool) ([]Action, error) {
 	return actions, nil
 }
 
-func compileNode(item node, strict bool) (Action, bool, error) {
+func compileNode(item node, section string, strict bool) (Action, bool, error) {
+	// Where a policy may appear is part of its documented surface, and Azure
+	// rejects a document that puts one in the wrong section. Checked before the
+	// switch, so a policy that is out of place is reported as out of place
+	// rather than for whichever attribute it is also missing. <base/>, the
+	// composition names and the resolver policies document no section, and
+	// documentsSection leaves them alone.
+	if !documentsSection(item.Name, section) {
+		return unsupported(section + "/" + item.Name), true, nil
+	}
 	switch item.Name {
 	case "base":
 		return Action{Kind: ActionBase}, true, nil
@@ -671,13 +686,13 @@ func compileNode(item node, strict bool) (Action, bool, error) {
 		if err != nil {
 			return Action{}, false, err
 		}
-		children, err := compileNodes(item.Children, strict)
+		children, err := compileNodes(item.Children, section, strict)
 		if err != nil {
 			return Action{}, false, err
 		}
 		return Action{Kind: ActionLimitConcurrency, Value: key, LimitCalls: count, StatusCode: http.StatusTooManyRequests, Body: "concurrency limit exceeded", Children: children}, true, nil
 	case "wait":
-		return compileWait(item, strict)
+		return compileWait(item, section, strict)
 	case "cache-lookup":
 		return Action{Kind: ActionCacheLookup}, true, nil
 	case "cache-store":
@@ -832,7 +847,7 @@ func compileNode(item node, strict bool) (Action, bool, error) {
 				if condition == "" {
 					return Action{}, false, fmt.Errorf("choose when requires a condition")
 				}
-				actions, err := compileNodes(child.Children, strict)
+				actions, err := compileNodes(child.Children, section, strict)
 				if err != nil {
 					return Action{}, false, err
 				}
@@ -842,7 +857,7 @@ func compileNode(item node, strict bool) (Action, bool, error) {
 					return Action{}, false, fmt.Errorf("choose has multiple otherwise branches")
 				}
 				otherwiseSeen = true
-				actions, err := compileNodes(child.Children, strict)
+				actions, err := compileNodes(child.Children, section, strict)
 				if err != nil {
 					return Action{}, false, err
 				}
@@ -1060,7 +1075,7 @@ func compileNode(item node, strict bool) (Action, bool, error) {
 			}
 			interval = seconds
 		}
-		children, err := compileNodes(item.Children, strict)
+		children, err := compileNodes(item.Children, section, strict)
 		if err != nil {
 			return Action{}, false, err
 		}
@@ -1353,7 +1368,7 @@ func parseLimitBudget(item node, root string) (int, time.Duration, int64, error)
 	return calls, period, bandwidth, nil
 }
 
-func compileWait(item node, strict bool) (Action, bool, error) {
+func compileWait(item node, section string, strict bool) (Action, bool, error) {
 	mode := strings.ToLower(strings.TrimSpace(item.Attrs["for"]))
 	if mode == "" {
 		mode = "all"
@@ -1368,7 +1383,7 @@ func compileWait(item node, strict bool) (Action, bool, error) {
 			return unsupported(item.Name + "/" + child.Name), true, nil
 		}
 	}
-	children, err := compileNodes(item.Children, strict)
+	children, err := compileNodes(item.Children, section, strict)
 	if err != nil {
 		return Action{}, false, err
 	}

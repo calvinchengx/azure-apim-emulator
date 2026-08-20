@@ -438,13 +438,14 @@ func TestGraphQLSchemaLookupReportsStoreFailures(t *testing.T) {
 }
 
 // An outbound policy that fails must produce a gateway error, not the backend's
-// body with a policy half-applied. validate-jwt with no configured validator is
-// the cheapest way to make outbound fail deterministically.
+// body with a policy half-applied. xsl-transform is the cheapest way to make
+// outbound fail deterministically: it is documented in <outbound> and this
+// emulator does not implement it, so reaching it is an ErrUnsupported.
 func TestGraphQLOutboundPolicyFailureIsReported(t *testing.T) {
 	fixture := newGraphQLFixture(t, "graphql", gatewaySDL, true)
 	if _, err := fixture.store.UpsertPolicy(model.Policy{
 		ScopeID: apiScopeID,
-		Value:   `<policies><outbound><validate-jwt header-name="Authorization" /></outbound></policies>`,
+		Value:   `<policies><outbound><xsl-transform/></outbound></policies>`,
 	}); err != nil {
 		t.Fatal(err)
 	}
