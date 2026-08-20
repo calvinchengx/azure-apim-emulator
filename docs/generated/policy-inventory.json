@@ -202,7 +202,7 @@
         "failed-validation-httpcode",
         "failed-validation-error-message"
       ],
-      "notes": "client-application-ids and required-claims are enforced from the JWT payload; non-empty token-value remains unsupported"
+      "notes": "client-application-ids and required-claims are enforced from the payload, openid-config endpoints and the exp/nbf checks work as they do for validate-jwt; non-empty token-value remains unsupported"
     },
     {
       "name": "validate-jwt",
@@ -218,7 +218,7 @@
         "workspace"
       ],
       "expression_fields": [],
-      "notes": "audiences, issuers, and required-claims are enforced from the JWT payload; openid-config remains unsupported"
+      "notes": "audiences, issuers and required-claims are enforced from the payload, signing keys and issuer are fetched from openid-config endpoints and cached, and exp/nbf are checked honouring require-expiration-time and clock-skew; issuer-signing-keys and decryption-keys are rejected as unsupported, while require-scheme, require-signed-tokens and output-token-variable-name are accepted and silently ignored"
     },
     {
       "name": "validate-client-certificate",
