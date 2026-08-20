@@ -23,7 +23,7 @@
     },
     {
       "name": "rate-limit",
-      "status": "partial",
+      "status": "implemented",
       "sections": [
         "inbound",
         "outbound"
@@ -35,8 +35,7 @@
         "self-hosted",
         "workspace"
       ],
-      "expression_fields": [],
-      "notes": "counter keys are scoped to the subscription and skipped without a subscription key, per the reference; the response and variable attributes (retry-after value, remaining-calls, total-calls), the api/operation id attribute and quota's infinite renewal-period remain open"
+      "expression_fields": []
     },
     {
       "name": "rate-limit-by-key",
@@ -54,7 +53,7 @@
       "expression_fields": [
         "counter-key"
       ],
-      "notes": "counter-key, calls, renewal-period and retry-after-header-name are honoured; increment-condition, increment-count and the remaining-calls, total-calls and retry-after variable attributes are accepted and ignored, so a policy that asks for conditional counting counts every request"
+      "notes": "increment-condition and increment-count are accepted and ignored, so a policy that counts only some requests counts all of them"
     },
     {
       "name": "quota",
@@ -71,7 +70,7 @@
         "workspace"
       ],
       "expression_fields": [],
-      "notes": "counter keys are scoped to the subscription and skipped without a subscription key, per the reference; the response and variable attributes (retry-after value, remaining-calls, total-calls), the api/operation id attribute and quota's infinite renewal-period remain open"
+      "notes": "renewal-period=\"0\" (an infinite period) is rejected, and the window is sliding rather than a fixed window anchored to the subscription's start date"
     },
     {
       "name": "quota-by-key",
@@ -89,7 +88,7 @@
       "expression_fields": [
         "counter-key"
       ],
-      "notes": "counter-key, calls, bandwidth and renewal-period are honoured; increment-condition, increment-count and first-period-start are accepted and ignored, and the renewal window is sliding rather than anchored to first-period-start"
+      "notes": "increment-condition, increment-count and first-period-start are accepted and ignored, the window is sliding rather than fixed, and renewal-period=\"0\" is rejected"
     },
     {
       "name": "limit-concurrency",

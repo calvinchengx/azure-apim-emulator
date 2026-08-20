@@ -641,7 +641,7 @@ func TestRateLimitPolicies(t *testing.T) {
 			t.Fatalf("invalid limit accepted: %s", value)
 		}
 	}
-	exprLimit, err := Compile(`<policies><inbound><quota-by-key calls="1" renewal-period="1" counter-key="@(1)"/></inbound></policies>`, true)
+	exprLimit, err := Compile(`<policies><inbound><quota-by-key calls="1" renewal-period="300" counter-key="@(1)"/></inbound></policies>`, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -759,7 +759,7 @@ func TestSharedLimitAndResponsePolicies(t *testing.T) {
 		t.Fatalf("nested rate-limit = %+v, %v", nested, err)
 	}
 	nestedHits := map[string]int{}
-	nestedState := &State{Subscription: &expr.SubscriptionContext{Id: "sub-a"}, RateLimit: func(key string, _ int, _ time.Duration) LimitDecision {
+	nestedState := &State{Subscription: &expr.SubscriptionContext{Id: "sub-a"}, Api: &expr.ApiContext{Name: "demo"}, Operation: &expr.OperationContext{Name: "get"}, RateLimit: func(key string, _ int, _ time.Duration) LimitDecision {
 		nestedHits[key]++
 		return LimitDecision{Exceeded: false}
 	}}
@@ -895,7 +895,7 @@ func TestSharedLimitAndResponsePolicies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := Execute(childErr.Inbound, &State{Subscription: &expr.SubscriptionContext{Id: "sub-a"}, BandwidthLimit: func(string, int64, int64, time.Duration) LimitDecision { return LimitDecision{Exceeded: false} }}); err == nil {
+	if err := Execute(childErr.Inbound, &State{Subscription: &expr.SubscriptionContext{Id: "sub-a"}, Api: &expr.ApiContext{Name: "demo"}, BandwidthLimit: func(string, int64, int64, time.Duration) LimitDecision { return LimitDecision{Exceeded: false} }}); err == nil {
 		t.Fatal("nested calls without rate limiter accepted")
 	}
 	limitState := &State{Request: httptest.NewRequest(http.MethodGet, "/", nil)}
@@ -2839,5 +2839,151 @@ func TestRateLimitReportsItsCounters(t *testing.T) {
 	}
 	if limited.Headers.Get("X-Remaining") != "0" || limited.Headers.Get("X-Total") != "3" {
 		t.Fatalf("counters on a limited request = %v", limited.Headers)
+	}
+}
+
+// TestNestedLimitsApplyOnlyToTheirTarget pins what a nested <api> or <operation>
+// limit is for. The reference calls it "a call rate limit on APIs within the
+// product", so a limit naming one API must not count a request to another.
+func TestNestedLimitsApplyOnlyToTheirTarget(t *testing.T) {
+	plan, err := Compile(`<policies><inbound><rate-limit calls="10" renewal-period="60">`+
+		`<api name="orders" calls="1"><operation name="create" calls="1"/></api>`+
+		`</rate-limit></inbound></policies>`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	counted := func(api, operation string) []string {
+		var keys []string
+		state := &State{
+			Subscription: &expr.SubscriptionContext{Id: "sub-a"},
+			Api:          &expr.ApiContext{Id: api + "-id", Name: api},
+			Operation:    &expr.OperationContext{Id: operation + "-id", Name: operation},
+			RateLimit: func(key string, _ int, _ time.Duration) LimitDecision {
+				keys = append(keys, key)
+				return LimitDecision{}
+			},
+		}
+		if err := Execute(plan.Inbound, state); err != nil {
+			t.Fatal(err)
+		}
+		return keys
+	}
+
+	// A request to the named API and operation is counted by all three limits.
+	if keys := counted("orders", "create"); len(keys) != 3 {
+		t.Fatalf("orders/create counted against %v", keys)
+	}
+	// A request to a different API is counted by the outer limit only. Counting
+	// it against the orders limit would throttle one API using another's traffic.
+	if keys := counted("billing", "create"); len(keys) != 1 {
+		t.Fatalf("billing/create counted against %v, want the outer limit only", keys)
+	}
+	// Same API, different operation: the api limit applies, the operation's does not.
+	if keys := counted("orders", "cancel"); len(keys) != 2 {
+		t.Fatalf("orders/cancel counted against %v, want the outer and api limits", keys)
+	}
+
+	// A request that matched no API or operation cannot be the one a nested
+	// limit names, so only the outer limit counts it.
+	var unmatched []string
+	bare := &State{
+		Subscription: &expr.SubscriptionContext{Id: "sub-a"},
+		RateLimit: func(key string, _ int, _ time.Duration) LimitDecision {
+			unmatched = append(unmatched, key)
+			return LimitDecision{}
+		},
+	}
+	if err := Execute(plan.Inbound, bare); err != nil {
+		t.Fatal(err)
+	}
+	if len(unmatched) != 1 {
+		t.Fatalf("request with no api context counted against %v", unmatched)
+	}
+	// An operation limit with an api context but no operation context is not
+	// matched either.
+	unmatched = nil
+	bare.Api = &expr.ApiContext{Name: "orders"}
+	if err := Execute(plan.Inbound, bare); err != nil {
+		t.Fatal(err)
+	}
+	if len(unmatched) != 2 {
+		t.Fatalf("request with no operation context counted against %v", unmatched)
+	}
+}
+
+// TestNestedLimitIdWinsOverName pins the reference's tie-break: "If both
+// attributes are provided, id will be used and name will be ignored."
+func TestNestedLimitIdWinsOverName(t *testing.T) {
+	plan, err := Compile(`<policies><inbound><rate-limit calls="10" renewal-period="60">`+
+		`<api name="ignored" id="orders-id" calls="1"/></rate-limit></inbound></policies>`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	counted := func(api *expr.ApiContext) int {
+		hits := 0
+		state := &State{Subscription: &expr.SubscriptionContext{Id: "sub-a"}, Api: api,
+			RateLimit: func(string, int, time.Duration) LimitDecision { hits++; return LimitDecision{} }}
+		if err := Execute(plan.Inbound, state); err != nil {
+			t.Fatal(err)
+		}
+		return hits
+	}
+	if hits := counted(&expr.ApiContext{Id: "orders-id", Name: "something else"}); hits != 2 {
+		t.Fatalf("matching id counted %d limits, want the outer and the api limit", hits)
+	}
+	if hits := counted(&expr.ApiContext{Id: "other-id", Name: "ignored"}); hits != 1 {
+		t.Fatalf("name matched while id was given: counted %d limits", hits)
+	}
+}
+
+// TestLimitRenewalPeriodBounds covers the bounds the two families document in
+// opposite directions.
+func TestLimitRenewalPeriodBounds(t *testing.T) {
+	for _, testCase := range []struct {
+		document string
+		valid    bool
+		reason   string
+	}{
+		{`<rate-limit calls="1" renewal-period="300"/>`, true, "at the sliding-window cap"},
+		{`<rate-limit calls="1" renewal-period="301"/>`, false, "past the sliding-window cap"},
+		{`<rate-limit calls="1" renewal-period="60"><api name="a" calls="1" renewal-period="301"/></rate-limit>`, false, "nested past the cap"},
+		{`<rate-limit-by-key calls="1" renewal-period="300" counter-key="k"/>`, true, "at the sliding-window cap"},
+		{`<rate-limit-by-key calls="1" renewal-period="301" counter-key="k"/>`, false, "past the sliding-window cap"},
+		{`<quota-by-key calls="1" renewal-period="300" counter-key="k"/>`, true, "at the fixed-window minimum"},
+		{`<quota-by-key calls="1" renewal-period="299" counter-key="k"/>`, false, "under the fixed-window minimum"},
+		{`<quota calls="1" renewal-period="86400"/>`, true, "the keyless quota page states no bound"},
+	} {
+		_, err := Compile(`<policies><inbound>`+testCase.document+`</inbound></policies>`, true)
+		if testCase.valid && err != nil {
+			t.Errorf("rejected %s (%s): %v", testCase.document, testCase.reason, err)
+		}
+		if !testCase.valid && err == nil {
+			t.Errorf("accepted %s (%s)", testCase.document, testCase.reason)
+		}
+	}
+}
+
+// TestKeylessLimitOncePerDefinition covers the usage note the keyless pair
+// carries and the by-key pair does not.
+func TestKeylessLimitOncePerDefinition(t *testing.T) {
+	for _, testCase := range []struct {
+		document string
+		valid    bool
+	}{
+		{`<inbound><rate-limit calls="1" renewal-period="60"/><rate-limit calls="2" renewal-period="60"/></inbound>`, false},
+		{`<inbound><rate-limit calls="1" renewal-period="60"/></inbound><outbound><rate-limit calls="2" renewal-period="60"/></outbound>`, false},
+		{`<inbound><quota calls="1" renewal-period="60"/><quota calls="2" renewal-period="60"/></inbound>`, false},
+		// One of each is a single use of each policy.
+		{`<inbound><rate-limit calls="1" renewal-period="60"/><quota calls="2" renewal-period="60"/></inbound>`, true},
+		// The by-key pair carries its own counter key, so repeats are meaningful.
+		{`<inbound><rate-limit-by-key calls="1" renewal-period="60" counter-key="a"/><rate-limit-by-key calls="2" renewal-period="60" counter-key="b"/></inbound>`, true},
+	} {
+		_, err := Compile(`<policies>`+testCase.document+`</policies>`, true)
+		if testCase.valid && err != nil {
+			t.Errorf("rejected %s: %v", testCase.document, err)
+		}
+		if !testCase.valid && err == nil {
+			t.Errorf("accepted a repeated keyless limit: %s", testCase.document)
+		}
 	}
 }
