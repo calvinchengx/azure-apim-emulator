@@ -3399,6 +3399,53 @@ func TestAbsoluteAndOperationHelpers(t *testing.T) {
 
 // testHandlerAt is testHandler over a file-backed store, so a test can open a
 // second connection and install a trigger.
+// The ARM surface reports the lifecycle dates the store stamps, because a
+// caller reproducing a tenant's quota windows has to be able to read the
+// startDate those windows are anchored on. A PUT replacing the document must
+// not silently reset them either.
+func TestSubscriptionSurfaceReportsLifecycleDates(t *testing.T) {
+	handler, st := testHandler(t)
+	seedService(t, st)
+	scope := serviceModel().ID()
+	created := request(t, handler, http.MethodPut, basePath+"/subscriptions/s"+apiQuery,
+		`{"properties":{"displayName":"S","scope":"`+scope+`"}}`)
+	if created.Code != http.StatusCreated {
+		t.Fatalf("create = %d %s", created.Code, created.Body.String())
+	}
+	read := func(recorder *httptest.ResponseRecorder) (string, string) {
+		t.Helper()
+		var body struct {
+			Properties struct {
+				CreatedDate string `json:"createdDate"`
+				StartDate   string `json:"startDate"`
+			} `json:"properties"`
+		}
+		if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+			t.Fatalf("body %s: %v", recorder.Body.String(), err)
+		}
+		return body.Properties.CreatedDate, body.Properties.StartDate
+	}
+	createdDate, startDate := read(created)
+	if createdDate == "" || startDate == "" {
+		t.Fatalf("create response carried no dates: %s", created.Body.String())
+	}
+	if _, err := time.Parse(time.RFC3339, startDate); err != nil {
+		t.Fatalf("startDate %q does not parse as RFC3339: %v", startDate, err)
+	}
+	got := request(t, handler, http.MethodGet, basePath+"/subscriptions/s"+apiQuery, "")
+	if gotCreated, gotStart := read(got); gotCreated != createdDate || gotStart != startDate {
+		t.Fatalf("GET dates = %q, %q, want %q, %q", gotCreated, gotStart, createdDate, startDate)
+	}
+	replaced := request(t, handler, http.MethodPut, basePath+"/subscriptions/s"+apiQuery,
+		`{"properties":{"displayName":"Renamed","scope":"`+scope+`"}}`)
+	if replaced.Code != http.StatusOK {
+		t.Fatalf("replace = %d %s", replaced.Code, replaced.Body.String())
+	}
+	if putCreated, putStart := read(replaced); putCreated != createdDate || putStart != startDate {
+		t.Fatalf("dates after replace = %q, %q, want %q, %q", putCreated, putStart, createdDate, startDate)
+	}
+}
+
 func testHandlerAt(t *testing.T, dir string) (*Handler, *store.Store) {
 	t.Helper()
 	st, err := store.Open(dir, clock.New())

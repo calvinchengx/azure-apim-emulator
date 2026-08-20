@@ -4556,9 +4556,8 @@ func (h *Handler) subscriptionResource(w http.ResponseWriter, r *http.Request, v
 			return
 		}
 		if r.Method == http.MethodPatch {
-			if value.Document == nil {
-				value.Document = subscriptionWire(value, false)
-			}
+			// The store guarantees a document to merge into, including for a
+			// subscription stored before documents were written.
 			mergeObject(value.Document, document)
 		} else {
 			value.Document = document

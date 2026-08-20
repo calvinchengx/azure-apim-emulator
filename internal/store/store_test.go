@@ -1075,6 +1075,117 @@ func TestUpsertNamedValueTransactionErrors(t *testing.T) {
 	})
 }
 
+// Real APIM stamps a subscription with its lifecycle dates when it is created,
+// and <quota> anchors its fixed windows on startDate: a subscription carrying
+// none anchors every window at the Unix epoch instead of at its own start.
+func TestUpsertSubscriptionStampsLifecycleDates(t *testing.T) {
+	ck := clock.New()
+	ck.Freeze()
+	st, err := Open("", ck)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	service, err := st.UpsertService(model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "svc",
+		Location: "local", SKUName: "Developer", SKUCapacity: 1, PublisherName: "Local", PublisherEmail: "local@example.test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dates := func(v model.Subscription) (string, string) {
+		properties, _ := v.Document["properties"].(map[string]any)
+		created, _ := properties["createdDate"].(string)
+		start, _ := properties["startDate"].(string)
+		return created, start
+	}
+	stamped := time.Unix(ck.Now(), 0).UTC().Format(time.RFC3339)
+
+	// A subscription created without a document carries both dates, in the
+	// seconds-precision UTC form the gateway and the policies parse.
+	plain, err := st.UpsertSubscription(model.Subscription{ServiceID: service.ID(), Name: "plain", DisplayName: "Plain", Scope: service.ID()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, start := dates(plain)
+	if created != stamped || start != stamped {
+		t.Fatalf("stamped dates = %q, %q, want %q", created, start, stamped)
+	}
+	if _, err := time.Parse(time.RFC3339, start); err != nil || !strings.HasSuffix(start, "Z") || strings.Contains(start, ".") {
+		t.Fatalf("startDate %q is not the yyyy-MM-ddTHH:mm:ssZ form: %v", start, err)
+	}
+	stored, err := st.GetSubscription(plain.ID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if createdBack, startBack := dates(stored); createdBack != stamped || startBack != stamped {
+		t.Fatalf("read back = %q, %q", createdBack, startBack)
+	}
+
+	// A replacing write is an update rather than a re-creation, so the dates
+	// the subscription was created with survive it. Re-stamping here would move
+	// every quota window a caller had already been counted into.
+	ck.Advance(7200)
+	replaced, err := st.UpsertSubscription(model.Subscription{ServiceID: service.ID(), Name: "plain", DisplayName: "Renamed", Scope: service.ID(),
+		Document: map[string]any{"properties": map[string]any{"displayName": "Renamed"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if createdAfter, startAfter := dates(replaced); createdAfter != stamped || startAfter != stamped {
+		t.Fatalf("dates after replace = %q, %q, want %q", createdAfter, startAfter, stamped)
+	}
+
+	// Dates the caller supplies are authoritative: an operator reproducing a
+	// tenant's window boundaries sets startDate and expects it kept verbatim.
+	supplied, err := st.UpsertSubscription(model.Subscription{ServiceID: service.ID(), Name: "supplied", DisplayName: "Supplied", Scope: service.ID(),
+		Document: map[string]any{"properties": map[string]any{"createdDate": "2020-03-04T05:06:07Z", "startDate": "2020-03-05T00:00:00Z"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created, start := dates(supplied); created != "2020-03-04T05:06:07Z" || start != "2020-03-05T00:00:00Z" {
+		t.Fatalf("supplied dates = %q, %q", created, start)
+	}
+
+	// A document whose properties member is not an object must not lose the
+	// dates to a failed type assertion.
+	malformed, err := st.UpsertSubscription(model.Subscription{ServiceID: service.ID(), Name: "malformed", DisplayName: "Malformed", Scope: service.ID(),
+		Document: map[string]any{"properties": "not an object"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created, start := dates(malformed); created == "" || start == "" {
+		t.Fatalf("malformed properties dropped the dates = %q, %q", created, start)
+	}
+}
+
+// A subscription written before subscriptions carried a document has JSON null
+// stored for it. Reading that back as a nil map would panic the ARM merge that
+// patches it, so the read hands back an object either way.
+func TestGetSubscriptionAlwaysReturnsADocument(t *testing.T) {
+	st, err := Open("", clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	service, err := st.UpsertService(model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "svc",
+		Location: "local", SKUName: "Developer", SKUCapacity: 1, PublisherName: "Local", PublisherEmail: "local@example.test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	subscription, err := st.UpsertSubscription(model.Subscription{ServiceID: service.ID(), Name: "legacy", DisplayName: "Legacy", Scope: service.ID()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.db.Exec(`UPDATE subscription_documents SET document_json='null' WHERE subscription_id=?`, subscription.ID()); err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.GetSubscription(subscription.ID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Document == nil {
+		t.Fatal("a null document was read back as a nil map")
+	}
+}
+
 func TestUpsertSubscriptionTransactionErrors(t *testing.T) {
 	t.Run("document encoding", func(t *testing.T) {
 		st, err := Open("", clock.New())
