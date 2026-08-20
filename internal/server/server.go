@@ -80,15 +80,15 @@ func New(cfg *config.Config, validator auth.RequestValidator, backendClient, jwk
 	seed := model.Service{SubscriptionID: defaultSubscription, ResourceGroup: defaultResourceGroup, Name: cfg.DefaultService, Location: cfg.Location, SKUName: "Developer", SKUCapacity: 1, PublisherName: "Local Emulator", PublisherEmail: "local@azure-apim-emulator.test"}
 	if _, err := st.GetService(seed.ID()); errors.Is(err, store.ErrNotFound) {
 		if _, err := st.UpsertService(seed); err != nil {
-			st.Close()
+			_ = st.Close()
 			return nil, err
 		}
 	} else if err != nil {
-		st.Close()
+		_ = st.Close()
 		return nil, err
 	}
 	if err := runtime.Activate(st, cfg.StrictPolicies); err != nil {
-		st.Close()
+		_ = st.Close()
 		return nil, err
 	}
 	s.register()

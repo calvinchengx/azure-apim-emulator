@@ -264,7 +264,7 @@ func TestNonMCPAPIIsUnaffected(t *testing.T) {
 // down" is what a model needs to decide whether retrying is sensible.
 func TestMCPUnreachableBackendIsAToolError(t *testing.T) {
 	st, _ := store.Open("", clock.New())
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	service, _ := st.UpsertService(model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "emulator", Location: "local"})
 	// Port 0 is never listening, so the dial fails rather than timing out.
 	api, _ := st.UpsertAPI(model.API{
@@ -290,7 +290,7 @@ func TestMCPUnreachableBackendIsAToolError(t *testing.T) {
 // to a user, and an empty name is worse than the identifier.
 func TestMCPServerNameFallsBackToTheAPIIdentifier(t *testing.T) {
 	st, _ := store.Open("", clock.New())
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	service, _ := st.UpsertService(model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "emulator", Location: "local"})
 	_, _ = st.UpsertAPI(model.API{
 		ServiceID: service.ID(), Name: "orders", Path: "orders", ServiceURL: "https://backend.test", IsCurrent: true,
@@ -324,7 +324,7 @@ func TestMCPUnreadableRequestBody(t *testing.T) {
 // A query argument reaches the backend as a query string.
 func TestMCPToolCallCarriesQueryArguments(t *testing.T) {
 	st, _ := store.Open("", clock.New())
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	seen := []string{}
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		seen = append(seen, r.URL.RequestURI())

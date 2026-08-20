@@ -193,7 +193,7 @@ func (stringStaticHost) member(name string) (Value, error) {
 	case "Join":
 		return Object(funcValue{fn: func(args []Value) (Value, error) {
 			if len(args) < 1 || args[0].kind != KindString {
-				return Null(), fmt.Errorf("Join takes a separator and values")
+				return Null(), fmt.Errorf("join takes a separator and values")
 			}
 			parts := make([]string, 0, len(args)-1)
 			for _, arg := range args[1:] {
@@ -215,7 +215,7 @@ func (stringStaticHost) member(name string) (Value, error) {
 // formatted value unformatted is silently wrong.
 func formatString(args []Value) (Value, error) {
 	if len(args) == 0 || args[0].kind != KindString {
-		return Null(), fmt.Errorf("Format takes a format string")
+		return Null(), fmt.Errorf("format takes a format string")
 	}
 	format, values := args[0].str, args[1:]
 	var out strings.Builder

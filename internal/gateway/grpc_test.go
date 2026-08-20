@@ -12,6 +12,7 @@ import (
 	"github.com/calvinchengx/azure-apim-emulator/internal/model"
 	"github.com/calvinchengx/azure-apim-emulator/internal/store"
 	"golang.org/x/net/http2"
+	//nolint:staticcheck // SA1019: see the h2c note below
 	"golang.org/x/net/http2/h2c"
 )
 
@@ -40,6 +41,13 @@ type grpcFixture struct {
 func newGRPCFixture(t *testing.T, apiType, proto string, handler http.HandlerFunc) *grpcFixture {
 	t.Helper()
 	fixture := &grpcFixture{}
+	// DEFERRED, not kept on principle. x/net/http2/h2c is deprecated in favour
+	// of http.Server.Protocols with SetUnencryptedHTTP2, which arrived in Go
+	// 1.24. The migration is not a rename: h2c.NewHandler serves both the
+	// prior-knowledge and the Upgrade handshakes, and the gRPC tests here
+	// exercise both, so swapping it needs its own change with those paths
+	// re-verified rather than a line edit inside a lint sweep.
+	//nolint:staticcheck // SA1019: h2c migration tracked separately
 	backend := httptest.NewUnstartedServer(h2c.NewHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fixture.seen = r.Clone(r.Context())
 		handler(w, r)
@@ -52,7 +60,7 @@ func newGRPCFixture(t *testing.T, apiType, proto string, handler http.HandlerFun
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { st.Close() })
+	t.Cleanup(func() { _ = st.Close() })
 	fixture.store = st
 	service, err := st.UpsertService(model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "emulator", Location: "local"})
 	if err != nil {
@@ -255,7 +263,7 @@ func TestGRPCActivationReportsABrokenSchema(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	service, _ := st.UpsertService(model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "emulator", Location: "local"})
 	api, _ := st.UpsertAPI(model.API{
 		ServiceID: service.ID(), Name: "orders", DisplayName: "Orders", Path: "", ServiceURL: "http://backend.test",
@@ -279,7 +287,7 @@ func TestGRPCActivationReportsABrokenSchema(t *testing.T) {
 	if route := runtime.current.Load().Services["emulator"].Routes[0]; route.GRPC != nil {
 		t.Fatal("a schema that failed to compile must leave the route non-gRPC")
 	}
-	st.Close()
+	_ = st.Close()
 	if _, err := grpcSchemaFor(st, api); err == nil {
 		t.Fatal("a store read failure must be reported")
 	}
@@ -290,7 +298,7 @@ func TestGRPCSchemaLookupIgnoresOtherContentTypes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	service, _ := st.UpsertService(model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "emulator", Location: "local"})
 	api, _ := st.UpsertAPI(model.API{
 		ServiceID: service.ID(), Name: "orders", Path: "", IsCurrent: true,
@@ -392,7 +400,7 @@ func TestGRPCWithoutABackendURL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	service, _ := st.UpsertService(model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "emulator", Location: "local"})
 	api, _ := st.UpsertAPI(model.API{
 		ServiceID: service.ID(), Name: "orders", DisplayName: "Orders", Path: "", IsCurrent: true,

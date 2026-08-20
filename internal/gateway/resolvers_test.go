@@ -36,7 +36,7 @@ func newSyntheticFixture(t *testing.T, resolvers map[string]string) *syntheticFi
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { st.Close() })
+	t.Cleanup(func() { _ = st.Close() })
 	service, err := st.UpsertService(model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "emulator", Location: "local"})
 	if err != nil {
 		t.Fatal(err)
@@ -227,7 +227,7 @@ func TestResolverBindingIsCheckedAgainstTheSchema(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer st.Close()
+			defer func() { _ = st.Close() }()
 			service, _ := st.UpsertService(model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "emulator", Location: "local"})
 			api, _ := st.UpsertAPI(model.API{
 				ServiceID: service.ID(), Name: "shop", DisplayName: "Shop", Path: "shop", IsCurrent: true,
@@ -259,7 +259,7 @@ func TestResolverWithoutAPolicyIsRefused(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	service, _ := st.UpsertService(model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "emulator", Location: "local"})
 	api, _ := st.UpsertAPI(model.API{
 		ServiceID: service.ID(), Name: "shop", DisplayName: "Shop", Path: "shop", IsCurrent: true,
@@ -307,7 +307,7 @@ func TestGraphQLResolversForSkipsNonGraphQLAPIs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	resolvers, err := graphQLResolversFor(st, model.API{}, nil)
 	if err != nil || resolvers != nil {
 		t.Fatalf("a non-GraphQL API has no resolvers, got %v %v", resolvers, err)
@@ -403,7 +403,7 @@ func TestGraphQLResolversForReportsStoreFailures(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	st.Close()
+	_ = st.Close()
 	if _, err := graphQLResolversFor(st, api, schema); err == nil {
 		t.Fatal("a failed resolver read must be reported")
 	}

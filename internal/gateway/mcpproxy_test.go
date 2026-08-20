@@ -251,7 +251,7 @@ func TestMCPPassthroughModeDetection(t *testing.T) {
 	// A non-MCP API is never a passthrough, whatever it declares.
 	upstream := newUpstreamMCP(t, func(w http.ResponseWriter, r *http.Request, body string) {})
 	st, _ := store.Open("", clock.New())
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	service, _ := st.UpsertService(model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "emulator", Location: "local"})
 	_, _ = st.UpsertAPI(model.API{
 		ServiceID: service.ID(), Name: "rest", DisplayName: "Rest", Path: "rest",

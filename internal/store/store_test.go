@@ -19,7 +19,7 @@ func TestStoreResourceLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 
 	service := model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "svc", Location: "local", SKUName: "Developer", SKUCapacity: 1, PublisherName: "Local", PublisherEmail: "local@example.test", Document: map[string]any{"tags": map[string]any{"environment": "test"}}}
 	service, err = st.UpsertService(service)
@@ -109,13 +109,13 @@ func TestOpenMemoryIsolationAndIDs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer a.Close()
+	defer func() { _ = a.Close() }()
 	b, err := Open("", clock.New())
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer b.Close()
-	if NewOpaqueID() == NewOpaqueID() {
+	defer func() { _ = b.Close() }()
+	if a, b := NewOpaqueID(), NewOpaqueID(); a == b {
 		t.Fatal("opaque IDs collided")
 	}
 	if values, err := b.ListServices(); err != nil || len(values) != 0 {
@@ -128,7 +128,7 @@ func TestAPIAndOperationLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	service, err := st.UpsertService(model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "svc"})
 	if err != nil {
 		t.Fatal(err)
@@ -190,7 +190,7 @@ func TestUpsertOperationTransactionErrors(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer st.Close()
+		defer func() { _ = st.Close() }()
 		if _, err := st.UpsertOperation(model.Operation{Document: map[string]any{"bad": make(chan int)}}); err == nil {
 			t.Fatal("operation accepted an unsupported document")
 		}
@@ -210,7 +210,7 @@ func TestUpsertOperationTransactionErrors(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer st.Close()
+		defer func() { _ = st.Close() }()
 		if _, err := st.UpsertOperation(model.Operation{APIID: "/missing", Name: "operation"}); err == nil {
 			t.Fatal("operation with a missing API was accepted")
 		}
@@ -220,7 +220,7 @@ func TestUpsertOperationTransactionErrors(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer st.Close()
+		defer func() { _ = st.Close() }()
 		service, _ := st.UpsertService(model.Service{Name: "svc"})
 		api, _ := st.UpsertAPI(model.API{ServiceID: service.ID(), Name: "api"})
 		if _, err := st.db.Exec(`CREATE TRIGGER reject_operation_document BEFORE INSERT ON operation_documents BEGIN SELECT RAISE(FAIL, 'rejected'); END`); err != nil {
@@ -242,7 +242,7 @@ func TestUpsertProductTransactionErrors(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer st.Close()
+		defer func() { _ = st.Close() }()
 		if _, err := st.UpsertProduct(model.Product{Document: map[string]any{"bad": make(chan int)}}); err == nil {
 			t.Fatal("product accepted an unsupported document")
 		}
@@ -262,7 +262,7 @@ func TestUpsertProductTransactionErrors(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer st.Close()
+		defer func() { _ = st.Close() }()
 		if _, err := st.UpsertProduct(model.Product{ServiceID: "/missing", Name: "product"}); err == nil {
 			t.Fatal("product with a missing service was accepted")
 		}
@@ -272,7 +272,7 @@ func TestUpsertProductTransactionErrors(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer st.Close()
+		defer func() { _ = st.Close() }()
 		service, _ := st.UpsertService(model.Service{Name: "svc"})
 		if _, err := st.db.Exec(`CREATE TRIGGER reject_product_document BEFORE INSERT ON product_documents BEGIN SELECT RAISE(FAIL, 'rejected'); END`); err != nil {
 			t.Fatal(err)
@@ -292,7 +292,7 @@ func TestScopedDeleteRollsBackFailures(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	service, err := st.UpsertService(model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "svc"})
 	if err != nil {
 		t.Fatal(err)
@@ -329,7 +329,7 @@ func TestScopedDeleteRollsBackTagCleanupFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	service, err := st.UpsertService(model.Service{Name: "svc"})
 	if err != nil {
 		t.Fatal(err)
@@ -629,7 +629,7 @@ func TestRuntimeDataStopsAtEachQueryFailure(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer st.Close()
+			defer func() { _ = st.Close() }()
 			if _, err := st.db.Exec("DROP TABLE " + table); err != nil {
 				t.Fatal(err)
 			}
@@ -979,7 +979,7 @@ func TestUpsertCertificateTransactionErrors(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer st.Close()
+		defer func() { _ = st.Close() }()
 		if _, err := st.UpsertCertificate(model.Certificate{Document: map[string]any{"bad": make(chan int)}}); err == nil {
 			t.Fatal("certificate accepted an unsupported document")
 		}
@@ -999,7 +999,7 @@ func TestUpsertCertificateTransactionErrors(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer st.Close()
+		defer func() { _ = st.Close() }()
 		if _, err := st.UpsertCertificate(model.Certificate{ServiceID: "/missing", Name: "certificate"}); err == nil {
 			t.Fatal("certificate with a missing service was accepted")
 		}
@@ -1009,7 +1009,7 @@ func TestUpsertCertificateTransactionErrors(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer st.Close()
+		defer func() { _ = st.Close() }()
 		service, _ := st.UpsertService(model.Service{Name: "svc"})
 		if _, err := st.db.Exec(`CREATE TRIGGER reject_certificate_document BEFORE INSERT ON certificate_documents BEGIN SELECT RAISE(FAIL, 'rejected'); END`); err != nil {
 			t.Fatal(err)
@@ -1030,7 +1030,7 @@ func TestUpsertNamedValueTransactionErrors(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer st.Close()
+		defer func() { _ = st.Close() }()
 		if _, err := st.UpsertNamedValue(model.NamedValue{Document: map[string]any{"bad": make(chan int)}}); err == nil {
 			t.Fatal("named value accepted an unsupported document")
 		}
@@ -1050,7 +1050,7 @@ func TestUpsertNamedValueTransactionErrors(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer st.Close()
+		defer func() { _ = st.Close() }()
 		if _, err := st.UpsertNamedValue(model.NamedValue{ServiceID: "/missing", Name: "value"}); err == nil {
 			t.Fatal("named value with a missing service was accepted")
 		}
@@ -1060,7 +1060,7 @@ func TestUpsertNamedValueTransactionErrors(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer st.Close()
+		defer func() { _ = st.Close() }()
 		service, _ := st.UpsertService(model.Service{Name: "svc"})
 		if _, err := st.db.Exec(`CREATE TRIGGER reject_named_value_document BEFORE INSERT ON named_value_documents BEGIN SELECT RAISE(FAIL, 'rejected'); END`); err != nil {
 			t.Fatal(err)
@@ -1085,7 +1085,7 @@ func TestUpsertSubscriptionStampsLifecycleDates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	service, err := st.UpsertService(model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "svc",
 		Location: "local", SKUName: "Developer", SKUCapacity: 1, PublisherName: "Local", PublisherEmail: "local@example.test"})
 	if err != nil {
@@ -1164,7 +1164,7 @@ func TestGetSubscriptionAlwaysReturnsADocument(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	service, err := st.UpsertService(model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "svc",
 		Location: "local", SKUName: "Developer", SKUCapacity: 1, PublisherName: "Local", PublisherEmail: "local@example.test"})
 	if err != nil {
@@ -1192,7 +1192,7 @@ func TestUpsertSubscriptionTransactionErrors(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer st.Close()
+		defer func() { _ = st.Close() }()
 		if _, err := st.UpsertSubscription(model.Subscription{Document: map[string]any{"bad": make(chan int)}}); err == nil {
 			t.Fatal("subscription accepted an unsupported document")
 		}
@@ -1212,7 +1212,7 @@ func TestUpsertSubscriptionTransactionErrors(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer st.Close()
+		defer func() { _ = st.Close() }()
 		if _, err := st.UpsertSubscription(model.Subscription{ServiceID: "/missing", Name: "subscription"}); err == nil {
 			t.Fatal("subscription with a missing service was accepted")
 		}
@@ -1222,7 +1222,7 @@ func TestUpsertSubscriptionTransactionErrors(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer st.Close()
+		defer func() { _ = st.Close() }()
 		service, _ := st.UpsertService(model.Service{Name: "svc"})
 		if _, err := st.db.Exec(`CREATE TRIGGER reject_subscription_document BEFORE INSERT ON subscription_documents BEGIN SELECT RAISE(FAIL, 'rejected'); END`); err != nil {
 			t.Fatal(err)
@@ -1243,7 +1243,7 @@ func TestUpsertUserTransactionErrors(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer st.Close()
+		defer func() { _ = st.Close() }()
 		if _, err := st.UpsertUser(model.User{Document: map[string]any{"bad": make(chan int)}}); err == nil {
 			t.Fatal("user accepted an unsupported document")
 		}
@@ -1263,7 +1263,7 @@ func TestUpsertUserTransactionErrors(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer st.Close()
+		defer func() { _ = st.Close() }()
 		if _, err := st.UpsertUser(model.User{ServiceID: "/missing", Name: "user"}); err == nil {
 			t.Fatal("user with a missing service was accepted")
 		}
@@ -1273,7 +1273,7 @@ func TestUpsertUserTransactionErrors(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer st.Close()
+		defer func() { _ = st.Close() }()
 		service, _ := st.UpsertService(model.Service{Name: "svc"})
 		if _, err := st.db.Exec(`CREATE TRIGGER reject_user_document BEFORE INSERT ON user_documents BEGIN SELECT RAISE(FAIL, 'rejected'); END`); err != nil {
 			t.Fatal(err)
@@ -1294,7 +1294,7 @@ func TestUpsertPolicyFragmentTransactionErrors(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer st.Close()
+		defer func() { _ = st.Close() }()
 		if _, err := st.UpsertPolicyFragment(model.PolicyFragment{Document: map[string]any{"bad": make(chan int)}}); err == nil {
 			t.Fatal("policy fragment accepted an unsupported document")
 		}
@@ -1314,7 +1314,7 @@ func TestUpsertPolicyFragmentTransactionErrors(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer st.Close()
+		defer func() { _ = st.Close() }()
 		if _, err := st.UpsertPolicyFragment(model.PolicyFragment{ServiceID: "/missing", Name: "fragment"}); err == nil {
 			t.Fatal("policy fragment with a missing service was accepted")
 		}
@@ -1324,7 +1324,7 @@ func TestUpsertPolicyFragmentTransactionErrors(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer st.Close()
+		defer func() { _ = st.Close() }()
 		service, _ := st.UpsertService(model.Service{Name: "svc"})
 		if _, err := st.db.Exec(`CREATE TRIGGER reject_fragment_document BEFORE INSERT ON policy_fragment_documents BEGIN SELECT RAISE(FAIL, 'rejected'); END`); err != nil {
 			t.Fatal(err)
@@ -1345,7 +1345,7 @@ func TestUpsertTagTransactionErrors(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer st.Close()
+		defer func() { _ = st.Close() }()
 		if _, err := st.UpsertTag(model.Tag{Document: map[string]any{"bad": make(chan int)}}); err == nil {
 			t.Fatal("tag accepted an unsupported document")
 		}
@@ -1365,7 +1365,7 @@ func TestUpsertTagTransactionErrors(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer st.Close()
+		defer func() { _ = st.Close() }()
 		if _, err := st.UpsertTag(model.Tag{ServiceID: "/missing", Name: "tag"}); err == nil {
 			t.Fatal("tag with a missing service was accepted")
 		}
@@ -1375,7 +1375,7 @@ func TestUpsertTagTransactionErrors(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer st.Close()
+		defer func() { _ = st.Close() }()
 		service, _ := st.UpsertService(model.Service{Name: "svc"})
 		if _, err := st.db.Exec(`CREATE TRIGGER reject_tag_document BEFORE INSERT ON tag_documents BEGIN SELECT RAISE(FAIL, 'rejected'); END`); err != nil {
 			t.Fatal(err)
@@ -1396,7 +1396,7 @@ func TestUpsertAPIVersionSetTransactionErrors(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer st.Close()
+		defer func() { _ = st.Close() }()
 		if _, err := st.UpsertAPIVersionSet(model.APIVersionSet{Document: map[string]any{"bad": make(chan int)}}); err == nil {
 			t.Fatal("version set accepted an unsupported document")
 		}
@@ -1416,7 +1416,7 @@ func TestUpsertAPIVersionSetTransactionErrors(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer st.Close()
+		defer func() { _ = st.Close() }()
 		if _, err := st.UpsertAPIVersionSet(model.APIVersionSet{ServiceID: "/missing", Name: "versions"}); err == nil {
 			t.Fatal("version set with a missing service was accepted")
 		}
@@ -1426,7 +1426,7 @@ func TestUpsertAPIVersionSetTransactionErrors(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer st.Close()
+		defer func() { _ = st.Close() }()
 		service, _ := st.UpsertService(model.Service{Name: "svc"})
 		if _, err := st.db.Exec(`CREATE TRIGGER reject_version_set_document BEFORE INSERT ON api_version_set_documents BEGIN SELECT RAISE(FAIL, 'rejected'); END`); err != nil {
 			t.Fatal(err)
@@ -1447,7 +1447,7 @@ func TestUpsertGroupTransactionErrors(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer st.Close()
+		defer func() { _ = st.Close() }()
 		if _, err := st.UpsertGroup(model.Group{Document: map[string]any{"bad": make(chan int)}}); err == nil {
 			t.Fatal("group accepted an unsupported document")
 		}
@@ -1467,7 +1467,7 @@ func TestUpsertGroupTransactionErrors(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer st.Close()
+		defer func() { _ = st.Close() }()
 		if _, err := st.UpsertGroup(model.Group{ServiceID: "/missing", Name: "group"}); err == nil {
 			t.Fatal("group with a missing service was accepted")
 		}
@@ -1477,7 +1477,7 @@ func TestUpsertGroupTransactionErrors(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer st.Close()
+		defer func() { _ = st.Close() }()
 		service, _ := st.UpsertService(model.Service{Name: "svc"})
 		if _, err := st.db.Exec(`CREATE TRIGGER reject_group_document BEFORE INSERT ON group_documents BEGIN SELECT RAISE(FAIL, 'rejected'); END`); err != nil {
 			t.Fatal(err)
@@ -1497,7 +1497,7 @@ func TestTagAssociations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	service, err := st.UpsertService(model.Service{Name: "svc"})
 	if err != nil {
 		t.Fatal(err)
@@ -1566,7 +1566,7 @@ func TestGroupAndProductAssociations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	service, err := st.UpsertService(model.Service{Name: "svc"})
 	if err != nil {
 		t.Fatal(err)
@@ -1636,7 +1636,7 @@ func TestUserAndGroupMemberships(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	service, err := st.UpsertService(model.Service{Name: "svc"})
 	if err != nil {
 		t.Fatal(err)
@@ -1713,7 +1713,7 @@ func TestPolicyFragmentLifecycleAndReferences(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	service, err := st.UpsertService(model.Service{Name: "svc"})
 	if err != nil {
 		t.Fatal(err)
@@ -1775,7 +1775,7 @@ func TestUpsertServiceTransactionErrors(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer st.Close()
+		defer func() { _ = st.Close() }()
 		service := model.Service{Name: "bad", Document: map[string]any{"unsupported": func() {}}}
 		if _, err := st.UpsertService(service); err == nil {
 			t.Fatal("unsupported document was accepted")
@@ -1790,7 +1790,7 @@ func TestUpsertServiceTransactionErrors(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer st.Close()
+		defer func() { _ = st.Close() }()
 		api := model.API{Name: "bad", Document: map[string]any{"unsupported": func() {}}}
 		if _, err := st.UpsertAPI(api); err == nil {
 			t.Fatal("unsupported API document was accepted")
@@ -1802,7 +1802,7 @@ func TestUpsertServiceTransactionErrors(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer st.Close()
+		defer func() { _ = st.Close() }()
 		if _, err := st.db.Exec(`CREATE TRIGGER reject_builtin_group BEFORE INSERT ON groups BEGIN SELECT RAISE(FAIL, 'rejected'); END`); err != nil {
 			t.Fatal(err)
 		}
@@ -1820,7 +1820,7 @@ func TestUpsertServiceTransactionErrors(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer st.Close()
+		defer func() { _ = st.Close() }()
 		if _, err := st.db.Exec(`CREATE TRIGGER reject_document BEFORE INSERT ON resource_documents BEGIN SELECT RAISE(FAIL, 'rejected'); END`); err != nil {
 			t.Fatal(err)
 		}
@@ -1851,7 +1851,7 @@ func TestUpsertAPITransactionErrors(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer st.Close()
+		defer func() { _ = st.Close() }()
 		service, err := st.UpsertService(model.Service{Name: "svc"})
 		if err != nil {
 			t.Fatal(err)
@@ -1873,7 +1873,7 @@ func TestUpsertAPITransactionErrors(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer st.Close()
+		defer func() { _ = st.Close() }()
 		service, err := st.UpsertService(model.Service{Name: "svc"})
 		if err != nil {
 			t.Fatal(err)
@@ -1895,7 +1895,7 @@ func TestUpsertAPITransactionErrors(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer st.Close()
+		defer func() { _ = st.Close() }()
 		service, err := st.UpsertService(model.Service{Name: "svc"})
 		if err != nil {
 			t.Fatal(err)
@@ -2125,7 +2125,7 @@ func TestAPIVersionSetOwnership(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	owner, _ := st.UpsertService(model.Service{Name: "owner"})
 	other, _ := st.UpsertService(model.Service{Name: "other"})
 	versionSet, err := st.UpsertAPIVersionSet(model.APIVersionSet{ServiceID: owner.ID(), Name: "versions", DisplayName: "Versions", VersioningScheme: "Segment"})
@@ -2142,7 +2142,7 @@ func TestNamedValueLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	service, err := st.UpsertService(model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "named-values"})
 	if err != nil {
 		t.Fatal(err)
@@ -2178,7 +2178,7 @@ func TestBackendLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	service, err := st.UpsertService(model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "backends"})
 	if err != nil {
 		t.Fatal(err)
@@ -2214,7 +2214,7 @@ func TestCertificateLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	service, err := st.UpsertService(model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "certificates"})
 	if err != nil {
 		t.Fatal(err)
@@ -2261,7 +2261,7 @@ func TestDocumentationLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	service, err := st.UpsertService(model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "docs"})
 	if err != nil {
 		t.Fatal(err)
@@ -2297,7 +2297,7 @@ func TestDocumentationJSONFailures(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	bad := make(chan int)
 	if _, err := st.UpsertDocumentation(model.Documentation{Document: map[string]any{"bad": bad}}); err == nil {
 		t.Fatal("documentation document marshal succeeded")
@@ -2318,7 +2318,7 @@ func TestAuthorizationServerLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	service, err := st.UpsertService(model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "oauth"})
 	if err != nil {
 		t.Fatal(err)
@@ -2356,7 +2356,7 @@ func TestAuthorizationServerJSONFailures(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	bad := make(chan int)
 	if _, err := st.UpsertAuthorizationServer(model.AuthorizationServer{Document: map[string]any{"bad": bad}}); err == nil {
 		t.Fatal("authorization server document marshal succeeded")
@@ -2383,7 +2383,7 @@ func TestOpenIDConnectProviderLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	service, err := st.UpsertService(model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "oidcs"})
 	if err != nil {
 		t.Fatal(err)
@@ -2420,7 +2420,7 @@ func TestOpenIDConnectProviderJSONFailures(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	bad := make(chan int)
 	if _, err := st.UpsertOpenIDConnectProvider(model.OpenIDConnectProvider{Document: map[string]any{"bad": bad}}); err == nil {
 		t.Fatal("openid connect provider document marshal succeeded")
@@ -2441,7 +2441,7 @@ func TestIdentityProviderLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	service, err := st.UpsertService(model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "idps"})
 	if err != nil {
 		t.Fatal(err)
@@ -2477,7 +2477,7 @@ func TestIdentityProviderJSONFailures(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	bad := make(chan int)
 	if _, err := st.UpsertIdentityProvider(model.IdentityProvider{Document: map[string]any{"bad": bad}}); err == nil {
 		t.Fatal("identity provider document marshal succeeded")
@@ -2504,7 +2504,7 @@ func TestCacheLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	service, err := st.UpsertService(model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "caches"})
 	if err != nil {
 		t.Fatal(err)
@@ -2541,7 +2541,7 @@ func TestCacheJSONFailures(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	bad := make(chan int)
 	if _, err := st.UpsertCache(model.Cache{Document: map[string]any{"bad": bad}}); err == nil {
 		t.Fatal("cache document marshal succeeded")
@@ -2562,7 +2562,7 @@ func TestLoggerDiagnosticAndEventLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	service, err := st.UpsertService(model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "svc"})
 	if err != nil {
 		t.Fatal(err)
@@ -2658,7 +2658,7 @@ func TestLoggerDiagnosticJSONFailures(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	bad := make(chan int)
 	if _, err := st.UpsertLogger(model.Logger{Credentials: map[string]string{}, Document: map[string]any{"bad": bad}}); err == nil {
 		t.Fatal("logger document marshal succeeded after credentials")
@@ -2695,7 +2695,7 @@ func TestDiagnosticTransactionFailures(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	service, _ := st.UpsertService(model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "svc"})
 	api, _ := st.UpsertAPI(model.API{ServiceID: service.ID(), Name: "api"})
 	logger, _ := st.UpsertLogger(model.Logger{ServiceID: service.ID(), Name: "logger"})
@@ -2724,7 +2724,7 @@ func TestImportedAPILifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	service, _ := st.UpsertService(model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "svc"})
 	api := model.API{ServiceID: service.ID(), Name: "imported", DisplayName: "Imported", Path: "/api/", ServiceURL: "https://backend", Protocols: []string{"https"}}
 	definition := model.APIDefinition{Format: "openapi+json", Value: `{}`, SourceURL: "https://source"}
@@ -2789,7 +2789,7 @@ func TestCloneAPIDefinitionFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	service, _ := st.UpsertService(model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "svc"})
 	api, _ := st.ImportAPI(model.API{ServiceID: service.ID(), Name: "api"}, model.APIDefinition{Value: "source"}, nil, nil)
 	db, err := sql.Open("sqlite", filepath.Join(dir, "azure-apim-emulator.db"))
@@ -2830,7 +2830,7 @@ func TestImportAPITransactionFailures(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer st.Close()
+			defer func() { _ = st.Close() }()
 			service, _ := st.UpsertService(model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "svc"})
 			api, _ := st.UpsertAPI(model.API{ServiceID: service.ID(), Name: "api"})
 			_, _ = st.UpsertOperation(model.Operation{APIID: api.ID(), Name: "old"})
@@ -2853,7 +2853,7 @@ func TestImportAPITransactionFailures(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer st.Close()
+		defer func() { _ = st.Close() }()
 		api := model.API{Document: map[string]any{"bad": make(chan int)}}
 		if _, err := st.ImportAPI(api, model.APIDefinition{}, nil, nil); err == nil {
 			t.Fatal("import accepted an unsupported API document")
@@ -2864,7 +2864,7 @@ func TestImportAPITransactionFailures(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer st.Close()
+		defer func() { _ = st.Close() }()
 		service, err := st.UpsertService(model.Service{Name: "svc"})
 		if err != nil {
 			t.Fatal(err)
@@ -2882,7 +2882,7 @@ func TestAPISchemaLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	service, err := st.UpsertService(model.Service{Name: "schemas"})
 	if err != nil {
 		t.Fatal(err)
@@ -2938,7 +2938,7 @@ func TestUpsertAPISchemaTransactionErrors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	if _, err := st.UpsertAPISchema(model.APISchema{APIID: "missing", Name: "schema"}); err == nil {
 		t.Fatal("schema accepted missing API")
 	}
@@ -2994,7 +2994,7 @@ func TestUpsertAPIResolverRejectsUnencodableDocuments(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	if _, err := st.UpsertAPIResolver(model.APIResolver{
 		APIID: "/apis/a", Name: "r", Type: "Query", Field: "f",
 		Document: map[string]any{"bad": make(chan int)},
@@ -3010,7 +3010,7 @@ func TestCredentialManagerRejectsUnencodableDocuments(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	bad := map[string]any{"bad": make(chan int)}
 	if _, err := st.UpsertAuthorizationProvider(model.AuthorizationProvider{ServiceID: "/s", Name: "p", Document: bad}); err == nil {
 		t.Error("an unencodable provider document must be reported")

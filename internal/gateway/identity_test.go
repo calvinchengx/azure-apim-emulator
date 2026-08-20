@@ -22,7 +22,7 @@ func TestPolicyReadsTheCallersIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
@@ -111,7 +111,7 @@ func TestPolicyReadsTheCallersIdentity(t *testing.T) {
 // an anonymous one, because `context.User != null` is a question a policy asks.
 func TestUnownedSubscriptionLeavesTheUserNull(t *testing.T) {
 	st, _ := store.Open("", clock.New())
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	service, _ := st.UpsertService(model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "emulator", Location: "local"})
 	for _, document := range []map[string]any{
 		nil,
@@ -139,7 +139,7 @@ func TestIdentityGraphLoadFailuresStopActivation(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer st.Close()
+			defer func() { _ = st.Close() }()
 			service, _ := st.UpsertService(model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "emulator", Location: "local"})
 			user, _ := st.UpsertUser(model.User{ServiceID: service.ID(), Name: "ada", Email: "ada@example.test"})
 			product, _ := st.UpsertProduct(model.Product{ServiceID: service.ID(), Name: "starter", DisplayName: "Starter"})
@@ -166,7 +166,7 @@ func TestIdentityGraphLoadFailuresStopActivation(t *testing.T) {
 // A service the snapshot never built is skipped rather than dereferenced.
 func TestIdentityGraphSkipsAnAbsentService(t *testing.T) {
 	st, _ := store.Open("", clock.New())
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	snapshot := &Snapshot{Services: map[string]*Service{}}
 	if err := loadIdentityGraph(st, []model.Service{{SubscriptionID: "sub", ResourceGroup: "rg", Name: "absent"}}, nil, nil, snapshot); err != nil {
 		t.Fatalf("an absent service failed the load: %v", err)

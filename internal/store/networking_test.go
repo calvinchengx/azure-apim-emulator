@@ -13,7 +13,7 @@ func TestPrivateEndpointConnectionLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	service, err := st.UpsertService(model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "svc"})
 	if err != nil {
 		t.Fatal(err)
@@ -56,7 +56,7 @@ func TestDeleteServiceCascadesToPrivateEndpointConnections(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	service, _ := st.UpsertService(model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "svc"})
 	connection, err := st.UpsertPrivateEndpointConnection(model.PrivateEndpointConnection{
 		ServiceID: service.ID(), Name: "from-vnet", Status: "Approved",

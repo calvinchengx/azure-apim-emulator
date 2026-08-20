@@ -38,11 +38,11 @@ func newRandom(args []Value) (Value, error) {
 	case 1:
 		seed, ok := args[0].AsNumber()
 		if !ok {
-			return Null(), fmt.Errorf("Random takes an integer seed")
+			return Null(), fmt.Errorf("random takes an integer seed")
 		}
 		return Object(&randomHost{source: rand.New(rand.NewSource(int64(seed)))}), nil //nolint:gosec // seeded on purpose, so a policy can reproduce a run
 	default:
-		return Null(), fmt.Errorf("Random takes at most one seed")
+		return Null(), fmt.Errorf("random takes at most one seed")
 	}
 }
 
@@ -70,23 +70,23 @@ func (r *randomHost) next(args []Value) (Value, error) {
 	case 1:
 		bound, ok := args[0].AsNumber()
 		if !ok {
-			return Null(), fmt.Errorf("Next takes integer bounds")
+			return Null(), fmt.Errorf("next takes integer bounds")
 		}
 		low, high = 0, int64(bound)
 	case 2:
 		first, firstOK := args[0].AsNumber()
 		second, secondOK := args[1].AsNumber()
 		if !firstOK || !secondOK {
-			return Null(), fmt.Errorf("Next takes integer bounds")
+			return Null(), fmt.Errorf("next takes integer bounds")
 		}
 		low, high = int64(first), int64(second)
 	default:
-		return Null(), fmt.Errorf("Next takes at most two bounds")
+		return Null(), fmt.Errorf("next takes at most two bounds")
 	}
 	if high <= low {
 		// .NET throws when the bounds are inverted, and answering a number from
 		// an empty range would send a policy down a branch it never chose.
-		return Null(), fmt.Errorf("Next requires an upper bound above the lower one")
+		return Null(), fmt.Errorf("next requires an upper bound above the lower one")
 	}
 	return Int(low + r.source.Int63n(high-low)), nil
 }
@@ -95,7 +95,7 @@ func (r *randomHost) next(args []Value) (Value, error) {
 // carries .NET's member names, and a policy reaches for it to pick a URL apart.
 func newUri(args []Value) (Value, error) {
 	if len(args) != 1 || args[0].kind != KindString {
-		return Null(), fmt.Errorf("Uri takes one string")
+		return Null(), fmt.Errorf("uri takes one string")
 	}
 	parsed, err := url.Parse(args[0].str)
 	if err != nil {
@@ -189,20 +189,20 @@ func newDateTimeOffset(args []Value) (Value, error) {
 	if !ok {
 		return Null(), fmt.Errorf("DateTimeOffset takes a DateTime")
 	}
-	return Object(dateTimeOffsetHost{at: moment.at}), nil
+	return Object(dateTimeOffsetHost(moment)), nil
 }
 
 // newGuid rebuilds one from the bytes ToByteArray produced.
 func newGuid(args []Value) (Value, error) {
 	if len(args) != 1 {
-		return Null(), fmt.Errorf("Guid takes a byte array or a string")
+		return Null(), fmt.Errorf("guid takes a byte array or a string")
 	}
 	if text := args[0]; text.kind == KindString {
 		return parseGuid(text.str)
 	}
 	raw, ok := args[0].obj.(bytesHost)
 	if !ok {
-		return Null(), fmt.Errorf("Guid takes a byte array or a string")
+		return Null(), fmt.Errorf("guid takes a byte array or a string")
 	}
 	return guidFromBytes(raw.data)
 }

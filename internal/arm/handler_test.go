@@ -433,9 +433,10 @@ func TestCollectionSelectors(t *testing.T) {
 			t.Fatal(err)
 		}
 		resourceID := api.ID()
-		if created.Name == "operation-scope" {
+		switch created.Name {
+		case "operation-scope":
 			resourceID = operation.APIID + "/operations/" + operation.Name
-		} else if created.Name == "product-scope" {
+		case "product-scope":
 			resourceID = serviceModel().ID() + "/products/starter"
 		}
 		if err := st.AssignTag(resourceID, created.ID()); err != nil {
@@ -825,7 +826,7 @@ func TestCacheStoreErrorsAndWireFallbacks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	seedService(t, st)
 	if _, err := st.UpsertCache(model.Cache{ServiceID: serviceModel().ID(), Name: "default", ConnectionString: "host", UseFromLocation: "default"}); err != nil {
 		t.Fatal(err)
@@ -931,7 +932,7 @@ func TestIdentityProviderStoreErrorsAndWireFallbacks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	seedService(t, st)
 	if _, err := st.UpsertIdentityProvider(model.IdentityProvider{ServiceID: serviceModel().ID(), Name: "facebook", ClientID: "app", ClientSecret: "secret"}); err != nil {
 		t.Fatal(err)
@@ -1032,7 +1033,7 @@ func TestOpenIDConnectProviderStoreErrorsAndWireFallbacks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	seedService(t, st)
 	if _, err := st.UpsertOpenIDConnectProvider(model.OpenIDConnectProvider{ServiceID: serviceModel().ID(), Name: "template", DisplayName: "Template", MetadataEndpoint: "https://issuer.example", ClientID: "app", ClientSecret: "secret"}); err != nil {
 		t.Fatal(err)
@@ -1139,7 +1140,7 @@ func TestAuthorizationServerStoreErrorsAndWireFallbacks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	seedService(t, st)
 	if _, err := st.UpsertAuthorizationServer(model.AuthorizationServer{ServiceID: serviceModel().ID(), Name: "auth", DisplayName: "Auth", AuthorizationEndpoint: "https://auth.example/authorize", ClientRegistrationEndpoint: "https://auth.example/apps", ClientID: "app", GrantTypes: []string{"authorizationCode"}}); err != nil {
 		t.Fatal(err)
@@ -1236,7 +1237,7 @@ func TestDocumentationStoreErrorsAndWireFallbacks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	seedService(t, st)
 	if _, err := st.UpsertDocumentation(model.Documentation{ServiceID: serviceModel().ID(), Name: "guide", Title: "Guide"}); err != nil {
 		t.Fatal(err)
@@ -1381,7 +1382,7 @@ func TestLoggerDiagnosticStoreErrorsAndWireFallbacks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	seedService(t, st)
 	logger, _ := st.UpsertLogger(model.Logger{ServiceID: serviceModel().ID(), Name: "app", LoggerType: "azureMonitor"})
 	diagnostic, _ := st.UpsertDiagnostic(model.Diagnostic{ServiceID: serviceModel().ID(), ScopeID: serviceModel().ID(), Name: "d", LoggerID: logger.ID(), SamplingType: "fixed", SamplingPercentage: 100})
@@ -1959,7 +1960,7 @@ func TestOpenAPIImportTransportAndExportFailures(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer broken.Close()
+	defer func() { _ = broken.Close() }()
 	brokenService, _ := broken.UpsertService(serviceModel())
 	brokenAPI, _ := broken.UpsertAPI(model.API{ServiceID: brokenService.ID(), Name: "a"})
 	db, err := sql.Open("sqlite", filepath.Join(dir, "azure-apim-emulator.db"))
@@ -2954,7 +2955,7 @@ func TestKeyVaultRetrieval(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer broken.Close()
+	defer func() { _ = broken.Close() }()
 	seedService(t, broken)
 	if _, err := broken.UpsertNamedValue(model.NamedValue{ServiceID: serviceModel().ID(), Name: "broken", DisplayName: "Broken", KeyVaultSecretID: "https://vault.test/secrets/token"}); err != nil {
 		t.Fatal(err)
@@ -3013,7 +3014,7 @@ func TestProductAPIListRejectsDanglingLink(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	seedService(t, st)
 	product, err := st.UpsertProduct(model.Product{ServiceID: serviceModel().ID(), Name: "p", DisplayName: "P"})
 	if err != nil {
@@ -3166,7 +3167,7 @@ func TestServiceStoreWriteErrors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	seedService(t, st)
 	db, err := sql.Open("sqlite", filepath.Join(dir, "azure-apim-emulator.db"))
 	if err != nil {
@@ -3188,7 +3189,7 @@ func TestTagStoreErrors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	seedService(t, st)
 	api, err := st.UpsertAPI(model.API{ServiceID: serviceModel().ID(), Name: "a"})
 	if err != nil {
@@ -3246,7 +3247,7 @@ func TestGroupStoreErrors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	seedService(t, st)
 	product, err := st.UpsertProduct(model.Product{ServiceID: serviceModel().ID(), Name: "p", DisplayName: "P"})
 	if err != nil {
@@ -3296,7 +3297,7 @@ func TestUserStoreErrors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	seedService(t, st)
 	group, err := st.UpsertGroup(model.Group{ServiceID: serviceModel().ID(), Name: "g", DisplayName: "G", Type: "custom"})
 	if err != nil {
@@ -3350,7 +3351,7 @@ func TestPolicyFragmentStoreErrors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	seedService(t, st)
 	fragment, err := st.UpsertPolicyFragment(model.PolicyFragment{ServiceID: serviceModel().ID(), Name: "f", Value: `<fragment/>`})
 	if err != nil {

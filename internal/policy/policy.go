@@ -2668,7 +2668,7 @@ func executeLimit(action Action, state *State) error {
 	// How much this request adds to the counter. A postponed increment adds
 	// nothing on the way in: it is evaluated and applied after outbound, once
 	// the response its expression reads actually exists.
-	increment := 1
+	var increment int
 	if action.IncrementDeferred {
 		increment = 0
 		state.PendingIncrements = append(state.PendingIncrements, deferredIncrement(action, state, key))

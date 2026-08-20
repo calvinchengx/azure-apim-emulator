@@ -140,12 +140,12 @@ func TestControlAndDispatchEndpoints(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer srv.Close()
+	defer func() { _ = srv.Close() }()
 	withValidator, err := New(cfg, auth.New("https://issuer.test", "https://keys.test", false, func() int64 { return 0 }, http.DefaultClient), http.DefaultClient, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	withValidator.Close()
+	_ = withValidator.Close()
 
 	for _, path := range []string{"/health", "/_emulator/clock", "/_emulator/portal/api/status", "/_emulator/portal/api/snapshot", "/_emulator/portal/api/parity", "/_emulator/portal/api/faults", "/_emulator/portal/api/diagnostics"} {
 		recorder := httptest.NewRecorder()

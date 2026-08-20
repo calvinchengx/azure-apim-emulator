@@ -187,7 +187,7 @@ func TestGatewayBindsDeploymentContext(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	service, err := st.UpsertService(model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "emulator", Location: "local"})
 	if err != nil {
 		t.Fatal(err)
@@ -316,7 +316,13 @@ func TestAcquireConcurrency(t *testing.T) {
 	if runtime.acquireConcurrency("tenant", 1) == nil {
 		t.Fatal("released concurrency slot was not reusable")
 	}
-	if runtime.acquireConcurrency("other", 2) == nil || runtime.acquireConcurrency("other", 2) == nil || runtime.acquireConcurrency("other", 2) != nil {
+	// Named, because three identical calls chained with || read to a linter
+	// as one expression repeated, and to a human as a copy-paste slip. The
+	// point is that the first two acquire and the third is refused.
+	first := runtime.acquireConcurrency("other", 2)
+	second := runtime.acquireConcurrency("other", 2)
+	third := runtime.acquireConcurrency("other", 2)
+	if first == nil || second == nil || third != nil {
 		t.Fatal("independent concurrency slots were not isolated")
 	}
 }
@@ -545,7 +551,11 @@ func TestGatewayFaultControls(t *testing.T) {
 	if hosts := customHostnames(map[string]any{"properties": map[string]any{"hostnameConfigurations": []any{"invalid", map[string]any{"hostName": "portal.example"}}}}); !hosts["portal.example"] {
 		t.Fatalf("custom host extraction = %#v", hosts)
 	}
-	if runtime.rateLimit("client", 2, time.Minute, 1).Exceeded || runtime.rateLimit("client", 2, time.Minute, 1).Exceeded || !runtime.rateLimit("client", 2, time.Minute, 1).Exceeded {
+	// As above: two calls inside the limit, the third over it.
+	call1 := runtime.rateLimit("client", 2, time.Minute, 1)
+	call2 := runtime.rateLimit("client", 2, time.Minute, 1)
+	call3 := runtime.rateLimit("client", 2, time.Minute, 1)
+	if call1.Exceeded || call2.Exceeded || !call3.Exceeded {
 		t.Fatal("rate limiter did not enforce calls")
 	}
 	if runtime.rateLimit("other", 1, time.Minute, 1).Exceeded {
@@ -657,7 +667,7 @@ func TestWebSocketGatewayTunnel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	if err := websocket.Message.Send(conn, "hello"); err != nil {
 		t.Fatal(err)
 	}
@@ -673,7 +683,7 @@ func TestWebSocketGatewayTunnel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer binaryConn.Close()
+	defer func() { _ = binaryConn.Close() }()
 	if err := websocket.Message.Send(binaryConn, []byte("bytes")); err != nil {
 		t.Fatal(err)
 	}
@@ -798,7 +808,7 @@ func TestActivateResolvesNamedValuesInPolicies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	service, err := st.UpsertService(model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "emulator"})
 	if err != nil {
 		t.Fatal(err)
@@ -839,7 +849,7 @@ func TestActivateInheritsServicePolicyWhenAPIHasNone(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	service, err := st.UpsertService(model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "emulator"})
 	if err != nil {
 		t.Fatal(err)
@@ -962,7 +972,7 @@ func TestActivateExpandsPolicyFragments(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	service, err := st.UpsertService(model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "emulator"})
 	if err != nil {
 		t.Fatal(err)
@@ -1004,7 +1014,7 @@ func TestActivatePolicyFragmentStoreFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	if _, err := st.UpsertService(model.Service{Name: "emulator"}); err != nil {
 		t.Fatal(err)
 	}
@@ -1140,7 +1150,7 @@ func TestDiagnosticEmissionAndSampling(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	serviceModel, _ := st.UpsertService(model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "emulator"})
 	apiModel, _ := st.UpsertAPI(model.API{ServiceID: serviceModel.ID(), Name: "api", Path: "api", ServiceURL: "https://backend"})
 	runtime := New("emulator", nil)
@@ -1300,7 +1310,7 @@ func TestActivatedGatewayPersistsDiagnosticEvent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	service, _ := st.UpsertService(model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "emulator"})
 	api, _ := st.UpsertAPI(model.API{ServiceID: service.ID(), Name: "api", Path: "api", ServiceURL: backend.URL})
 	_, _ = st.UpsertOperation(model.Operation{APIID: api.ID(), Name: "get", Method: http.MethodGet, URLTemplate: "/items"})
@@ -1336,7 +1346,7 @@ func TestActivatedGatewayCapturesDiagnosticBodies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	service, _ := st.UpsertService(model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "emulator"})
 	api, _ := st.UpsertAPI(model.API{ServiceID: service.ID(), Name: "api", Path: "api", ServiceURL: backend.URL})
 	_, _ = st.UpsertOperation(model.Operation{APIID: api.ID(), Name: "post", Method: http.MethodPost, URLTemplate: "/items"})
@@ -1382,7 +1392,7 @@ func TestActivateDiagnosticStoreFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	if _, err := st.UpsertService(model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "emulator"}); err != nil {
 		t.Fatal(err)
 	}
@@ -1492,7 +1502,7 @@ func TestActivateFailuresAndSubscriptionStates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	service := model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "emulator", Location: "local"}
 	service, _ = st.UpsertService(service)
 	apiA, _ := st.UpsertAPI(model.API{ServiceID: service.ID(), Name: "a", Path: "short"})
@@ -1539,7 +1549,7 @@ func TestActivateRejectsOrphanAPI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	db, err := sql.Open("sqlite", filepath.Join(dir, "azure-apim-emulator.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -1625,7 +1635,7 @@ func TestActivateNamedValueStoreFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	if _, err := st.UpsertService(model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "emulator"}); err != nil {
 		t.Fatal(err)
 	}
@@ -1649,7 +1659,7 @@ func TestActivateBackendReferences(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	service, err := st.UpsertService(model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "emulator"})
 	if err != nil {
 		t.Fatal(err)
@@ -1811,7 +1821,7 @@ func TestActivateBackendStoreFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	if _, err := st.UpsertService(model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "emulator"}); err != nil {
 		t.Fatal(err)
 	}
@@ -1836,7 +1846,7 @@ func TestActivateCertificateStoreFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	service, err := st.UpsertService(model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "emulator"})
 	if err != nil {
 		t.Fatal(err)
@@ -2060,7 +2070,7 @@ func TestRequestClockAndIdentityReachPolicies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	var seen http.Header
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		seen = r.Header.Clone()
@@ -2120,7 +2130,7 @@ func TestLastErrorReportsItsLocation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	service, _ := st.UpsertService(model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "emulator", Location: "local"})
 	api, _ := st.UpsertAPI(model.API{ServiceID: service.ID(), Name: "orders", DisplayName: "Orders", Path: "orders", ServiceURL: "https://backend.test", IsCurrent: true})
 	_, _ = st.UpsertOperation(model.Operation{APIID: api.ID(), Name: "get", DisplayName: "Get", Method: http.MethodGet, URLTemplate: "/"})
@@ -2174,7 +2184,7 @@ func TestBackendContextReportsTheChosenBackend(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	service, _ := st.UpsertService(model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "emulator", Location: "local"})
 	api, _ := st.UpsertAPI(model.API{ServiceID: service.ID(), Name: "orders", Path: "orders", ServiceURL: "https://backend.test", IsCurrent: true})
 	_, _ = st.UpsertOperation(model.Operation{APIID: api.ID(), Name: "get", Method: http.MethodGet, URLTemplate: "/"})

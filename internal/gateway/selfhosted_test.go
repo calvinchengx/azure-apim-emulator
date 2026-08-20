@@ -23,7 +23,7 @@ func TestSelfHostedGatewayServesOnlyAssociatedAPIs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	service, err := st.UpsertService(model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "emulator", Location: "local"})
 	if err != nil {
 		t.Fatal(err)
@@ -115,7 +115,7 @@ func TestSelfHostedGatewayLoadFailuresStopActivation(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer st.Close()
+			defer func() { _ = st.Close() }()
 			service, err := st.UpsertService(model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "emulator", Location: "local"})
 			if err != nil {
 				t.Fatal(err)

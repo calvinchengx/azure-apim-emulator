@@ -40,7 +40,7 @@ func newSOAPFixture(t *testing.T, apiType, wsdl string) *soapFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { st.Close() })
+	t.Cleanup(func() { _ = st.Close() })
 	service, err := st.UpsertService(model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "emulator", Location: "local"})
 	if err != nil {
 		t.Fatal(err)
@@ -226,7 +226,7 @@ func TestSOAPActivationReportsABrokenWSDL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	service, _ := st.UpsertService(model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "emulator", Location: "local"})
 	api := model.API{
 		ServiceID: service.ID(), Name: "orders", DisplayName: "Orders", Path: "orders",
@@ -255,7 +255,7 @@ func TestSOAPIgnoresNonWSDLDefinitions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	service, _ := st.UpsertService(model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "emulator", Location: "local"})
 	api := model.API{
 		ServiceID: service.ID(), Name: "orders", Path: "orders", IsCurrent: true,
@@ -378,7 +378,7 @@ func TestSOAPSchemaLookupReportsStoreFailures(t *testing.T) {
 		ServiceID: service.ID(), Name: "orders", Path: "orders", IsCurrent: true,
 		Document: map[string]any{"properties": map[string]any{"apiType": "soap"}},
 	}
-	st.Close()
+	_ = st.Close()
 	// A store failure reads the same as "no definition yet" by design: both
 	// leave the API unroutable rather than serving it as SOAP with no contract.
 	schema, err := soapSchemaFor(st, api)

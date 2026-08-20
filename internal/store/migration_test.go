@@ -40,7 +40,7 @@ INSERT INTO apis VALUES ('/s/svc/apis/legacy','/s/svc','legacy','Legacy','p','ht
 	if err != nil {
 		t.Fatalf("opening a legacy database must migrate it, got %v", err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 
 	// Nothing lost.
 	apis, err := st.ListAPIs("/s/svc")
@@ -65,12 +65,12 @@ INSERT INTO apis VALUES ('/s/svc/apis/legacy','/s/svc','legacy','Legacy','p','ht
 		t.Fatalf("the workspace API must not leak into the service listing, got %d", len(again))
 	}
 	// Re-opening an already-migrated database must be a no-op, not a rebuild.
-	st.Close()
+	_ = st.Close()
 	reopened, err := Open(dir, clock.New())
 	if err != nil {
 		t.Fatalf("re-open after migration: %v", err)
 	}
-	defer reopened.Close()
+	defer func() { _ = reopened.Close() }()
 	if apis, err := reopened.ListAPIs("/s/svc"); err != nil || len(apis) != 1 {
 		t.Fatalf("re-open lost data: %v %v", apis, err)
 	}
@@ -82,7 +82,7 @@ func TestDeleteWorkspaceCascades(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	service, err := st.UpsertService(model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "svc", Location: "local"})
 	if err != nil {
 		t.Fatal(err)
@@ -137,7 +137,7 @@ func TestAdoptScopesReportsFailures(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	st.Close()
+	_ = st.Close()
 	if err := st.adoptScopes(); err == nil {
 		t.Fatal("a closed database must be reported")
 	}
@@ -200,7 +200,7 @@ func TestUpsertWorkspaceRejectsUnencodableDocuments(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	if _, err := st.UpsertWorkspace(model.Workspace{
 		ServiceID: "/s/svc", Name: "team", DisplayName: "Team",
 		Document: map[string]any{"bad": make(chan int)},
@@ -218,7 +218,7 @@ func TestScopeRegistrationRollsBack(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	service, err := st.UpsertService(model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "svc", Location: "local"})
 	if err != nil {
 		t.Fatal(err)
@@ -271,7 +271,7 @@ func TestUpsertRoleAssignmentRejectsUnencodableDocuments(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	if _, err := st.UpsertRoleAssignment(rbac.Assignment{
 		Scope: "/s", Name: "r", Document: map[string]any{"bad": make(chan int)},
 	}); err == nil {

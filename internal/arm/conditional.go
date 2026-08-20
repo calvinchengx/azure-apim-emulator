@@ -116,9 +116,7 @@ func entityTags(values []string) ([]string, bool, bool) {
 }
 
 func validEntityTag(value string) bool {
-	if strings.HasPrefix(value, "W/") {
-		value = value[2:]
-	}
+	value = strings.TrimPrefix(value, "W/")
 	if len(value) < 2 || value[0] != '"' || value[len(value)-1] != '"' {
 		return false
 	}
