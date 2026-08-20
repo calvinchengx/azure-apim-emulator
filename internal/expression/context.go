@@ -266,7 +266,7 @@ func (c *contextHost) member(name string) (Value, error) {
 	case "Trace":
 		return Object(funcValue{fn: func(args []Value) (Value, error) {
 			if len(args) != 1 || args[0].kind != KindString {
-				return Null(), fmt.Errorf("trace requires a message")
+				return Null(), fmt.Errorf("Trace requires a message")
 			}
 			if c.ctx.Trace != nil {
 				c.ctx.Trace(args[0].str)
@@ -792,7 +792,7 @@ func (h *headerHost) member(name string) (Value, error) {
 
 func (h *headerHost) get(args []Value) (Value, error) {
 	if len(args) != 1 || args[0].kind != KindString {
-		return Null(), fmt.Errorf("get requires a header name")
+		return Null(), fmt.Errorf("Get requires a header name")
 	}
 	return String(h.header.Get(args[0].str)), nil
 }
@@ -842,7 +842,7 @@ func (h *headerHost) getValueOrDefault(args []Value) (Value, error) {
 // for, and it is the check that works.
 func (c *certificateHost) verify(args []Value) (Value, error) {
 	if len(args) != 0 {
-		return Null(), fmt.Errorf("verify takes no arguments")
+		return Null(), fmt.Errorf("Verify takes no arguments")
 	}
 	now := time.Now().UTC()
 	return Bool(now.After(c.certificate.NotBefore) && now.Before(c.certificate.NotAfter)), nil
@@ -1123,7 +1123,7 @@ func (b *bodyHost) genericMember(name, typeArg string) (Value, error) {
 // asJSON parses the body into a value a policy can index into.
 func (b *bodyHost) asJSON(args []Value) (Value, error) {
 	if len(args) > 1 {
-		return Null(), fmt.Errorf("as takes at most one argument")
+		return Null(), fmt.Errorf("As takes at most one argument")
 	}
 	text, err := b.read()
 	if err != nil {
@@ -1209,7 +1209,7 @@ func (f *formHost) index(key Value) (Value, error) {
 // here, and it is stated rather than left to be discovered.
 func (b *bodyHost) asString(args []Value) (Value, error) {
 	if len(args) > 1 {
-		return Null(), fmt.Errorf("as takes at most one argument")
+		return Null(), fmt.Errorf("As takes at most one argument")
 	}
 	value, err := b.read()
 	if err != nil {

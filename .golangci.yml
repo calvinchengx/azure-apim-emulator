@@ -21,6 +21,20 @@ linters:
         - fmt.Fprintf
         - fmt.Fprint
         - fmt.Fprintln
+  exclusions:
+    rules:
+      # ST1005 wants lowercase error strings, and exempts ones beginning with a
+      # proper noun or identifier. Every message in this package begins with the
+      # C# MEMBER NAME it is reporting on: "Random takes an integer seed",
+      # "Substring takes a numeric start". Those are identifiers the policy
+      # author literally wrote, staticcheck has no way to know that, and
+      # lowercasing them breaks the reference to the member that failed.
+      #
+      # Scoped to this package rather than disabled globally, so an ordinary
+      # capitalised error string elsewhere is still reported.
+      - path: internal/expression/
+        text: "ST1005"
+        linters: [staticcheck]
 issues:
   # Defaults cap identical issues at 3 and each linter at 50, which turns a
   # count into an underestimate: six identical unchecked Close calls reported
