@@ -649,7 +649,7 @@ func TestRateLimitPolicies(t *testing.T) {
 	if err := Execute(exprLimit.Inbound, &State{RateLimit: func(key string, _ int, _ time.Duration) LimitDecision {
 		exprKey = key
 		return LimitDecision{Exceeded: false}
-	}}); err != nil || exprKey != "1" {
+	}}); err != nil || exprKey != "1/0" {
 		t.Fatalf("quota-by-key expression key = %q, %v", exprKey, err)
 	}
 	if err := Execute(plan.Inbound, &State{}); err == nil {
@@ -684,7 +684,7 @@ func TestSharedLimitAndResponsePolicies(t *testing.T) {
 		t.Fatalf("rate-limit execute = %+v, %v", limited, err)
 	}
 	quotaState := &State{Subscription: &expr.SubscriptionContext{Id: "sub-a"}, RateLimit: func(key string, _ int, _ time.Duration) LimitDecision {
-		return LimitDecision{Exceeded: key == "sub-a/quota"}
+		return LimitDecision{Exceeded: key == "sub-a/quota/0"}
 	}}
 	if err := Execute(quota.Inbound, quotaState); err != nil || !quotaState.Returned || quotaState.StatusCode != http.StatusForbidden {
 		t.Fatalf("quota execute = %+v, %v", quotaState, err)
@@ -2727,6 +2727,12 @@ func TestKeylessLimitsAreScopedToTheSubscription(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		// quota counts in a fixed window, so its counter key carries the
+		// window's ordinal. rate-limit's window slides and has none.
+		counter := name
+		if name == "quota" {
+			counter = name + "/0"
+		}
 
 		// An anonymous caller is not counted at all: the limiter is never asked.
 		asked := false
@@ -2752,7 +2758,7 @@ func TestKeylessLimitsAreScopedToTheSubscription(t *testing.T) {
 				t.Fatalf("%s throttled sub-b using sub-a's traffic", name)
 			}
 		}
-		if seen["sub-a/"+name] != 2 || seen["sub-b/"+name] != 1 {
+		if seen["sub-a/"+counter] != 2 || seen["sub-b/"+counter] != 1 {
 			t.Fatalf("%s counter keys = %v", name, seen)
 		}
 
@@ -2768,7 +2774,7 @@ func TestKeylessLimitsAreScopedToTheSubscription(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		if shared["sub-c/"+name] != 2 {
+		if shared["sub-c/"+counter] != 2 {
 			t.Fatalf("%s split one subscription across its keys: %v", name, shared)
 		}
 
@@ -2985,5 +2991,137 @@ func TestKeylessLimitOncePerDefinition(t *testing.T) {
 		if !testCase.valid && err == nil {
 			t.Errorf("accepted a repeated keyless limit: %s", testCase.document)
 		}
+	}
+}
+
+// TestQuotaCountsInAFixedWindow covers the difference between the two families:
+// rate-limit's window slides with each call, quota's is a fixed period anchored
+// at a point in time, so crossing a boundary starts the next window empty.
+func TestQuotaCountsInAFixedWindow(t *testing.T) {
+	plan, err := Compile(`<policies><inbound><quota-by-key calls="1" renewal-period="3600" counter-key="k" first-period-start="2026-01-01T00:00:00Z"/></inbound></policies>`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := func(stamp string) string {
+		moment, err := time.Parse(time.RFC3339, stamp)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var key string
+		state := &State{Timestamp: moment, Headers: make(http.Header), RateLimit: func(k string, _ int, _ time.Duration) LimitDecision {
+			key = k
+			return LimitDecision{Exceeded: true}
+		}}
+		if err := Execute(plan.Inbound, state); err != nil {
+			t.Fatal(err)
+		}
+		return key
+	}
+
+	// Two moments inside the same hour share a counter.
+	if first, same := at("2026-01-01T00:10:00Z"), at("2026-01-01T00:50:00Z"); first != same || first != "k/0" {
+		t.Fatalf("same window gave keys %q and %q", first, same)
+	}
+	// The next hour is a different window, so its counter starts empty.
+	if next := at("2026-01-01T01:10:00Z"); next != "k/1" {
+		t.Fatalf("second window key = %q", next)
+	}
+	// A moment before the anchor belongs to the window before it: truncating
+	// division would put it in bucket 0 alongside the first window.
+	if before := at("2025-12-31T23:10:00Z"); before != "k/-1" {
+		t.Fatalf("window before the anchor = %q", before)
+	}
+
+	// The keyless quota anchors on the subscription's start date and carries a
+	// Retry-After whose value is the time left in the window, not a sliding
+	// estimate.
+	keyless, err := Compile(`<policies><inbound><quota calls="1" renewal-period="3600"/></inbound></policies>`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	moment, err := time.Parse(time.RFC3339, "2026-03-01T09:10:00Z")
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := &State{
+		Timestamp:    moment,
+		Headers:      make(http.Header),
+		Subscription: &expr.SubscriptionContext{Id: "sub-a", StartDate: "2026-03-01T00:00:00Z"},
+		RateLimit:    func(string, int, time.Duration) LimitDecision { return LimitDecision{Exceeded: true} },
+	}
+	if err := Execute(keyless.Inbound, state); err != nil {
+		t.Fatal(err)
+	}
+	if got := state.Headers.Get("Retry-After"); got != "3000" {
+		t.Fatalf("retry-after at 09:10 of an hourly window = %q, want 3000 (50 minutes)", got)
+	}
+}
+
+// TestQuotaInfinitePeriod covers renewal-period="0", which the quota family
+// documents as an infinite period and the rate-limit family does not allow.
+func TestQuotaInfinitePeriod(t *testing.T) {
+	for _, name := range []string{"quota", "quota-by-key"} {
+		attrs := `calls="1" renewal-period="0"`
+		if name == "quota-by-key" {
+			attrs += ` counter-key="k"`
+		}
+		plan, err := Compile(`<policies><inbound><`+name+` `+attrs+`/></inbound></policies>`, true)
+		if err != nil {
+			t.Fatalf("%s with an infinite period: %v", name, err)
+		}
+		if plan.Inbound[0].Kind != ActionRateLimit || plan.Inbound[0].LimitPeriod != 0 {
+			t.Fatalf("%s infinite period compiled to %+v", name, plan.Inbound[0])
+		}
+		// An infinite window never renews, so its key carries no ordinal that
+		// would start a fresh one.
+		var keys []string
+		state := &State{Timestamp: time.Unix(1, 0), Subscription: &expr.SubscriptionContext{Id: "sub-a"},
+			RateLimit: func(k string, _ int, _ time.Duration) LimitDecision { keys = append(keys, k); return LimitDecision{} }}
+		if err := Execute(plan.Inbound, state); err != nil {
+			t.Fatal(err)
+		}
+		if len(keys) != 1 || strings.Contains(keys[0], "/0") {
+			t.Fatalf("%s infinite window keyed %v", name, keys)
+		}
+	}
+
+	// The rate-limit family documents no infinite period, and renewal-period is
+	// required: absent is not the same as an explicit 0.
+	for _, document := range []string{
+		`<rate-limit calls="1" renewal-period="0"/>`,
+		`<rate-limit-by-key calls="1" renewal-period="0" counter-key="k"/>`,
+		`<rate-limit calls="1"/>`,
+		`<rate-limit-by-key calls="1" counter-key="k"/>`,
+	} {
+		compiled, err := Compile(`<policies><inbound>`+document+`</inbound></policies>`, false)
+		if err == nil && compiled.Inbound[0].Kind != ActionUnsupported {
+			t.Errorf("accepted %s", document)
+		}
+	}
+
+	// With neither first-period-start nor a subscription start date, windows
+	// anchor at the epoch so they stay put across restarts.
+	epochAnchored, err := Compile(`<policies><inbound><quota calls="1" renewal-period="3600"/></inbound></policies>`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	moment, err := time.Parse(time.RFC3339, "1970-01-01T02:30:00Z")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var anchored string
+	unanchored := &State{Timestamp: moment, Headers: make(http.Header),
+		Subscription: &expr.SubscriptionContext{Id: "sub-a"},
+		RateLimit:    func(k string, _ int, _ time.Duration) LimitDecision { anchored = k; return LimitDecision{} }}
+	if err := Execute(epochAnchored.Inbound, unanchored); err != nil {
+		t.Fatal(err)
+	}
+	if anchored != "sub-a/quota/2" {
+		t.Fatalf("epoch-anchored window at 02:30 = %q, want the third hourly window", anchored)
+	}
+
+	// first-period-start must be a timestamp.
+	if _, err := Compile(`<policies><inbound><quota-by-key calls="1" renewal-period="300" counter-key="k" first-period-start="soon"/></inbound></policies>`, true); err == nil {
+		t.Fatal("accepted an unparseable first-period-start")
 	}
 }
