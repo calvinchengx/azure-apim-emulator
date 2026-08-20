@@ -24,8 +24,8 @@ type PolicyError struct {
 	element string
 	// policyID is the author's `id` attribute on the failing element.
 	policyID string
-	section string
-	scope   string
+	section  string
+	scope    string
 	// reason is Azure's short classification. It is populated ONLY where this
 	// engine genuinely knows one; Azure's full reason vocabulary is not
 	// reproduced, and inventing codes an on-error policy might switch on would
@@ -39,10 +39,10 @@ func (e *PolicyError) Error() string { return e.Err.Error() }
 // a failure's position without this package and that one importing each other.
 func (e *PolicyError) Element() string  { return e.element }
 func (e *PolicyError) PolicyId() string { return e.policyID }
-func (e *PolicyError) Section() string { return e.section }
-func (e *PolicyError) Scope() string   { return e.scope }
-func (e *PolicyError) Reason() string  { return e.reason }
-func (e *PolicyError) Unwrap() error   { return e.Err }
+func (e *PolicyError) Section() string  { return e.section }
+func (e *PolicyError) Scope() string    { return e.scope }
+func (e *PolicyError) Reason() string   { return e.reason }
+func (e *PolicyError) Unwrap() error    { return e.Err }
 
 // reasonFor classifies a failure where the engine genuinely can.
 //
