@@ -30,12 +30,19 @@ type LLMConfig struct {
 	EstimatePromptTokens bool
 	RetryAfterHeader     string
 	RetryAfterVariable   string
-	RemainingHeader      string
-	RemainingVariable    string
-	ConsumedHeader       string
-	ConsumedVariable     string
-	Namespace            string
-	Dimensions           []LLMDimension
+	// TokenQuota is a budget over a fixed period, beside the per-minute rate.
+	// Held compiled because policy expressions are allowed in both, and a
+	// policy may set the quota, the rate, or both.
+	TokenQuota             string
+	TokenQuotaPeriod       string
+	RemainingQuotaHeader   string
+	RemainingQuotaVariable string
+	RemainingHeader        string
+	RemainingVariable      string
+	ConsumedHeader         string
+	ConsumedVariable       string
+	Namespace              string
+	Dimensions             []LLMDimension
 }
 
 // LLMDimension is one `<dimension>` child of an emit-token-metric node.
@@ -51,6 +58,12 @@ type LLMGovernance struct {
 	CounterKey      string
 	TokensPerMinute int
 	Config          LLMConfig
+	// QuotaPeriod and Quota are the EVALUATED token-quota settings. The Config
+	// holds them compiled, and both allow policy expressions, so charging the
+	// spend from Config would hand the runtime an expression rather than a
+	// period and quietly charge nothing.
+	QuotaPeriod string
+	Quota       int
 	// Emit is set when an emit-token-metric node ran, with its dimensions
 	// already evaluated against the request.
 	Emit       bool
@@ -63,11 +76,17 @@ func compileLLMTokenLimit(item node) (Action, bool, error) {
 	if err != nil {
 		return Action{}, false, err
 	}
-	// tokens-per-minute is what makes the node a limit rather than a comment.
-	// Azure rejects the policy without it, and accepting it here would produce
-	// a gateway that silently enforces nothing.
-	if config.TokensPerMinute <= 0 {
-		return Action{}, false, fmt.Errorf("llm-token-limit requires a positive tokens-per-minute")
+	// "Either a rate limit (tokens-per-minute), a quota (token-quota over a
+	// token-quota-period), or both must be specified." Requiring the rate
+	// unconditionally refused a quota-only policy that Azure accepts.
+	hasQuota := config.TokenQuota != "" && config.TokenQuotaPeriod != ""
+	if config.TokensPerMinute <= 0 && !hasQuota {
+		return Action{}, false, fmt.Errorf("llm-token-limit requires tokens-per-minute, or token-quota over a token-quota-period")
+	}
+	// Half a quota is not a quota: a period with no budget, or a budget with no
+	// period, would enforce nothing while looking configured.
+	if (config.TokenQuota == "") != (config.TokenQuotaPeriod == "") {
+		return Action{}, false, fmt.Errorf("llm-token-limit needs token-quota and token-quota-period together")
 	}
 	if config.CounterKey == "" {
 		return Action{}, false, fmt.Errorf("llm-token-limit requires a counter-key")
@@ -94,6 +113,12 @@ func compileLLMEmitTokenMetric(item node) (Action, bool, error) {
 		}
 		config.Dimensions = append(config.Dimensions, LLMDimension{Name: name, Value: value})
 	}
+	// "You can configure at most 5 custom dimensions for this policy." A sixth
+	// is a policy Azure refuses, so accepting it here would emit a metric shape
+	// the tenant will not.
+	if len(config.Dimensions) > 5 {
+		return Action{}, false, fmt.Errorf("llm-emit-token-metric takes at most 5 dimensions, got %d", len(config.Dimensions))
+	}
 	if config.Namespace == "" {
 		config.Namespace = "llm"
 	}
@@ -102,15 +127,19 @@ func compileLLMEmitTokenMetric(item node) (Action, bool, error) {
 
 func compileLLMConfig(item node) (LLMConfig, error) {
 	config := LLMConfig{
-		CounterKey:           item.Attrs["counter-key"],
-		EstimatePromptTokens: strings.EqualFold(item.Attrs["estimate-prompt-tokens"], "true"),
-		RetryAfterHeader:     item.Attrs["retry-after-header-name"],
-		RetryAfterVariable:   item.Attrs["retry-after-variable-name"],
-		RemainingHeader:      item.Attrs["remaining-tokens-header-name"],
-		RemainingVariable:    item.Attrs["remaining-tokens-variable-name"],
-		ConsumedHeader:       item.Attrs["tokens-consumed-header-name"],
-		ConsumedVariable:     item.Attrs["tokens-consumed-variable-name"],
-		Namespace:            item.Attrs["namespace"],
+		CounterKey:             item.Attrs["counter-key"],
+		EstimatePromptTokens:   strings.EqualFold(item.Attrs["estimate-prompt-tokens"], "true"),
+		RetryAfterHeader:       item.Attrs["retry-after-header-name"],
+		RetryAfterVariable:     item.Attrs["retry-after-variable-name"],
+		TokenQuota:             item.Attrs["token-quota"],
+		TokenQuotaPeriod:       item.Attrs["token-quota-period"],
+		RemainingQuotaHeader:   item.Attrs["remaining-quota-tokens-header-name"],
+		RemainingQuotaVariable: item.Attrs["remaining-quota-tokens-variable-name"],
+		RemainingHeader:        item.Attrs["remaining-tokens-header-name"],
+		RemainingVariable:      item.Attrs["remaining-tokens-variable-name"],
+		ConsumedHeader:         item.Attrs["tokens-consumed-header-name"],
+		ConsumedVariable:       item.Attrs["tokens-consumed-variable-name"],
+		Namespace:              item.Attrs["namespace"],
 	}
 	if raw := item.Attrs["tokens-per-minute"]; raw != "" {
 		value, err := strconv.Atoi(raw)
@@ -119,12 +148,42 @@ func compileLLMConfig(item node) (LLMConfig, error) {
 		}
 		config.TokensPerMinute = value
 	}
+	// A literal period must be one of the five Microsoft names. An expression
+	// is checked when it runs, since its value is not known yet.
+	if period := config.TokenQuotaPeriod; period != "" && !expression(period) {
+		if !validQuotaPeriod(period) {
+			return LLMConfig{}, fmt.Errorf("invalid token-quota-period %q", period)
+		}
+	}
+	if quota := config.TokenQuota; quota != "" && !expression(quota) {
+		value, err := strconv.Atoi(strings.TrimSpace(quota))
+		if err != nil || value <= 0 {
+			return LLMConfig{}, fmt.Errorf("invalid token-quota %q", quota)
+		}
+	}
 	return config, nil
 }
 
+// quotaPeriods are the window lengths token-quota-period accepts. Microsoft
+// names exactly these five, and the start of a period is "the UTC timestamp
+// truncated to the unit" rather than the moment the first request arrived.
+var quotaPeriods = []string{"Hourly", "Daily", "Weekly", "Monthly", "Yearly"}
+
+func validQuotaPeriod(period string) bool {
+	for _, name := range quotaPeriods {
+		if strings.EqualFold(strings.TrimSpace(period), name) {
+			return true
+		}
+	}
+	return false
+}
+
 func executeLLMTokenLimit(action Action, state *State) error {
-	if state.TokenLimit == nil {
+	if action.LLM.TokensPerMinute > 0 && state.TokenLimit == nil {
 		return fmt.Errorf("llm-token-limit requires a configured token counter")
+	}
+	if action.LLM.TokenQuota != "" && state.TokenQuota == nil {
+		return fmt.Errorf("llm-token-limit token-quota requires a configured quota counter")
 	}
 	key, err := evalValue(action.LLM.CounterKey, state)
 	if err != nil {
@@ -139,8 +198,25 @@ func executeLLMTokenLimit(action Action, state *State) error {
 	if action.LLM.EstimatePromptTokens {
 		estimate = llm.Estimate(requestBodyBytes(state))
 	}
-	remaining, retryAfter, allowed := state.TokenLimit(key, action.LLM.TokensPerMinute, estimate)
-	governance := &LLMGovernance{CounterKey: key, TokensPerMinute: action.LLM.TokensPerMinute, Config: action.LLM}
+	remaining, retryAfter, allowed := 0, 0, true
+	if action.LLM.TokensPerMinute > 0 {
+		remaining, retryAfter, allowed = state.TokenLimit(key, action.LLM.TokensPerMinute, estimate)
+	}
+	// The quota is a second budget. It is consulted even when the rate already
+	// refused, so the remaining-quota counters a policy asked for are reported
+	// either way, and it can refuse a request the rate would have allowed.
+	quotaRemaining, quotaRetry, quotaAllowed, resolved, err := applyTokenQuota(action, state, key, estimate)
+	if err != nil {
+		return err
+	}
+	if action.LLM.TokenQuota != "" {
+		setLLMValue(state, action.LLM.RemainingQuotaHeader, action.LLM.RemainingQuotaVariable, strconv.Itoa(quotaRemaining))
+		if !quotaAllowed && allowed {
+			allowed, retryAfter = false, quotaRetry
+		}
+	}
+	governance := &LLMGovernance{CounterKey: key, TokensPerMinute: action.LLM.TokensPerMinute, Config: action.LLM,
+		QuotaPeriod: resolved.period, Quota: resolved.quota}
 	if existing := state.LLM; existing != nil {
 		governance.Emit, governance.Namespace, governance.Dimensions = existing.Emit, existing.Namespace, existing.Dimensions
 	}
@@ -205,4 +281,34 @@ func requestBodyBytes(state *State) []byte {
 	state.Request.Body = io.NopCloser(strings.NewReader(string(body)))
 	state.Request.ContentLength = int64(len(body))
 	return body
+}
+
+// applyTokenQuota evaluates the token-quota attributes and consults the quota
+// counter. A policy without a quota gets an allowing answer and nothing else.
+type resolvedQuota struct {
+	period string
+	quota  int
+}
+
+func applyTokenQuota(action Action, state *State, key string, estimate int) (int, int, bool, resolvedQuota, error) {
+	if action.LLM.TokenQuota == "" {
+		return 0, 0, true, resolvedQuota{}, nil
+	}
+	rendered, err := evalValue(action.LLM.TokenQuota, state)
+	if err != nil {
+		return 0, 0, false, resolvedQuota{}, err
+	}
+	quota, convErr := strconv.Atoi(strings.TrimSpace(rendered))
+	if convErr != nil || quota <= 0 {
+		return 0, 0, false, resolvedQuota{}, fmt.Errorf("invalid token-quota %q", rendered)
+	}
+	period, err := evalValue(action.LLM.TokenQuotaPeriod, state)
+	if err != nil {
+		return 0, 0, false, resolvedQuota{}, err
+	}
+	if !validQuotaPeriod(period) {
+		return 0, 0, false, resolvedQuota{}, fmt.Errorf("invalid token-quota-period %q", period)
+	}
+	remaining, retryAfter, allowed := state.TokenQuota(key, quota, period, estimate)
+	return remaining, retryAfter, allowed, resolvedQuota{period: period, quota: quota}, nil
 }

@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/calvinchengx/azure-apim-emulator/internal/clock"
 	"github.com/calvinchengx/azure-apim-emulator/internal/model"
@@ -338,3 +339,138 @@ var errBroken = &brokenError{}
 type brokenError struct{}
 
 func (*brokenError) Error() string { return "connection reset" }
+
+// TestTokenQuotaWindowsTruncateUTC pins where a quota period starts. Microsoft:
+// "The start time of a quota period is calculated as the UTC timestamp
+// truncated to the unit (hour, day, etc.) used for the period." So a Daily
+// quota resets at midnight UTC, not 24 hours after the first request.
+func TestTokenQuotaWindowsTruncateUTC(t *testing.T) {
+	at := func(stamp string) time.Time {
+		moment, err := time.Parse(time.RFC3339, stamp)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return moment
+	}
+	// A Thursday, so the weekly window starts on the Monday before it.
+	moment := at("2026-03-05T14:37:21Z")
+	for _, testCase := range []struct {
+		period string
+		start  string
+	}{
+		{"Hourly", "2026-03-05T14:00:00Z"},
+		{"Daily", "2026-03-05T00:00:00Z"},
+		{"Weekly", "2026-03-02T00:00:00Z"},
+		{"Monthly", "2026-03-01T00:00:00Z"},
+		{"Yearly", "2026-01-01T00:00:00Z"},
+		// The names are Microsoft's, but a policy that spells one in a
+		// different case is not asking for something else.
+		{"daily", "2026-03-05T00:00:00Z"},
+	} {
+		start, remaining, ok := tokenQuotaWindow(testCase.period, moment)
+		if !ok {
+			t.Fatalf("%s was not a period", testCase.period)
+		}
+		if !start.Equal(at(testCase.start)) {
+			t.Errorf("%s window started %s, want %s", testCase.period, start.Format(time.RFC3339), testCase.start)
+		}
+		if remaining <= 0 {
+			t.Errorf("%s reported %s left in the window", testCase.period, remaining)
+		}
+	}
+	if _, _, ok := tokenQuotaWindow("Fortnightly", moment); ok {
+		t.Fatal("an undocumented period was accepted")
+	}
+
+	// A moment one second before a boundary and one after fall in different
+	// windows, which is what makes the quota reset rather than slide.
+	before, _, _ := tokenQuotaWindow("Daily", at("2026-03-05T23:59:59Z"))
+	after, _, _ := tokenQuotaWindow("Daily", at("2026-03-06T00:00:01Z"))
+	if before.Equal(after) {
+		t.Fatal("the daily window did not roll over at midnight UTC")
+	}
+}
+
+// TestTokenQuotaCounts covers the counter itself: spends accumulate within a
+// window and refuse the request once the budget is gone.
+func TestTokenQuotaCounts(t *testing.T) {
+	runtime := New("fallback", nil)
+	remaining, retryAfter, allowed := runtime.tokenQuota("caller", 100, "Daily", 40)
+	if !allowed || remaining != 60 || retryAfter != 0 {
+		t.Fatalf("first spend = %d remaining, retry %d, allowed %v", remaining, retryAfter, allowed)
+	}
+	if remaining, _, allowed = runtime.tokenQuota("caller", 100, "Daily", 40); !allowed || remaining != 20 {
+		t.Fatalf("second spend = %d remaining, allowed %v", remaining, allowed)
+	}
+	// Charging what the model actually spent is what pushes it over.
+	runtime.chargeTokenQuota("caller", "Daily", 30)
+	remaining, retryAfter, allowed = runtime.tokenQuota("caller", 100, "Daily", 1)
+	if allowed || remaining != 0 || retryAfter <= 0 {
+		t.Fatalf("exhausted quota = %d remaining, retry %d, allowed %v", remaining, retryAfter, allowed)
+	}
+	// A separate key has its own budget.
+	if _, _, allowed = runtime.tokenQuota("other", 100, "Daily", 1); !allowed {
+		t.Fatal("a different counter key was refused")
+	}
+	// An unusable period cannot be enforced, so it refuses rather than passing.
+	if _, _, allowed = runtime.tokenQuota("caller", 100, "Fortnightly", 1); allowed {
+		t.Fatal("an undocumented period was treated as governing")
+	}
+	// Charging against one is a no-op rather than a panic, and zero tokens
+	// never move a counter.
+	runtime.chargeTokenQuota("caller", "Fortnightly", 10)
+	runtime.chargeTokenQuota("caller", "Daily", 0)
+}
+
+// TestTokenQuotaEdges covers the counter's remaining paths: a first charge
+// against an untouched runtime, and an estimate larger than the whole budget.
+func TestTokenQuotaEdges(t *testing.T) {
+	fresh := New("fallback", nil)
+	// Charging before anything has been reserved must still count.
+	fresh.chargeTokenQuota("caller", "Daily", 25)
+	remaining, _, allowed := fresh.tokenQuota("caller", 100, "Daily", 0)
+	if !allowed || remaining != 75 {
+		t.Fatalf("after a first charge of 25: %d remaining, allowed %v", remaining, allowed)
+	}
+	// An estimate larger than what is left reports nothing remaining rather
+	// than a negative number of tokens.
+	overshoot := New("fallback", nil)
+	if remaining, _, allowed = overshoot.tokenQuota("caller", 10, "Daily", 50); !allowed || remaining != 0 {
+		t.Fatalf("an overshooting estimate: %d remaining, allowed %v", remaining, allowed)
+	}
+	// And the next request is refused, because the overshoot was charged.
+	if _, _, allowed = overshoot.tokenQuota("caller", 10, "Daily", 1); allowed {
+		t.Fatal("the overshooting estimate was not charged")
+	}
+}
+
+// TestLLMTokenQuotaChargesWhatWasSpent drives the quota through a real answer.
+// The reservation the policy makes on the way in is an estimate at best; what
+// the model actually spent is what the budget has to lose.
+func TestLLMTokenQuotaChargesWhatWasSpent(t *testing.T) {
+	backend := openAIBackend(t, 60, 60)
+	runtime := llmRuntime(t, backend.URL, `<policies><inbound>`+
+		`<llm-token-limit counter-key="tenant" token-quota="200" token-quota-period="Daily" remaining-quota-tokens-header-name="X-Quota-Left"/>`+
+		`</inbound></policies>`)
+
+	first := httptest.NewRecorder()
+	runtime.ServeHTTP(first, chatRequest(false))
+	if first.Code != http.StatusOK {
+		t.Fatalf("first request = %d", first.Code)
+	}
+	// 120 tokens of a 200 budget are gone, so the next request is the one that
+	// exhausts it rather than being refused outright.
+	second := httptest.NewRecorder()
+	runtime.ServeHTTP(second, chatRequest(false))
+	if second.Code != http.StatusOK {
+		t.Fatalf("second request = %d, want the budget to still cover it", second.Code)
+	}
+	third := httptest.NewRecorder()
+	runtime.ServeHTTP(third, chatRequest(false))
+	if third.Code != http.StatusTooManyRequests {
+		t.Fatalf("third request = %d, want 429 once 240 tokens exceeded a 200 budget", third.Code)
+	}
+	if third.Header().Get("Retry-After") == "" {
+		t.Fatal("an exhausted quota sent no Retry-After")
+	}
+}

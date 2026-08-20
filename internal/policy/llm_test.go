@@ -2,6 +2,7 @@ package policy
 
 import (
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -271,5 +272,143 @@ func TestLLMSurfacesEvaluationAndBodyFailures(t *testing.T) {
 	broken.Request.Body = failingBody{}
 	if err := Execute(estimatePlan.Inbound, broken); err != nil {
 		t.Fatalf("an unreadable body failed the policy: %v", err)
+	}
+}
+
+// TestLLMTokenQuota covers the budget Microsoft documents alongside the
+// per-minute rate: "Either a rate limit (tokens-per-minute), a quota
+// (token-quota over a token-quota-period), or both must be specified."
+func TestLLMTokenQuota(t *testing.T) {
+	// A quota-only policy is valid. It used to be refused for having no
+	// tokens-per-minute, which is a policy Azure accepts.
+	quotaOnly, err := Compile(`<policies><inbound><llm-token-limit counter-key="k" token-quota="1000" token-quota-period="Monthly"/></inbound></policies>`, true)
+	if err != nil {
+		t.Fatalf("a quota-only policy was refused: %v", err)
+	}
+	if quotaOnly.Inbound[0].LLM.TokenQuota != "1000" || quotaOnly.Inbound[0].LLM.TokenQuotaPeriod != "Monthly" {
+		t.Fatalf("quota-only config = %+v", quotaOnly.Inbound[0].LLM)
+	}
+
+	// Half a quota is not a quota, and neither half alone is a policy.
+	for _, attrs := range []string{
+		`counter-key="k" token-quota="1000"`,
+		// With a rate present, half a quota is still not a quota.
+		`counter-key="k" tokens-per-minute="10" token-quota="1000"`,
+		`counter-key="k" tokens-per-minute="10" token-quota-period="Daily"`,
+		`counter-key="k" token-quota-period="Monthly"`,
+		`counter-key="k"`,
+		`counter-key="k" tokens-per-minute="10" token-quota="1000" token-quota-period="Fortnightly"`,
+		`counter-key="k" tokens-per-minute="10" token-quota="nope" token-quota-period="Daily"`,
+		`counter-key="k" tokens-per-minute="10" token-quota="0" token-quota-period="Daily"`,
+	} {
+		if _, err := Compile(`<policies><inbound><llm-token-limit `+attrs+`/></inbound></policies>`, true); err == nil {
+			t.Errorf("accepted %s", attrs)
+		}
+	}
+
+	// The quota refuses a request the rate would have allowed, and reports the
+	// remainder a policy asked for.
+	plan, err := Compile(`<policies><inbound><llm-token-limit counter-key="k" tokens-per-minute="1000000"`+
+		` token-quota="500" token-quota-period="Daily" remaining-quota-tokens-header-name="X-Quota-Left"/></inbound></policies>`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var asked []string
+	state := &State{
+		Headers:    make(http.Header),
+		Request:    httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{}")),
+		TokenLimit: func(string, int, int) (int, int, bool) { return 999999, 0, true },
+		TokenQuota: func(key string, quota int, period string, _ int) (int, int, bool) {
+			asked = append(asked, period)
+			return 0, 3600, false
+		},
+	}
+	if err := Execute(plan.Inbound, state); err != nil {
+		t.Fatal(err)
+	}
+	if !state.Returned || state.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("the quota did not refuse the request: %+v", state)
+	}
+	if state.Headers.Get("X-Quota-Left") != "0" {
+		t.Fatalf("remaining-quota-tokens-header-name = %q", state.Headers.Get("X-Quota-Left"))
+	}
+	if len(asked) != 1 || asked[0] != "Daily" {
+		t.Fatalf("the counter was asked for period %v", asked)
+	}
+
+	// An expression period reaches the counter EVALUATED. Handing it the
+	// compiled expression would leave the runtime unable to place the window,
+	// and a quota that charges nothing looks exactly like a generous one.
+	exprPlan, err := Compile(`<policies><inbound><llm-token-limit counter-key="k" token-quota="@(500)" token-quota-period="@(&quot;Daily&quot;)"/></inbound></policies>`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	asked = nil
+	var quotas []int
+	exprState := &State{
+		Headers: make(http.Header),
+		Request: httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{}")),
+		TokenQuota: func(_ string, quota int, period string, _ int) (int, int, bool) {
+			asked = append(asked, period)
+			quotas = append(quotas, quota)
+			return 500, 0, true
+		},
+	}
+	if err := Execute(exprPlan.Inbound, exprState); err != nil {
+		t.Fatal(err)
+	}
+	if len(asked) != 1 || asked[0] != "Daily" || len(quotas) != 1 || quotas[0] != 500 {
+		t.Fatalf("expression quota reached the counter as %v / %v", asked, quotas)
+	}
+	// And the evaluated period is what the response accounting will charge.
+	if exprState.LLM == nil || exprState.LLM.QuotaPeriod != "Daily" || exprState.LLM.Quota != 500 {
+		t.Fatalf("governance carried %+v, want the evaluated period and quota", exprState.LLM)
+	}
+
+	// An expression that evaluates to nonsense stops the request rather than
+	// governing nothing.
+	for _, attrs := range []string{
+		`counter-key="k" token-quota="@(&quot;lots&quot;)" token-quota-period="Daily"`,
+		// An expression that cannot be evaluated at all, in either attribute.
+		`counter-key="k" token-quota="@(1 / 0)" token-quota-period="Daily"`,
+		`counter-key="k" token-quota="@(500)" token-quota-period="@(1 / 0)"`,
+		`counter-key="k" token-quota="@(500)" token-quota-period="@(&quot;Fortnightly&quot;)"`,
+	} {
+		bad, err := Compile(`<policies><inbound><llm-token-limit `+attrs+`/></inbound></policies>`, true)
+		if err != nil {
+			t.Fatalf("%s: %v", attrs, err)
+		}
+		badState := &State{Headers: make(http.Header), Request: httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{}")),
+			TokenQuota: func(string, int, string, int) (int, int, bool) { return 0, 0, true }}
+		if err := Execute(bad.Inbound, badState); err == nil {
+			t.Errorf("%s governed nothing without reporting a failure", attrs)
+		}
+	}
+
+	// A quota policy needs a quota counter.
+	if err := Execute(quotaOnly.Inbound, &State{Headers: make(http.Header), Request: httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{}"))}); err == nil {
+		t.Fatal("a token-quota ran with no counter configured")
+	}
+}
+
+// TestLLMEmitTokenMetricDimensionCap covers the limit the reference states:
+// "You can configure at most 5 custom dimensions for this policy."
+func TestLLMEmitTokenMetricDimensionCap(t *testing.T) {
+	build := func(count int) string {
+		var dimensions strings.Builder
+		for i := 0; i < count; i++ {
+			dimensions.WriteString(`<dimension name="d` + string(rune('A'+i)) + `"/>`)
+		}
+		return `<policies><inbound><llm-emit-token-metric namespace="n">` + dimensions.String() + `</llm-emit-token-metric></inbound></policies>`
+	}
+	plan, err := Compile(build(5), true)
+	if err != nil {
+		t.Fatalf("five dimensions were refused: %v", err)
+	}
+	if len(plan.Inbound[0].LLM.Dimensions) != 5 {
+		t.Fatalf("five dimensions compiled to %d", len(plan.Inbound[0].LLM.Dimensions))
+	}
+	if _, err := Compile(build(6), true); err == nil {
+		t.Fatal("six dimensions were accepted, where Azure allows five")
 	}
 }

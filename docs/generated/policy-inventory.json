@@ -105,7 +105,7 @@
     },
     {
       "name": "llm-token-limit",
-      "status": "partial",
+      "status": "implemented",
       "sections": [
         "inbound"
       ],
@@ -117,11 +117,12 @@
       ],
       "expression_fields": [
         "counter-key"
-      ]
+      ],
+      "notes": "counter-key, tokens-per-minute, token-quota over a token-quota-period, estimate-prompt-tokens and the retry-after, remaining-tokens, remaining-quota-tokens and tokens-consumed reporting attributes are all honoured; the quota window is anchored at the UTC timestamp truncated to the period, as documented"
     },
     {
       "name": "azure-openai-token-limit",
-      "status": "partial",
+      "status": "implemented",
       "sections": [
         "inbound"
       ],
@@ -133,7 +134,8 @@
       ],
       "expression_fields": [
         "counter-key"
-      ]
+      ],
+      "notes": "counter-key, tokens-per-minute, token-quota over a token-quota-period, estimate-prompt-tokens and the retry-after, remaining-tokens, remaining-quota-tokens and tokens-consumed reporting attributes are all honoured; the quota window is anchored at the UTC timestamp truncated to the period, as documented"
     },
     {
       "name": "check-header",
@@ -1025,10 +1027,9 @@
     },
     {
       "name": "llm-emit-token-metric",
-      "status": "partial",
+      "status": "implemented",
       "sections": [
-        "inbound",
-        "outbound"
+        "inbound"
       ],
       "gateways": [
         "classic",
@@ -1038,14 +1039,14 @@
       ],
       "expression_fields": [
         "dimension/value"
-      ]
+      ],
+      "notes": "namespace and up to five dimensions are honoured, and a sixth is refused as Azure refuses it"
     },
     {
       "name": "azure-openai-emit-token-metric",
-      "status": "partial",
+      "status": "implemented",
       "sections": [
-        "inbound",
-        "outbound"
+        "inbound"
       ],
       "gateways": [
         "classic",
@@ -1055,7 +1056,8 @@
       ],
       "expression_fields": [
         "dimension/value"
-      ]
+      ],
+      "notes": "namespace and up to five dimensions are honoured, and a sixth is refused as Azure refuses it"
     },
     {
       "name": "sql-data-source",

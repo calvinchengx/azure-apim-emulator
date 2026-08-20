@@ -138,6 +138,7 @@ type Runtime struct {
 	client               *http.Client
 	openIDMu             sync.Mutex
 	openIDConfigs        map[string]*openIDEntry
+	tokenQuotas          map[string]int
 	current              atomic.Pointer[Snapshot]
 	traceMu              sync.RWMutex
 	traces               map[string]Trace
@@ -1024,7 +1025,7 @@ func (r *Runtime) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 	cacheKey := service.Name + ":" + route.API.ID() + ":" + req.Method + ":" + req.URL.RequestURI()
 	apiCtx, operationCtx, productCtx, subscriptionCtx, userCtx, deploymentCtx := bindRequestContext(service, route, operation, req, selfHosted)
-	state := &policy.State{Request: req, BackendURL: route.API.ServiceURL, Path: relative, Headers: make(http.Header), ValidateToken: r.policyTokenValidator, ValidateTokenAgainst: r.validateTokenAgainst, SendRequest: r.policySendRequest, FetchCredential: r.credentialFetcher(req, route.API.ServiceID), Trace: func(phase, detail string) { traceEvent(trace, phase, detail) }, RateLimit: r.rateLimit, BandwidthLimit: r.bandwidthLimit, AcquireConcurrency: r.acquireConcurrency, CacheGet: r.cacheGet, CacheSet: r.cacheSet, ValueCacheGet: r.valueCacheGet, ValueCacheSet: r.valueCacheSet, ValueCacheRemove: r.valueCacheRemove, CacheKey: cacheKey, TokenLimit: r.tokenLimit, Timestamp: diagnosticStart, Elapsed: func() time.Duration { return time.Since(diagnosticStart) }, RequestId: requestID, Tracing: trace != nil, OriginalUrl: originalRequestURL(req), MatchedParameters: matchedParameters, Certificates: serviceCertificates(service), Backends: backendContexts(service), Api: apiCtx, Operation: operationCtx, Product: productCtx, Subscription: subscriptionCtx, User: userCtx, Deployment: deploymentCtx}
+	state := &policy.State{Request: req, BackendURL: route.API.ServiceURL, Path: relative, Headers: make(http.Header), ValidateToken: r.policyTokenValidator, ValidateTokenAgainst: r.validateTokenAgainst, SendRequest: r.policySendRequest, FetchCredential: r.credentialFetcher(req, route.API.ServiceID), Trace: func(phase, detail string) { traceEvent(trace, phase, detail) }, RateLimit: r.rateLimit, BandwidthLimit: r.bandwidthLimit, AcquireConcurrency: r.acquireConcurrency, CacheGet: r.cacheGet, CacheSet: r.cacheSet, ValueCacheGet: r.valueCacheGet, ValueCacheSet: r.valueCacheSet, ValueCacheRemove: r.valueCacheRemove, CacheKey: cacheKey, TokenLimit: r.tokenLimit, TokenQuota: r.tokenQuota, Timestamp: diagnosticStart, Elapsed: func() time.Duration { return time.Since(diagnosticStart) }, RequestId: requestID, Tracing: trace != nil, OriginalUrl: originalRequestURL(req), MatchedParameters: matchedParameters, Certificates: serviceCertificates(service), Backends: backendContexts(service), Api: apiCtx, Operation: operationCtx, Product: productCtx, Subscription: subscriptionCtx, User: userCtx, Deployment: deploymentCtx}
 	defer func() {
 		// After outbound has run, so an increment-condition reading the response
 		// sees it. Microsoft postpones these precisely so the counter can depend
