@@ -28,13 +28,27 @@ var limitProbeValues = map[string]string{
 	"total-calls-header-name":       "X-Total",
 }
 
+// limitProbeOverrides hold values that are only valid for one policy. The
+// families bound renewal-period in opposite directions: the rate-limit pair caps
+// a sliding window at 300 seconds, quota-by-key requires at least that.
+var limitProbeOverrides = map[string]map[string]string{
+	"quota-by-key": {"renewal-period": "300"},
+}
+
+func limitProbeValue(policy, attribute string) string {
+	if value, overridden := limitProbeOverrides[policy][attribute]; overridden {
+		return value
+	}
+	return limitProbeValues[attribute]
+}
+
 // limitBaselines are the minimum each policy needs to compile, before a probe
 // attribute is added.
 var limitBaselines = map[string]string{
 	"rate-limit":        `calls="1" renewal-period="60"`,
 	"quota":             `calls="1" renewal-period="60"`,
 	"rate-limit-by-key": `calls="1" renewal-period="60" counter-key="k"`,
-	"quota-by-key":      `calls="1" renewal-period="60" counter-key="k"`,
+	"quota-by-key":      `calls="1" renewal-period="300" counter-key="k"`,
 }
 
 func planRejects(t *testing.T, document string) bool {
@@ -91,7 +105,7 @@ func TestLimitPoliciesAcceptExactlyTheDocumentedAttributes(t *testing.T) {
 	document := func(name, section, attribute string) string {
 		probe := ""
 		if attribute != "" {
-			probe = fmt.Sprintf(` %s=%q`, attribute, limitProbeValues[attribute])
+			probe = fmt.Sprintf(` %s=%q`, attribute, limitProbeValue(name, attribute))
 		}
 		switch section {
 		case "attributes":

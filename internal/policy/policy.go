@@ -10,10 +10,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"net/http"
 	"sort"
-	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -111,16 +111,22 @@ type Action struct {
 	PerSubscription bool
 	// The rate-limit pair reports its own counters back to the caller. Body
 	// carries retry-after-header-name; these carry the rest.
+	// LimitScope names the nested element a limit came from, "api" or
+	// "operation", and is empty on the outer limit. LimitScopeID wins over
+	// LimitScopeName when a policy gives both, as the reference states.
+	LimitScope             string
+	LimitScopeName         string
+	LimitScopeID           string
 	RetryAfterVariable     string
 	RemainingCallsHeader   string
 	RemainingCallsVariable string
 	TotalCallsHeader       string
-	CacheDuration  time.Duration
-	StatusMin      int
-	StatusMax      int
-	ContentMax     int64
-	ContentAction  string
-	ContentTypes   []string
+	CacheDuration          time.Duration
+	StatusMin              int
+	StatusMax              int
+	ContentMax             int64
+	ContentAction          string
+	ContentTypes           []string
 	// Element is the policy element this action was compiled from, and Scope is
 	// the policy document it came from (global, product, api, operation). Both
 	// exist so a failure can say WHERE it happened, which is the whole of
@@ -410,6 +416,13 @@ func expandNodes(nodes []node, fragments map[string]string, stack map[string]boo
 func compileRoot(root node, strict bool) (Plan, error) {
 	if root.Name != "policies" {
 		return Plan{}, fmt.Errorf("policy root must be <policies>")
+	}
+	// "This policy can be used only once per policy definition", which the
+	// keyless pair states and the by-key pair does not: two by-key limits carry
+	// two counter keys, two keyless ones would fight over one subscription
+	// counter.
+	if repeated := repeatedKeylessLimit(root); repeated != "" {
+		return Plan{}, fmt.Errorf("<%s> used more than once in one policy definition", repeated)
 	}
 	var plan Plan
 	seen := map[string]bool{}
@@ -1107,7 +1120,7 @@ func compileNode(item node, strict bool) (Action, bool, error) {
 }
 
 func compileLimit(item node) (Action, bool, error) {
-	calls, period, bandwidth, err := parseLimitBudget(item)
+	calls, period, bandwidth, err := parseLimitBudget(item, item.Name)
 	if err != nil {
 		return Action{}, false, err
 	}
@@ -1173,10 +1186,16 @@ func compileNestedLimit(parent string, parentPeriod time.Duration, item node, pe
 		return unsupported(parent + "/" + item.Name + "/@" + extra), nil
 	}
 	name := strings.TrimSpace(item.Attrs["name"])
-	if name == "" {
+	id := strings.TrimSpace(item.Attrs["id"])
+	// "Either name or id must be specified", and id wins when both are.
+	if name == "" && id == "" {
 		return unsupported(parent + "/" + item.Name), nil
 	}
-	calls, period, bandwidth, err := parseLimitBudget(item)
+	target := name
+	if id != "" {
+		target = id
+	}
+	calls, period, bandwidth, err := parseLimitBudget(item, root)
 	if err != nil {
 		return Action{}, err
 	}
@@ -1204,10 +1223,15 @@ func compileNestedLimit(parent string, parentPeriod time.Duration, item node, pe
 	if strings.HasPrefix(parent, "quota") {
 		status = http.StatusForbidden
 	}
-	return Action{Kind: ActionRateLimit, Value: parent + "/" + item.Name + "/" + name, LimitCalls: calls, LimitBandwidth: bandwidth, LimitPeriod: period, StatusCode: status, Children: children, PerSubscription: perSubscription}, nil
+	return Action{
+		Kind: ActionRateLimit, Value: parent + "/" + item.Name + "/" + target,
+		LimitCalls: calls, LimitBandwidth: bandwidth, LimitPeriod: period, StatusCode: status,
+		Children: children, PerSubscription: perSubscription,
+		LimitScope: item.Name, LimitScopeName: name, LimitScopeID: id,
+	}, nil
 }
 
-func parseLimitBudget(item node) (int, time.Duration, int64, error) {
+func parseLimitBudget(item node, root string) (int, time.Duration, int64, error) {
 	calls, period, bandwidth := 0, time.Duration(0), int64(0)
 	if value := item.Attrs["calls"]; value != "" {
 		if _, err := fmt.Sscanf(value, "%d", &calls); err != nil || calls <= 0 {
@@ -1226,8 +1250,19 @@ func parseLimitBudget(item node) (int, time.Duration, int64, error) {
 			return 0, 0, 0, fmt.Errorf("invalid %s bandwidth", item.Name)
 		}
 	}
-	if item.Name == "rate-limit" && period > 300*time.Second {
-		return 0, 0, 0, fmt.Errorf("invalid rate-limit renewal period")
+	// The families bound the period in opposite directions: the rate-limit pair
+	// caps a sliding window at 300s, the quota-by-key fixed window needs at
+	// least that. Checked against the ROOT policy, since a nested api/operation
+	// carries the same bound as the limit it sits in.
+	switch root {
+	case "rate-limit", "rate-limit-by-key":
+		if period > 300*time.Second {
+			return 0, 0, 0, fmt.Errorf("invalid %s renewal period", root)
+		}
+	case "quota-by-key":
+		if period > 0 && period < 300*time.Second {
+			return 0, 0, 0, fmt.Errorf("invalid %s renewal period", root)
+		}
 	}
 	return calls, period, bandwidth, nil
 }
@@ -2550,6 +2585,11 @@ func executeLimit(action Action, state *State) error {
 	if key == "" && state.Request != nil {
 		key = state.Request.RemoteAddr
 	}
+	// A nested limit counts only the API or operation it names. Counting every
+	// request against it would throttle one API using another's traffic.
+	if action.LimitScope != "" && !limitScopeMatches(action, state) {
+		return nil
+	}
 	if action.PerSubscription {
 		// "This policy is only applied when an API is accessed using a
 		// subscription key." An anonymous caller is not counted at all, and the
@@ -2818,4 +2858,53 @@ func retryAfterSeconds(wait time.Duration) string {
 		seconds = 1
 	}
 	return strconv.FormatInt(seconds, 10)
+}
+
+// limitScopeMatches reports whether this request is the one a nested api or
+// operation limit names.
+//
+// Which identity `name` refers to is inferred rather than stated: the reference
+// offers `name` and `id` as alternatives, and this binds them to the display
+// name and the resource id respectively, the same pair context.Api exposes. No
+// tenant has confirmed it, so it is a candidate for differential testing.
+func limitScopeMatches(action Action, state *State) bool {
+	var id, name string
+	switch action.LimitScope {
+	case "api":
+		if state.Api == nil {
+			return false
+		}
+		id, name = state.Api.Id, state.Api.Name
+	default:
+		if state.Operation == nil {
+			return false
+		}
+		id, name = state.Operation.Id, state.Operation.Name
+	}
+	if action.LimitScopeID != "" {
+		return action.LimitScopeID == id
+	}
+	return action.LimitScopeName == name
+}
+
+// repeatedKeylessLimit returns the first of <rate-limit> or <quota> that appears
+// more than once anywhere in the document, or "" when neither does.
+func repeatedKeylessLimit(root node) string {
+	counts := map[string]int{}
+	var walk func(nodes []node)
+	walk = func(nodes []node) {
+		for _, item := range nodes {
+			if item.Name == "rate-limit" || item.Name == "quota" {
+				counts[item.Name]++
+			}
+			walk(item.Children)
+		}
+	}
+	walk(root.Children)
+	for _, name := range []string{"quota", "rate-limit"} {
+		if counts[name] > 1 {
+			return name
+		}
+	}
+	return ""
 }
