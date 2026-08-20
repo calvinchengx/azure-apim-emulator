@@ -111,6 +111,13 @@ type Action struct {
 	PerSubscription bool
 	// The rate-limit pair reports its own counters back to the caller. Body
 	// carries retry-after-header-name; these carry the rest.
+	// LimitFixedWindow marks the quota family, which counts in a fixed window
+	// anchored at a point in time rather than one sliding with each call. A
+	// zero LimitPeriod on one of these is an infinite window, not an invalid one.
+	LimitFixedWindow bool
+	// LimitAnchor is quota-by-key's first-period-start. The keyless quota
+	// anchors on the subscription's start date instead.
+	LimitAnchor string
 	// LimitScope names the nested element a limit came from, "api" or
 	// "operation", and is empty on the outer limit. LimitScopeID wins over
 	// LimitScopeName when a policy gives both, as the reference states.
@@ -1140,8 +1147,20 @@ func compileLimit(item node) (Action, bool, error) {
 	if err != nil {
 		return Action{}, false, err
 	}
-	if (calls == 0 && bandwidth == 0) || period == 0 || key == "" {
+	fixedWindow := item.Name == "quota" || item.Name == "quota-by-key"
+	if (calls == 0 && bandwidth == 0) || key == "" {
 		return unsupported(item.Name), true, nil
+	}
+	// renewal-period is required. Absent is not the same as an explicit 0, which
+	// the quota family documents as an infinite period.
+	if period == 0 && !fixedWindow {
+		return unsupported(item.Name), true, nil
+	}
+	anchor := item.Attrs["first-period-start"]
+	if anchor != "" {
+		if _, err := time.Parse(time.RFC3339, anchor); err != nil {
+			return Action{}, false, fmt.Errorf("invalid %s first-period-start", item.Name)
+		}
 	}
 	children := make([]Action, 0, len(item.Children))
 	for _, child := range item.Children {
@@ -1168,6 +1187,7 @@ func compileLimit(item node) (Action, bool, error) {
 	return Action{
 		Kind: ActionRateLimit, Value: key, LimitCalls: calls, LimitBandwidth: bandwidth, LimitPeriod: period,
 		StatusCode: status, Body: retryAfter, Children: children, PerSubscription: perSubscription,
+		LimitFixedWindow: fixedWindow, LimitAnchor: anchor,
 		RetryAfterVariable:     item.Attrs["retry-after-variable-name"],
 		RemainingCallsHeader:   item.Attrs["remaining-calls-header-name"],
 		RemainingCallsVariable: item.Attrs["remaining-calls-variable-name"],
@@ -1227,7 +1247,8 @@ func compileNestedLimit(parent string, parentPeriod time.Duration, item node, pe
 		Kind: ActionRateLimit, Value: parent + "/" + item.Name + "/" + target,
 		LimitCalls: calls, LimitBandwidth: bandwidth, LimitPeriod: period, StatusCode: status,
 		Children: children, PerSubscription: perSubscription,
-		LimitScope: item.Name, LimitScopeName: name, LimitScopeID: id,
+		LimitFixedWindow: strings.HasPrefix(root, "quota"),
+		LimitScope:       item.Name, LimitScopeName: name, LimitScopeID: id,
 	}, nil
 }
 
@@ -1240,7 +1261,9 @@ func parseLimitBudget(item node, root string) (int, time.Duration, int64, error)
 	}
 	if value := item.Attrs["renewal-period"]; value != "" {
 		seconds, err := time.ParseDuration(value + "s")
-		if err != nil || seconds <= 0 {
+		// Zero is a real value for the quota family, where it means an infinite
+		// period, and an error everywhere else.
+		if err != nil || seconds < 0 || (seconds == 0 && !strings.HasPrefix(root, "quota")) {
 			return 0, 0, 0, fmt.Errorf("invalid %s renewal period", item.Name)
 		}
 		period = seconds
@@ -2601,11 +2624,16 @@ func executeLimit(action Action, state *State) error {
 		// of one subscription share a counter, and two subscriptions never do.
 		key = state.Subscription.Id + "/" + key
 	}
+	// A fixed window counts in its own bucket, so crossing a boundary starts the
+	// next window empty rather than ageing calls out one at a time.
+	suffix, remaining := limitWindow(action, state)
+	key += suffix
 	if action.LimitCalls > 0 {
 		if state.RateLimit == nil {
 			return fmt.Errorf("rate-limit requires a configured limiter")
 		}
 		decision := state.RateLimit(key, action.LimitCalls, action.LimitPeriod)
+		decision.RetryAfter = windowRetryAfter(action, decision.RetryAfter, remaining)
 		// Reported "after each policy execution", so on every request and not
 		// only on the one that trips the limit.
 		reportCallCounters(action, state, decision)
@@ -2618,6 +2646,7 @@ func executeLimit(action Action, state *State) error {
 			return fmt.Errorf("quota bandwidth requires a configured limiter")
 		}
 		if decision := state.BandwidthLimit(key, requestSize(state), action.LimitBandwidth, action.LimitPeriod); decision.Exceeded {
+			decision.RetryAfter = windowRetryAfter(action, decision.RetryAfter, remaining)
 			return limitExceeded(action, state, decision)
 		}
 	}
@@ -2907,4 +2936,58 @@ func repeatedKeylessLimit(root node) string {
 		}
 	}
 	return ""
+}
+
+// limitWindow locates the fixed window this request falls in, returning the
+// counter-key suffix that isolates it and the time left in it. The sliding
+// families and infinite windows get neither.
+//
+// Time comes from state.Timestamp rather than the wall clock, so this package
+// stays a pure function of its inputs.
+func limitWindow(action Action, state *State) (string, time.Duration) {
+	if !action.LimitFixedWindow || action.LimitPeriod <= 0 {
+		return "", 0
+	}
+	if state.Timestamp.IsZero() {
+		// Nothing to place the request in: count it in a single window rather
+		// than in one derived from the zero time.
+		return "/0", action.LimitPeriod
+	}
+	anchor := limitAnchor(action, state)
+	elapsed := state.Timestamp.Sub(anchor)
+	ordinal := int64(elapsed / action.LimitPeriod)
+	if elapsed < 0 && elapsed%action.LimitPeriod != 0 {
+		// Truncating division rounds toward zero, which would put the window
+		// before the anchor in the same bucket as the one after it.
+		ordinal--
+	}
+	start := anchor.Add(time.Duration(ordinal) * action.LimitPeriod)
+	return "/" + strconv.FormatInt(ordinal, 10), start.Add(action.LimitPeriod).Sub(state.Timestamp)
+}
+
+// limitAnchor is where the quota family's windows start counting from.
+func limitAnchor(action Action, state *State) time.Time {
+	if action.LimitAnchor != "" {
+		if parsed, err := time.Parse(time.RFC3339, action.LimitAnchor); err == nil {
+			return parsed
+		}
+	}
+	if state.Subscription != nil && state.Subscription.StartDate != "" {
+		if parsed, err := time.Parse(time.RFC3339, state.Subscription.StartDate); err == nil {
+			return parsed
+		}
+	}
+	// Neither is set, which is the common case here since seeded subscriptions
+	// carry no startDate. The epoch keeps windows stable across restarts, where
+	// anchoring on the first call would move them.
+	return time.Unix(0, 0).UTC()
+}
+
+// windowRetryAfter picks the wait to report. A fixed window renews at its
+// boundary, which the limiter's sliding view cannot see.
+func windowRetryAfter(action Action, sliding, remaining time.Duration) time.Duration {
+	if action.LimitFixedWindow && action.LimitPeriod > 0 {
+		return remaining
+	}
+	return sliding
 }

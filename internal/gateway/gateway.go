@@ -237,7 +237,11 @@ func (r *Runtime) rateLimit(key string, calls int, period time.Duration) policy.
 	r.rateMu.Lock()
 	defer r.rateMu.Unlock()
 	window := r.rateWindows[key]
-	cutoff := now.Add(-period)
+	// An infinite quota period never renews, so nothing ages out of its window.
+	cutoff := time.Time{}
+	if period > 0 {
+		cutoff = now.Add(-period)
+	}
 	kept := window[:0]
 	for _, stamp := range window {
 		if stamp.After(cutoff) {
@@ -248,7 +252,11 @@ func (r *Runtime) rateLimit(key string, calls int, period time.Duration) policy.
 		r.rateWindows[key] = kept
 		// The window frees up when its oldest call ages out, which is the
 		// interval Azure recommends the caller wait.
-		return policy.LimitDecision{Exceeded: true, RetryAfter: kept[0].Add(period).Sub(now)}
+		wait := time.Duration(0)
+		if period > 0 {
+			wait = kept[0].Add(period).Sub(now)
+		}
+		return policy.LimitDecision{Exceeded: true, RetryAfter: wait}
 	}
 	r.rateWindows[key] = append(kept, now)
 	return policy.LimitDecision{Remaining: calls - len(kept) - 1}
@@ -262,7 +270,10 @@ func (r *Runtime) bandwidthLimit(key string, add, budget int64, period time.Dura
 	r.rateMu.Lock()
 	defer r.rateMu.Unlock()
 	window := r.bandwidthWindows[key]
-	cutoff := now.Add(-period)
+	cutoff := time.Time{}
+	if period > 0 {
+		cutoff = now.Add(-period)
+	}
 	kept := window[:0]
 	var total int64
 	for _, stamp := range window {
@@ -274,7 +285,7 @@ func (r *Runtime) bandwidthLimit(key string, add, budget int64, period time.Dura
 	if total+add > budget {
 		r.bandwidthWindows[key] = kept
 		wait := time.Duration(0)
-		if len(kept) > 0 {
+		if len(kept) > 0 && period > 0 {
 			wait = kept[0].at.Add(period).Sub(now)
 		}
 		return policy.LimitDecision{Exceeded: true, RetryAfter: wait}

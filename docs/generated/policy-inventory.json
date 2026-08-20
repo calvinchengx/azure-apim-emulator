@@ -57,7 +57,7 @@
     },
     {
       "name": "quota",
-      "status": "partial",
+      "status": "implemented",
       "sections": [
         "inbound",
         "outbound"
@@ -69,8 +69,7 @@
         "self-hosted",
         "workspace"
       ],
-      "expression_fields": [],
-      "notes": "renewal-period=\"0\" (an infinite period) is rejected, and the window is sliding rather than a fixed window anchored to the subscription's start date"
+      "expression_fields": []
     },
     {
       "name": "quota-by-key",
@@ -88,7 +87,7 @@
       "expression_fields": [
         "counter-key"
       ],
-      "notes": "increment-condition, increment-count and first-period-start are accepted and ignored, the window is sliding rather than fixed, and renewal-period=\"0\" is rejected"
+      "notes": "increment-condition and increment-count are accepted and ignored, so a policy that counts only some requests counts all of them"
     },
     {
       "name": "limit-concurrency",
