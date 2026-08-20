@@ -2019,9 +2019,11 @@ func (s *Store) ListProductAPIs(productID string) ([]string, error) {
 	return []string{}, nil
 }
 
-// UpsertSubscription creates or replaces a subscription, generating absent keys.
+// UpsertSubscription creates or replaces a subscription, generating absent keys
+// and stamping the lifecycle dates.
 func (s *Store) UpsertSubscription(v model.Subscription) (model.Subscription, error) {
 	sanitizeSubscriptionDocument(v.Document)
+	s.stampSubscriptionDates(&v)
 	document, err := json.Marshal(v.Document)
 	if err != nil {
 		return v, err
@@ -2058,6 +2060,38 @@ func (s *Store) UpsertSubscription(v model.Subscription) (model.Subscription, er
 	return v, tx.Commit()
 }
 
+// stampSubscriptionDates fills in the dates real APIM stamps on a subscription
+// when it is created. They are not decoration: <quota> anchors its fixed windows
+// on the subscription's start, so a subscription carrying no startDate puts
+// every window boundary at the Unix epoch instead.
+//
+// A date already present is never rewritten, and one already stored survives a
+// PUT that replaces the whole document, because a subscription is created once
+// and replacing its document is an update rather than a re-creation.
+func (s *Store) stampSubscriptionDates(v *model.Subscription) {
+	if v.Document == nil {
+		v.Document = map[string]any{}
+	}
+	properties, ok := v.Document["properties"].(map[string]any)
+	if !ok {
+		properties = map[string]any{}
+		v.Document["properties"] = properties
+	}
+	stored, _ := s.GetSubscription(v.ID())
+	carried, _ := stored.Document["properties"].(map[string]any)
+	now := time.Unix(s.Clock.Now(), 0).UTC().Format(time.RFC3339)
+	for _, key := range []string{"createdDate", "startDate"} {
+		if value, ok := properties[key].(string); ok && value != "" {
+			continue
+		}
+		if value, ok := carried[key].(string); ok && value != "" {
+			properties[key] = value
+			continue
+		}
+		properties[key] = now
+	}
+}
+
 func sanitizeSubscriptionDocument(document map[string]any) {
 	delete(document, "primaryKey")
 	delete(document, "secondaryKey")
@@ -2079,6 +2113,12 @@ func (s *Store) GetSubscription(id string) (model.Subscription, error) {
 	}
 	if err == nil {
 		_ = json.Unmarshal([]byte(document), &v.Document)
+		if v.Document == nil {
+			// A document stored as JSON null was written before subscriptions
+			// carried one. A caller patching this subscription merges into the
+			// map, which a nil would panic rather than fail.
+			v.Document = map[string]any{}
+		}
 	}
 	return v, err
 }
