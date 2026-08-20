@@ -232,7 +232,7 @@ func (r *Runtime) SetPolicyTokenValidator(validate func(string) error) {
 	r.policyTokenValidator = validate
 }
 
-func (r *Runtime) rateLimit(key string, calls int, period time.Duration) bool {
+func (r *Runtime) rateLimit(key string, calls int, period time.Duration) policy.LimitDecision {
 	now := time.Now()
 	r.rateMu.Lock()
 	defer r.rateMu.Unlock()
@@ -246,13 +246,15 @@ func (r *Runtime) rateLimit(key string, calls int, period time.Duration) bool {
 	}
 	if len(kept) >= calls {
 		r.rateWindows[key] = kept
-		return true
+		// The window frees up when its oldest call ages out, which is the
+		// interval Azure recommends the caller wait.
+		return policy.LimitDecision{Exceeded: true, RetryAfter: kept[0].Add(period).Sub(now)}
 	}
 	r.rateWindows[key] = append(kept, now)
-	return false
+	return policy.LimitDecision{Remaining: calls - len(kept) - 1}
 }
 
-func (r *Runtime) bandwidthLimit(key string, add, budget int64, period time.Duration) bool {
+func (r *Runtime) bandwidthLimit(key string, add, budget int64, period time.Duration) policy.LimitDecision {
 	if add < 0 {
 		add = 0
 	}
@@ -271,10 +273,14 @@ func (r *Runtime) bandwidthLimit(key string, add, budget int64, period time.Dura
 	}
 	if total+add > budget {
 		r.bandwidthWindows[key] = kept
-		return true
+		wait := time.Duration(0)
+		if len(kept) > 0 {
+			wait = kept[0].at.Add(period).Sub(now)
+		}
+		return policy.LimitDecision{Exceeded: true, RetryAfter: wait}
 	}
 	r.bandwidthWindows[key] = append(kept, bandwidthStamp{at: now, bytes: add})
-	return false
+	return policy.LimitDecision{}
 }
 
 func (r *Runtime) acquireConcurrency(key string, max int) func() {

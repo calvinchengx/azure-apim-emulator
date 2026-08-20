@@ -13,6 +13,7 @@ import (
 	"net"
 	"net/http"
 	"sort"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -108,6 +109,12 @@ type Action struct {
 	// API is accessed using a subscription key". The by-key variants carry their
 	// own counter-key and are not scoped this way.
 	PerSubscription bool
+	// The rate-limit pair reports its own counters back to the caller. Body
+	// carries retry-after-header-name; these carry the rest.
+	RetryAfterVariable     string
+	RemainingCallsHeader   string
+	RemainingCallsVariable string
+	TotalCallsHeader       string
 	CacheDuration  time.Duration
 	StatusMin      int
 	StatusMax      int
@@ -248,8 +255,8 @@ type State struct {
 	ValueCacheGet           func(string) (string, bool)
 	ValueCacheSet           func(string, string, time.Duration)
 	ValueCacheRemove        func(string)
-	RateLimit               func(string, int, time.Duration) bool
-	BandwidthLimit          func(string, int64, int64, time.Duration) bool
+	RateLimit               func(string, int, time.Duration) LimitDecision
+	BandwidthLimit          func(string, int64, int64, time.Duration) LimitDecision
 	AcquireConcurrency      func(string, int) func()
 	ConcurrencyReleases     []func()
 	CacheGet                func(string) (int, http.Header, string, bool)
@@ -1145,7 +1152,14 @@ func compileLimit(item node) (Action, bool, error) {
 	if retryAfter == "" && (item.Name == "rate-limit" || item.Name == "quota") {
 		retryAfter = "Retry-After"
 	}
-	return Action{Kind: ActionRateLimit, Value: key, LimitCalls: calls, LimitBandwidth: bandwidth, LimitPeriod: period, StatusCode: status, Body: retryAfter, Children: children, PerSubscription: perSubscription}, true, nil
+	return Action{
+		Kind: ActionRateLimit, Value: key, LimitCalls: calls, LimitBandwidth: bandwidth, LimitPeriod: period,
+		StatusCode: status, Body: retryAfter, Children: children, PerSubscription: perSubscription,
+		RetryAfterVariable:     item.Attrs["retry-after-variable-name"],
+		RemainingCallsHeader:   item.Attrs["remaining-calls-header-name"],
+		RemainingCallsVariable: item.Attrs["remaining-calls-variable-name"],
+		TotalCallsHeader:       item.Attrs["total-calls-header-name"],
+	}, true, nil
 }
 
 func compileNestedLimit(parent string, parentPeriod time.Duration, item node, perSubscription bool) (Action, error) {
@@ -2551,16 +2565,20 @@ func executeLimit(action Action, state *State) error {
 		if state.RateLimit == nil {
 			return fmt.Errorf("rate-limit requires a configured limiter")
 		}
-		if state.RateLimit(key, action.LimitCalls, action.LimitPeriod) {
-			return limitExceeded(action, state)
+		decision := state.RateLimit(key, action.LimitCalls, action.LimitPeriod)
+		// Reported "after each policy execution", so on every request and not
+		// only on the one that trips the limit.
+		reportCallCounters(action, state, decision)
+		if decision.Exceeded {
+			return limitExceeded(action, state, decision)
 		}
 	}
 	if action.LimitBandwidth > 0 {
 		if state.BandwidthLimit == nil {
 			return fmt.Errorf("quota bandwidth requires a configured limiter")
 		}
-		if state.BandwidthLimit(key, requestSize(state), action.LimitBandwidth, action.LimitPeriod) {
-			return limitExceeded(action, state)
+		if decision := state.BandwidthLimit(key, requestSize(state), action.LimitBandwidth, action.LimitPeriod); decision.Exceeded {
+			return limitExceeded(action, state, decision)
 		}
 	}
 	if err := Execute(action.Children, state); err != nil {
@@ -2569,12 +2587,39 @@ func executeLimit(action Action, state *State) error {
 	return nil
 }
 
-func limitExceeded(action Action, state *State) error {
+func limitExceeded(action Action, state *State, decision LimitDecision) error {
 	state.Returned, state.StatusCode = true, action.StatusCode
-	if action.Body != "" {
-		state.Headers.Set(action.Body, "true")
+	// Azure documents this as "the recommended retry interval in seconds". It
+	// used to be the literal string "true", which no client can wait on.
+	if seconds := retryAfterSeconds(decision.RetryAfter); action.Body != "" {
+		state.Headers.Set(action.Body, seconds)
+	}
+	if action.RetryAfterVariable != "" {
+		setVariable(state, action.RetryAfterVariable, retryAfterSeconds(decision.RetryAfter))
 	}
 	return nil
+}
+
+// reportCallCounters writes the remaining-calls and total-calls attributes, the
+// four ways the rate-limit pair reports a counter back to the caller.
+func reportCallCounters(action Action, state *State, decision LimitDecision) {
+	remaining := strconv.Itoa(decision.Remaining)
+	if action.RemainingCallsHeader != "" {
+		state.Headers.Set(action.RemainingCallsHeader, remaining)
+	}
+	if action.RemainingCallsVariable != "" {
+		setVariable(state, action.RemainingCallsVariable, remaining)
+	}
+	if action.TotalCallsHeader != "" {
+		state.Headers.Set(action.TotalCallsHeader, strconv.Itoa(action.LimitCalls))
+	}
+}
+
+func setVariable(state *State, name, value string) {
+	if state.Variables == nil {
+		state.Variables = map[string]string{}
+	}
+	state.Variables[name] = value
 }
 
 func requestSize(state *State) int64 {
@@ -2748,4 +2793,29 @@ func setHeader(headers http.Header, header Header) {
 	default:
 		headers.Set(header.Name, header.Value)
 	}
+}
+
+// LimitDecision is what a call or bandwidth limiter reports back. A bare bool
+// was enough while the only question was whether to return 429, but the
+// rate-limit pair documents remaining-calls and retry-after attributes whose
+// values only the limiter knows.
+type LimitDecision struct {
+	Exceeded bool
+	// Remaining is the calls still allowed in this window, after this one is
+	// counted. Zero when the limit is exceeded, and unused by bandwidth limits.
+	Remaining int
+	// RetryAfter is how long until the window frees up. Reported to the caller
+	// in seconds, which is what Azure puts in Retry-After.
+	RetryAfter time.Duration
+}
+
+// retryAfterSeconds renders a wait for the Retry-After header. Azure states the
+// value as "the recommended retry interval in seconds", so a sub-second wait
+// rounds up to 1 rather than down to 0, which would invite an immediate retry.
+func retryAfterSeconds(wait time.Duration) string {
+	seconds := int64(math.Ceil(wait.Seconds()))
+	if seconds < 1 {
+		seconds = 1
+	}
+	return strconv.FormatInt(seconds, 10)
 }
