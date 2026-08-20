@@ -103,7 +103,21 @@ check-inventory:
 	python3 scripts/derive_expression_surface.py --check
 	python3 scripts/derive_limit_attributes.py --check
 
-verify: build test test-coverage
+# check-format fails on anything gofmt would rewrite. go vet does not look at
+# formatting, so without this an alignment change rides into main unnoticed:
+# adding one longer field to a struct makes gofmt want to realign every field
+# under it, and that is exactly how internal/policy/policy.go and
+# internal/policy/lasterror.go came to be unformatted on main.
+check-format:
+	@unformatted=$$(gofmt -l $$(git ls-files '*.go')); \
+	if [ -n "$$unformatted" ]; then \
+		echo "gofmt would rewrite:"; echo "$$unformatted"; \
+		echo "run: gofmt -w $$unformatted"; \
+		exit 1; \
+	fi
+	@echo "gofmt: clean"
+
+verify: build test test-coverage check-format
 	go vet ./...
 
 up: ## Start the pair (entra pinned + apim built from source)
