@@ -16,6 +16,8 @@ export default defineConfig({
       title: 'Azure APIM Emulator',
       components: {
         Head: './src/components/Head.astro',
+        // Hosts the parity version picker beside the header search.
+        Search: './src/components/Search.astro',
         // Top nav: the parity version picker, rendered beside the search box.
       },
       description:
@@ -75,6 +77,8 @@ export default defineConfig({
           label: 'Parity',
           items: [
             { slug: 'parity', label: 'Parity ledger' },
+            { slug: 'parity-history' },
+            { slug: 'parity-history/changelog' },
           ],
         },
       ],

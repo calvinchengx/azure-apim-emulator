@@ -6,18 +6,23 @@
 // frontmatter, drops the duplicate H1, and rewrites intra-doc links to site
 // routes under the configured base.
 //
-// This is the family's sync script minus the parity-version history, which
-// keyvault and fabric generate from release tags. APIM has released (v0.1.0 to
-// v0.3.0) and keeps no parity snapshots yet, so there is still nothing to
-// build a version picker from; adding them is what unblocks it.
+// Parity history comes from git TAGS, not from committed snapshot files: every
+// `v*` tag carrying docs/parity.md is a snapshot git already holds. An earlier
+// version of this comment said APIM needed to keep snapshot files first, which
+// had the mechanism backwards and is why the picker was missing for so long.
 import { readdirSync, readFileSync, writeFileSync, rmSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { collectParity, writeParityHistory, parityManifest } from './parity-versions.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const DOCS_SRC = join(here, '..', '..', 'docs');
 const OUT = join(here, '..', 'src', 'content', 'docs');
 export const BASE = '/azure-apim-emulator/';
+const REPO_ROOT = join(here, '..', '..');
+const PARITY = collectParity(REPO_ROOT);
+const IS_RELEASE = /^v\d+\.\d+\.\d+$/.test(PARITY.version);
+const PARITY_RE = /(^|\/)parity\.md$/;
 
 // The numbered design chapters, the live parity ledger, the home page, and the
 // generated schema reference.
@@ -47,6 +52,15 @@ function yamlEscape(s) {
   return '"' + s.replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';
 }
 
+// A banner on the live parity page naming the version it describes. Without it
+// a reader cannot tell a released ledger from the tip of main.
+function parityStamp() {
+  const what = IS_RELEASE
+    ? `release **${PARITY.version}**`
+    : `**${PARITY.version}** (the live tip of \`main\`)`;
+  return `:::note\nThis ledger describes ${what}. Earlier releases are under [parity history](${BASE}parity-history/).\n:::\n\n`;
+}
+
 function convert(srcPath, name, editPath) {
   const raw = readFileSync(srcPath, 'utf8');
   const lines = raw.split('\n');
@@ -58,7 +72,8 @@ function convert(srcPath, name, editPath) {
   if (h1Index >= 0) {
     lines.splice(h1Index, lines[h1Index + 1]?.trim() === '' ? 2 : 1);
   }
-  const body = rewriteLinks(lines.join('\n').replace(/^\n+/, ''));
+  let body = rewriteLinks(lines.join('\n').replace(/^\n+/, ''));
+  if (PARITY_RE.test(name)) body = parityStamp() + body;
   // Point "Edit this page" at the real source in /docs — the generated copy
   // under src/content/docs/ is git-ignored.
   const editUrl = `https://github.com/calvinchengx/azure-apim-emulator/edit/main/docs/${editPath}`;
@@ -84,4 +99,11 @@ for (const name of generated) {
     convert(join(DOCS_SRC, 'generated', name), name, `generated/${name}`));
 }
 
-console.log(`sync-docs: wrote ${names.length} docs + ${generated.length} generated to src/content/docs/`);
+const info = writeParityHistory(OUT, PARITY, { convertBody: rewriteLinks });
+const DATA = join(here, '..', 'src', 'data');
+mkdirSync(DATA, { recursive: true });
+writeFileSync(join(DATA, 'parity-versions.json'), JSON.stringify(parityManifest(PARITY), null, 2) + '\n');
+console.log(
+  `sync-docs: wrote ${names.length} docs + ${generated.length} generated to src/content/docs/ ` +
+    `(parity ${info.version}; ${info.snapshots.length} tagged snapshot(s))`,
+);
