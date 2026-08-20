@@ -186,7 +186,7 @@ func jwksHandler(key *rsa.PrivateKey, kid string) http.Handler {
 		e := big.NewInt(int64(key.PublicKey.E)).Bytes()
 		_ = json.NewEncoder(w).Encode(map[string]any{"keys": []map[string]string{{
 			"kty": "RSA", "kid": kid,
-			"n": base64.RawURLEncoding.EncodeToString(key.PublicKey.N.Bytes()),
+			"n": base64.RawURLEncoding.EncodeToString(key.N.Bytes()),
 			"e": base64.RawURLEncoding.EncodeToString(e),
 		}}})
 	})

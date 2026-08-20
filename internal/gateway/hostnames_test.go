@@ -21,7 +21,7 @@ func TestNegotiateClientCertificateRefusesAnUnauthenticatedRequest(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	}))

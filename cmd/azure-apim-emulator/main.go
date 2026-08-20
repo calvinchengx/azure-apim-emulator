@@ -15,6 +15,7 @@ import (
 	"github.com/calvinchengx/azure-apim-emulator/internal/server"
 	"github.com/calvinchengx/azure-apim-emulator/internal/tlscert"
 	"golang.org/x/net/http2"
+	//nolint:staticcheck // SA1019: see the h2c note at the call site
 	"golang.org/x/net/http2/h2c"
 )
 
@@ -70,7 +71,7 @@ func run(args []string) error {
 	if err != nil {
 		return err
 	}
-	defer srv.Close()
+	defer func() { _ = srv.Close() }()
 	listener, err := listen("tcp", cfg.Addr)
 	if err != nil {
 		return err
@@ -98,6 +99,12 @@ func run(args []string) error {
 	// running with TLS disabled. The wrapper is inert on an HTTP/1.1
 	// connection and on a TLS connection that already negotiated h2, so one
 	// handler serves every combination.
+	// DEFERRED, not kept on principle. h2c is deprecated for
+	// http.Server.Protocols with SetUnencryptedHTTP2 (Go 1.24). The swap is
+	// not a rename: h2c.NewHandler serves both the prior-knowledge and the
+	// Upgrade handshakes, and the gRPC suites exercise both, so it wants its
+	// own change with those paths re-verified.
+	//nolint:staticcheck // SA1019: h2c migration tracked separately
 	return serve(listener, h2c.NewHandler(srv.Handler(), &http2.Server{}))
 }
 

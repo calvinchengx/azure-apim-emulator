@@ -126,6 +126,11 @@ type Operation struct {
 // error list is already in GraphQL error shape, so a caller can hand it
 // straight to ErrorBody.
 func (s *Schema) Compile(request Request) (*Operation, gqlerror.List) {
+	// DEFERRED. LoadQuery is deprecated for LoadQueryWithRules, which takes an
+	// explicit rule set. Passing the wrong set silently changes which queries
+	// this gateway accepts, so it wants its own change with the GraphQL
+	// witnesses re-run, not a swap inside a lint sweep.
+	//nolint:staticcheck // SA1019: LoadQueryWithRules migration tracked separately
 	document, errs := gqlparser.LoadQuery(s.ast, request.Query)
 	if len(errs) > 0 {
 		return nil, errs

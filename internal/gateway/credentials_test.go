@@ -22,7 +22,7 @@ func credentialStore(t *testing.T, grant string) *store.Store {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { st.Close() })
+	t.Cleanup(func() { _ = st.Close() })
 	if _, err := st.UpsertService(model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "emulator", Location: "local"}); err != nil {
 		t.Fatal(err)
 	}

@@ -273,3 +273,20 @@ jobs:
       # Builds from /docs through website/scripts/sync-docs.mjs, so unparseable
       # frontmatter fails here rather than on the published site.
       - run: pnpm --filter azure-apim-emulator-docs build
+
+  lint:
+    name: golangci-lint
+    runs-on: ubuntu-latest
+    # A wedged run must fail rather than sit in GitHub's 6-hour default, where
+    # 'pending' and 'stuck' look identical.
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      # Gated at zero, alongside the gofmt gate #119 added.
+      - uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.12.2

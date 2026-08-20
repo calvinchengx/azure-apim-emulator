@@ -41,7 +41,7 @@ func (l *listHost) member(name string) (Value, error) {
 // policy whose predicate returns a string has a bug, and guessing would hide it.
 func (l *listHost) any(args []Value) (Value, error) {
 	if len(args) != 1 {
-		return Null(), fmt.Errorf("Any takes one predicate, as in Any(g => g.Name == \"admin\")")
+		return Null(), fmt.Errorf("any takes one predicate, as in Any(g => g.Name == \"admin\")")
 	}
 	for _, item := range l.items {
 		got, err := args[0].call([]Value{item})

@@ -17,6 +17,7 @@ import (
 	"github.com/calvinchengx/azure-apim-emulator/internal/server"
 
 	"golang.org/x/net/http2"
+	//nolint:staticcheck // SA1019: see the h2c note below
 	"golang.org/x/net/http2/h2c"
 )
 
@@ -141,6 +142,13 @@ func Start(opts ...Option) (*Emulator, error) {
 	} else {
 		// httptest has no cleartext HTTP/2 mode, so h2c does it here the same
 		// way the binary does.
+		// DEFERRED, not kept on principle. x/net/http2/h2c is deprecated in favour
+		// of http.Server.Protocols with SetUnencryptedHTTP2, which arrived in Go
+		// 1.24. The migration is not a rename: h2c.NewHandler serves both the
+		// prior-knowledge and the Upgrade handshakes, and the gRPC tests here
+		// exercise both, so swapping it needs its own change with those paths
+		// re-verified rather than a line edit inside a lint sweep.
+		//nolint:staticcheck // SA1019: h2c migration tracked separately
 		httpServer = httptest.NewUnstartedServer(h2c.NewHandler(core.Handler(), &http2.Server{}))
 		httpServer.Start()
 	}

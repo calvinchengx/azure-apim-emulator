@@ -354,22 +354,23 @@ func TestAllowlistBoundMembersEvaluate(t *testing.T) {
 		if member.Status != MemberPlanned {
 			continue
 		}
-		source := "@(context." + member.Type + "." + member.Name + ")"
-		if member.Type == "context" {
+		var source string
+		switch member.Type {
+		case "context":
 			source = "@(context." + member.Name + ")"
-		} else if member.Type == "Request" || member.Type == "Response" {
+		case "Request", "Response":
 			source = "@(context." + member.Type + "." + member.Name + ")"
-		} else if member.Type == "Url" {
+		case "Url":
 			source = "@(context.Request.Url." + member.Name + ")"
-		} else if member.Type == "Headers" {
+		case "Headers":
 			source = "@(context.Request.Headers." + member.Name + ")"
-		} else if member.Type == "Variables" {
+		case "Variables":
 			source = "@(context.Variables." + member.Name + ")"
-		} else if member.Type == "Body" {
+		case "Body":
 			source = "@(context.Request.Body." + member.Name + ")"
-		} else if member.Type == "LastError" {
+		case "LastError":
 			source = "@(context.LastError." + member.Name + ")"
-		} else {
+		default:
 			source = "@(context." + member.Type + "." + member.Name + ")"
 		}
 		if _, err := EvalEnv(source, env); err == nil {

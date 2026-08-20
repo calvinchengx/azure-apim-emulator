@@ -1176,7 +1176,7 @@ func (r *Runtime) serveWebSocket(w http.ResponseWriter, req *http.Request, backe
 			return
 		}
 		backendConn.PayloadType = client.PayloadType
-		defer backendConn.Close()
+		defer func() { _ = backendConn.Close() }()
 		done := make(chan struct{}, 1)
 		go func() {
 			proxyWebSocketMessages(backendConn, client)

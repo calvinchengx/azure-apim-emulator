@@ -65,7 +65,7 @@ func (h stringHost) member(name string) (Value, error) {
 	case "Replace":
 		return Object(funcValue{fn: func(args []Value) (Value, error) {
 			if len(args) != 2 || args[0].kind != KindString || args[1].kind != KindString {
-				return Null(), fmt.Errorf("Replace takes two strings")
+				return Null(), fmt.Errorf("replace takes two strings")
 			}
 			return String(strings.ReplaceAll(text, args[0].str, args[1].str)), nil
 		}}), nil
@@ -102,7 +102,7 @@ func (h stringHost) member(name string) (Value, error) {
 // meant.
 func splitString(text string, args []Value) (Value, error) {
 	if len(args) != 1 || args[0].kind != KindString {
-		return Null(), fmt.Errorf("Split takes one separator")
+		return Null(), fmt.Errorf("split takes one separator")
 	}
 	parts := strings.Split(text, args[0].str)
 	items := make([]Value, 0, len(parts))
@@ -159,7 +159,7 @@ func matchString(text, name string, args []Value) (Value, error) {
 
 func equalsString(text string, args []Value) (Value, error) {
 	if len(args) == 0 || len(args) > 2 {
-		return Null(), fmt.Errorf("Equals takes a value and an optional comparison")
+		return Null(), fmt.Errorf("equals takes a value and an optional comparison")
 	}
 	other := args[0].String()
 	if args[0].IsNull() {
@@ -179,27 +179,27 @@ func equalsString(text string, args []Value) (Value, error) {
 
 func substring(text string, args []Value) (Value, error) {
 	if len(args) == 0 || len(args) > 2 {
-		return Null(), fmt.Errorf("Substring takes a start and an optional length")
+		return Null(), fmt.Errorf("substring takes a start and an optional length")
 	}
 	start, ok := args[0].AsNumber()
 	if !ok {
-		return Null(), fmt.Errorf("Substring takes a numeric start")
+		return Null(), fmt.Errorf("substring takes a numeric start")
 	}
 	if start < 0 || int(start) > len(text) {
 		// .NET throws here. Answering an empty string would let a policy slice
 		// past the end and carry on with nothing, which is harder to find than
 		// a failure at the point of the mistake.
-		return Null(), fmt.Errorf("Substring start %d is outside a string of %d", int(start), len(text))
+		return Null(), fmt.Errorf("substring start %d is outside a string of %d", int(start), len(text))
 	}
 	end := len(text)
 	if len(args) == 2 {
 		length, ok := args[1].AsNumber()
 		if !ok {
-			return Null(), fmt.Errorf("Substring takes a numeric length")
+			return Null(), fmt.Errorf("substring takes a numeric length")
 		}
 		end = int(start) + int(length)
 		if length < 0 || end > len(text) {
-			return Null(), fmt.Errorf("Substring length %d runs past the end of a string of %d", int(length), len(text))
+			return Null(), fmt.Errorf("substring length %d runs past the end of a string of %d", int(length), len(text))
 		}
 	}
 	return String(text[int(start):end]), nil

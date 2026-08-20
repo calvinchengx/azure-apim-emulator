@@ -347,7 +347,7 @@ func TestGatewayStoreErrorsAndWireFallbacks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	seedService(t, st)
 	handler := &Handler{Store: st, Auth: auth.AllowAll{}}
 	seedGateway(t, handler)

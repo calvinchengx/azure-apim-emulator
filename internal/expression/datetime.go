@@ -229,29 +229,29 @@ func formatDotNet(at time.Time, format string) string {
 		case "yyyy":
 			out.WriteString(strconv.Itoa(at.Year()))
 		case "yy":
-			out.WriteString(fmt.Sprintf("%02d", at.Year()%100))
+			fmt.Fprintf(&out, "%02d", at.Year()%100)
 		case "MM":
-			out.WriteString(fmt.Sprintf("%02d", int(at.Month())))
+			fmt.Fprintf(&out, "%02d", int(at.Month()))
 		case "M":
 			out.WriteString(strconv.Itoa(int(at.Month())))
 		case "dd":
-			out.WriteString(fmt.Sprintf("%02d", at.Day()))
+			fmt.Fprintf(&out, "%02d", at.Day())
 		case "d":
 			out.WriteString(strconv.Itoa(at.Day()))
 		case "HH":
-			out.WriteString(fmt.Sprintf("%02d", at.Hour()))
+			fmt.Fprintf(&out, "%02d", at.Hour())
 		case "H":
 			out.WriteString(strconv.Itoa(at.Hour()))
 		case "mm":
-			out.WriteString(fmt.Sprintf("%02d", at.Minute()))
+			fmt.Fprintf(&out, "%02d", at.Minute())
 		case "m":
 			out.WriteString(strconv.Itoa(at.Minute()))
 		case "ss":
-			out.WriteString(fmt.Sprintf("%02d", at.Second()))
+			fmt.Fprintf(&out, "%02d", at.Second())
 		case "s":
 			out.WriteString(strconv.Itoa(at.Second()))
 		case "fff":
-			out.WriteString(fmt.Sprintf("%03d", at.Nanosecond()/1e6))
+			fmt.Fprintf(&out, "%03d", at.Nanosecond()/1e6)
 		default:
 			// Anything unrecognised is a literal, which is what .NET does with
 			// the `T` and `Z` in `yyyy-MM-ddTHH:mm:ssZ`.

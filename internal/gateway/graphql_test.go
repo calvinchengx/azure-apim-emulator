@@ -38,7 +38,7 @@ func newGraphQLFixture(t *testing.T, apiType, sdl string, strict bool) *graphQLF
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { st.Close() })
+	t.Cleanup(func() { _ = st.Close() })
 	service, err := st.UpsertService(model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "emulator", Location: "local"})
 	if err != nil {
 		t.Fatal(err)
@@ -236,7 +236,7 @@ func TestGraphQLActivationReportsBrokenImports(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	service, err := st.UpsertService(model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "emulator", Location: "local"})
 	if err != nil {
 		t.Fatal(err)
@@ -287,7 +287,7 @@ func TestGraphQLSchemaLookupIgnoresOtherContentTypes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	service, err := st.UpsertService(model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "emulator", Location: "local"})
 	if err != nil {
 		t.Fatal(err)
@@ -431,7 +431,7 @@ func TestGraphQLSchemaLookupReportsStoreFailures(t *testing.T) {
 		ServiceID: service.ID(), Name: "catalogue", Path: "catalogue", IsCurrent: true,
 		Document: map[string]any{"properties": map[string]any{"apiType": "graphql"}},
 	}
-	st.Close()
+	_ = st.Close()
 	if _, err := graphQLSchemaFor(st, api); err == nil {
 		t.Fatal("a store read failure must be reported, not read as an API with no schema")
 	}

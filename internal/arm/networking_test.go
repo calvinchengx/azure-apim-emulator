@@ -197,7 +197,7 @@ func TestPrivateEndpointConnectionStoreErrors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	seedService(t, st)
 	handler := &Handler{Store: st, Auth: auth.AllowAll{}}
 	assertStatus(t, handler, http.MethodPut, connectionPath("from-vnet"), `{"properties":{}}`, http.StatusCreated)
