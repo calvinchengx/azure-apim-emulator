@@ -460,3 +460,39 @@ func TestGraphQLOutboundPolicyFailureIsReported(t *testing.T) {
 		t.Fatalf("the backend body was returned despite the outbound failure: %s", recorder.Body.String())
 	}
 }
+
+// The other half of the same guarantee, and the one xsl-transform cannot cover:
+// an outbound policy that RUNS and then fails, after an earlier action in the
+// same section has already changed the response. An unsupported action stops
+// before anything has been applied, so it never exercises the half-applied case
+// the section above is named for.
+//
+// <xml-to-json apply="always"> over the backend's JSON is the executed failure:
+// xml-to-json is documented in <outbound>, this emulator implements it, and it
+// fails on reaching a body it cannot parse as XML.
+func TestGraphQLOutboundPolicyFailureAfterAMutationIsReported(t *testing.T) {
+	fixture := newGraphQLFixture(t, "graphql", gatewaySDL, true)
+	if _, err := fixture.store.UpsertPolicy(model.Policy{
+		ScopeID: apiScopeID,
+		Value: `<policies><outbound>` +
+			`<set-header name="X-Half-Applied" exists-action="override"><value>yes</value></set-header>` +
+			`<xml-to-json kind="direct" apply="always"/>` +
+			`</outbound></policies>`,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.runtime.Activate(fixture.store, false); err != nil {
+		t.Fatal(err)
+	}
+	recorder := fixture.post(t, `{"query":"{ items { id } }"}`)
+	if recorder.Code < 400 {
+		t.Fatalf("a failing outbound policy returned %d, want an error", recorder.Code)
+	}
+	if strings.Contains(recorder.Body.String(), "Widget") {
+		t.Fatalf("the backend body was returned despite the outbound failure: %s", recorder.Body.String())
+	}
+	// The half-applied response must not be what the caller gets either.
+	if got := recorder.Header().Get("X-Half-Applied"); got != "" {
+		t.Errorf("the half-applied response was served: X-Half-Applied = %q", got)
+	}
+}

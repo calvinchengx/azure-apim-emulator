@@ -4,6 +4,7 @@ package server
 import (
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"strings"
 
@@ -24,11 +25,15 @@ const (
 
 // Server owns all emulator components.
 type Server struct {
-	Cfg                      *config.Config
-	Clock                    *clock.Clock
-	Store                    *store.Store
-	Gateway                  *gateway.Runtime
-	ARM                      *arm.Handler
+	Cfg     *config.Config
+	Clock   *clock.Clock
+	Store   *store.Store
+	Gateway *gateway.Runtime
+	ARM     *arm.Handler
+	// PolicyLoadFailures are the stored documents Restore could not compile at
+	// startup. Kept so a caller can see what was tolerated rather than only read
+	// it in the log.
+	PolicyLoadFailures       []gateway.PolicyFailure
 	mux                      *http.ServeMux
 	portalUpsertAPI          func(model.API) (model.API, error)
 	portalUpsertProduct      func(model.Product) (model.Product, error)
@@ -87,9 +92,18 @@ func New(cfg *config.Config, validator auth.RequestValidator, backendClient, jwk
 		_ = st.Close()
 		return nil, err
 	}
-	if err := runtime.Activate(st, cfg.StrictPolicies); err != nil {
+	// Restore, not Activate: a document the store already holds must not keep the
+	// emulator from starting, because the ARM API that could replace it is what
+	// fails to start. Each one is reported here and again on every request that
+	// reaches it.
+	failures, err := runtime.Restore(st, cfg.StrictPolicies)
+	if err != nil {
 		_ = st.Close()
 		return nil, err
+	}
+	s.PolicyLoadFailures = failures
+	for _, failure := range failures {
+		log.Printf("azure-apim-emulator: stored policy will fail on every request that reaches it: %v", failure)
 	}
 	s.register()
 	return s, nil

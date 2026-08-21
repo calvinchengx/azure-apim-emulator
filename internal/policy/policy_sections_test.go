@@ -13,30 +13,16 @@ import (
 // have to be told apart: nearly every probe below is a policy stripped to its
 // bare element, so most of them are also invalid for want of a required
 // attribute, and a test that accepted any failure would pass without the section
-// table existing at all.
+// table existing at all. ErrWrongSection is what tells them apart, which is half
+// of why the fault has a sentinel of its own.
 func sectionRejected(document, policy, section string) bool {
-	compiled, err := Compile(document, false)
-	if err != nil {
+	_, err := Compile(document, false)
+	if !errors.Is(err, ErrWrongSection) {
 		return false
 	}
-	var walk func(actions []Action) bool
-	walk = func(actions []Action) bool {
-		for _, action := range actions {
-			if action.Kind == ActionUnsupported && action.Source == section+"/"+policy {
-				return true
-			}
-			if walk(action.Children) || walk(action.Otherwise) {
-				return true
-			}
-			for _, branch := range action.Branches {
-				if walk(branch.Actions) {
-					return true
-				}
-			}
-		}
-		return false
-	}
-	return walk(compiled.Inbound) || walk(compiled.Backend) || walk(compiled.Outbound) || walk(compiled.OnError)
+	// The sentinel says a policy was out of place; this says it was THIS policy,
+	// so a document with two misplaced policies cannot pass for the wrong one.
+	return strings.Contains(err.Error(), "<"+policy+">") && strings.Contains(err.Error(), section+":")
 }
 
 // TestPoliciesCompileOnlyInTheirDocumentedSections runs every policy in the
@@ -80,23 +66,51 @@ func TestLimitPoliciesAreRejectedOutsideInbound(t *testing.T) {
 		`<policies><outbound><quota calls="1" renewal-period="60"/></outbound></policies>`,
 		`<policies><on-error><rate-limit-by-key calls="1" renewal-period="60" counter-key="k"/></on-error></policies>`,
 	} {
-		if _, err := Compile(document, true); !errors.Is(err, ErrUnsupported) {
-			t.Errorf("Compile(%s) = %v, want ErrUnsupported", document, err)
+		// In BOTH modes. Strict mode governs what this emulator runs, and this
+		// document is not one Azure would have deployed for it to run: deferring
+		// it to execution accepts a PUT that Azure answers 400, and then fails
+		// every request against the API instead of the one deploy that was wrong.
+		for _, strict := range []bool{true, false} {
+			if _, err := Compile(document, strict); !errors.Is(err, ErrWrongSection) {
+				t.Errorf("Compile(%s, strict=%v) = %v, want ErrWrongSection", document, strict, err)
+			}
 		}
-		// Without strict mode the document is stored and fails when execution
-		// reaches it, which is how this emulator reports every other policy it
-		// will not run.
-		plan, err := Compile(document, false)
-		if err != nil {
-			t.Fatalf("Compile(%s) = %v", document, err)
-		}
-		actions := plan.Outbound
-		if len(actions) == 0 {
-			actions = plan.OnError
-		}
-		if err := Execute(actions, &State{}); !errors.Is(err, ErrUnsupported) {
-			t.Errorf("Execute(%s) = %v, want ErrUnsupported", document, err)
-		}
+	}
+}
+
+// A misplaced policy and one this emulator has not implemented are different
+// faults with opposite answers -- edit the document, or wait for the emulator --
+// so a caller must be able to tell them apart.
+func TestWrongSectionIsNotReportedAsUnsupported(t *testing.T) {
+	_, err := Compile(`<policies><outbound><rate-limit calls="1" renewal-period="60"/></outbound></policies>`, true)
+	if errors.Is(err, ErrUnsupported) {
+		t.Errorf("a misplaced <rate-limit> was reported as unsupported: %v", err)
+	}
+	if !errors.Is(err, ErrWrongSection) {
+		t.Fatalf("Compile() = %v, want ErrWrongSection", err)
+	}
+	// And the other way: <xsl-transform> is documented in <outbound> and is not
+	// implemented here, which is the fault ErrUnsupported is for.
+	_, err = Compile(`<policies><outbound><xsl-transform/></outbound></policies>`, true)
+	if !errors.Is(err, ErrUnsupported) || errors.Is(err, ErrWrongSection) {
+		t.Errorf("an unimplemented <xsl-transform> = %v, want ErrUnsupported", err)
+	}
+}
+
+// The message names the section once. It used to name it twice, once in the
+// wrapper compileRoot adds and once inside an `outbound/rate-limit` source, and
+// that source was also a differently shaped key than every other unsupported
+// element reports.
+func TestWrongSectionErrorNamesTheSectionOnce(t *testing.T) {
+	_, err := Compile(`<policies><outbound><rate-limit calls="1" renewal-period="60"/></outbound></policies>`, true)
+	if err == nil {
+		t.Fatal("Compile() = nil")
+	}
+	if got := strings.Count(err.Error(), "outbound"); got != 1 {
+		t.Errorf("%q names outbound %d times, want 1", err.Error(), got)
+	}
+	if !strings.Contains(err.Error(), "<rate-limit>") {
+		t.Errorf("%q does not name the policy", err.Error())
 	}
 }
 
@@ -105,9 +119,12 @@ func TestLimitPoliciesAreRejectedOutsideInbound(t *testing.T) {
 // compiling in three sections out of four.
 func TestSectionlessConstructsAreNotRejected(t *testing.T) {
 	for _, section := range []string{"inbound", "backend", "outbound", "on-error"} {
-		for _, name := range []string{"base", "authentication-oauth2", "sql-data-source"} {
+		// base is in the record with all four sections; the resolver policies are
+		// in it with none, which documentsSection reads as "no section to hold it
+		// to" rather than "held to nothing".
+		for _, name := range []string{"base", "sql-data-source", "http-data-source"} {
 			if !documentsSection(name, section) {
-				t.Errorf("<%s> was held to a section table it has no entry in (<%s>)", name, section)
+				t.Errorf("<%s> was held to a section it is not configured in (<%s>)", name, section)
 			}
 		}
 	}
@@ -122,6 +139,26 @@ func TestSectionlessConstructsAreNotRejected(t *testing.T) {
 	} {
 		if len(actions) != 1 || actions[0].Kind != ActionBase {
 			t.Errorf("<base/> in <%s> compiled to %+v", section, actions)
+		}
+	}
+}
+
+// authentication-oauth2 is an emulator-only name with no reference page, so it
+// follows the family it is modelled on. It was previously in the record with no
+// sections at all, which left the compiler accepting it anywhere while the ledger
+// published `backend` -- a section the rest of the family is not valid in either.
+func TestPagelessNamesAreHeldToTheFamilyTheyFollow(t *testing.T) {
+	for _, name := range []string{
+		"authentication-oauth2", "authentication-basic",
+		"authentication-certificate", "authentication-managed-identity",
+	} {
+		if !documentsSection(name, "inbound") {
+			t.Errorf("<%s> is not valid in <inbound>", name)
+		}
+		for _, section := range []string{"backend", "outbound", "on-error"} {
+			if documentsSection(name, section) {
+				t.Errorf("<%s> is valid in <%s>, but the family is inbound-only", name, section)
+			}
 		}
 	}
 }
@@ -147,14 +184,41 @@ func TestNestedPoliciesInheritTheEnclosingSection(t *testing.T) {
 	}
 }
 
+// A policy's own children are not in a section. <send-one-way-request> compiles
+// <set-body> itself, and Microsoft's own Log_errors_to_Stackify snippet writes
+// exactly that inside <on-error>, where a top-level <set-body> is not valid.
+// scripts/derive_policy_sections.py reads the corpus by the same rule.
+func TestAPolicysOwnChildrenAreNotHeldToTheSection(t *testing.T) {
+	for _, document := range []string{
+		`<policies><on-error><send-one-way-request mode="new"><set-url>http://x</set-url>` +
+			`<set-method>POST</set-method><set-body>x</set-body></send-one-way-request></on-error></policies>`,
+		`<policies><on-error><return-response><set-status code="503"/><set-body>x</set-body></return-response></on-error></policies>`,
+	} {
+		if _, err := Compile(document, true); err != nil {
+			t.Errorf("Compile(%s) = %v", document, err)
+		}
+	}
+	// The same element directly in the section, which is not valid there.
+	if !sectionRejected(`<policies><on-error><set-body>x</set-body></on-error></policies>`, "set-body", "on-error") {
+		t.Error("a top-level <set-body> was accepted in <on-error>")
+	}
+}
+
 // A fragment's contents land in whichever section included it, so the section a
 // policy is held to is the including one. A fragment is not a section of its own.
 func TestIncludedFragmentsAreHeldToTheIncludingSection(t *testing.T) {
 	fragments := map[string]string{"limit": `<fragment><rate-limit calls="1" renewal-period="60"/></fragment>`}
 	if _, err := CompileWithFragments(
 		`<policies><outbound><include-fragment fragment-id="limit"/></outbound></policies>`, fragments, true,
-	); !errors.Is(err, ErrUnsupported) {
+	); !errors.Is(err, ErrWrongSection) {
 		t.Errorf("a fragment put <rate-limit> in <outbound>: %v", err)
+	}
+	// And in the mode a fragment is normally stored under, where the fault used
+	// to be deferred to a request that named an element the document never wrote.
+	if _, err := CompileWithFragments(
+		`<policies><outbound><include-fragment fragment-id="limit"/></outbound></policies>`, fragments, false,
+	); !errors.Is(err, ErrWrongSection) {
+		t.Errorf("a fragment put <rate-limit> in <outbound> without strict mode: %v", err)
 	}
 	if _, err := CompileWithFragments(
 		`<policies><inbound><include-fragment fragment-id="limit"/></inbound></policies>`, fragments, true,
@@ -182,4 +246,44 @@ func TestUnreadableSectionSurfacePanics(t *testing.T) {
 		}
 	}()
 	parsePolicySections([]byte("not json"))
+}
+
+// InvalidPlan stands in for a document that did not compile, so the fault
+// reaches the requests that use the document rather than the startup that read
+// it. Dropping the plan instead would run the API as though the document had
+// been empty, which reports nothing at all.
+func TestInvalidPlanReportsTheCompileErrorWhereItIsUsed(t *testing.T) {
+	cause := fmt.Errorf("compile policy /some/scope: outbound: <rate-limit> %w", ErrWrongSection)
+	plan := InvalidPlan(cause)
+	if len(plan.Inbound) != 1 {
+		t.Fatalf("InvalidPlan() = %+v, want one inbound action", plan)
+	}
+	// Inbound alone: inbound runs first for every request, so a later section
+	// could only report the same fault twice.
+	if len(plan.Backend)+len(plan.Outbound)+len(plan.OnError) != 0 {
+		t.Errorf("InvalidPlan() filled sections other than inbound: %+v", plan)
+	}
+	err := Execute(plan.Inbound, &State{})
+	if !errors.Is(err, ErrInvalidDocument) {
+		t.Fatalf("Execute() = %v, want ErrInvalidDocument", err)
+	}
+	if !strings.Contains(err.Error(), cause.Error()) {
+		t.Errorf("%q does not carry the compile error it stands for", err.Error())
+	}
+}
+
+// A document that composes away is not this request's problem. A child scope
+// that overrides its parent without <base/> drops the parent's actions, and an
+// invalid parent has to drop with them: it would not have run either way.
+func TestAnInvalidPlanComposesAwayLikeAnyOther(t *testing.T) {
+	plan := InvalidPlan(errors.New("compile policy /parent: broken"))
+	if len(plan.Inbound) != 1 || plan.Inbound[0].Kind != ActionInvalid {
+		t.Fatalf("InvalidPlan() = %+v", plan)
+	}
+	// Nothing here calls the gateway's composer; this states the property the
+	// composer relies on, which is that the action is ordinary enough to be
+	// dropped or spliced by <base/> like any other.
+	if plan.Inbound[0].Kind == ActionBase {
+		t.Error("an invalid plan's action must not be a <base/>")
+	}
 }

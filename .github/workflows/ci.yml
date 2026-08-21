@@ -46,6 +46,10 @@ jobs:
       # Binds the expression inventory to Microsoft's own vendored sources. A
       # refresh of third_party/microsoft that nobody regenerated from fails here
       # rather than leaving the ledger measuring against a stale denominator.
+      # The derivations' own reading, tested rather than only re-run: --check
+      # compares a record against what the script derives today, and says nothing
+      # about whether the script still reads its source correctly.
+      - run: python3 -m unittest discover -s scripts -p 'test_*.py'
       - run: ./scripts/derive_expression_surface.py --check
       - run: ./scripts/derive_limit_attributes.py --check
       - run: ./scripts/derive_policy_sections.py --check

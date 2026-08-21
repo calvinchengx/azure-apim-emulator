@@ -21,10 +21,12 @@ import pathlib
 import re
 import sys
 
+import vendored
+
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 SOURCE = ROOT / "third_party" / "microsoft" / "policy-reference"
 OUTPUT = ROOT / "internal" / "policy" / "limit_attributes.json"
-COMMIT = "f31ac8723a622ba3950df57ba0389d8347f546ab"
+COMMIT = vendored.pin("policy-reference/*.md")
 
 # Which sections each page must yield. Stated rather than discovered, so a page
 # that is restructured upstream fails loudly instead of deriving a short table

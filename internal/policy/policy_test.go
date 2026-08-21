@@ -1175,6 +1175,75 @@ func TestValidateHeadersPolicy(t *testing.T) {
 	}
 }
 
+// validate-headers validates the RESPONSE where there is one and falls back to
+// the request where there is not, which in <on-error> is the usual case: the
+// section runs when the backend never answered.
+//
+// The fallback branch is covered here in full. The response path is the one
+// TestValidateHeadersPolicy walks, and when the policy moved out of <inbound> --
+// a section its page does not document -- its four request-path cases moved to
+// the response with it, leaving the fallback asserted only for a header it
+// rejects. Nothing then covered the headers it has to ACCEPT there, which is the
+// half a wrongly-rejecting regression shows up in.
+func TestValidateHeadersFallsBackToTheRequest(t *testing.T) {
+	prevent, err := Compile(`<policies><on-error><validate-headers specified-header-action="prevent" `+
+		`unspecified-header-action="ignore"><header name="X-Mode"><value>strict</value></header>`+
+		`</validate-headers></on-error></policies>`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := func(headers map[string]string) *State {
+		value := httptest.NewRequest(http.MethodGet, "/", nil)
+		for name, header := range headers {
+			value.Header.Set(name, header)
+		}
+		return &State{Request: value}
+	}
+
+	state := request(map[string]string{"X-Mode": "strict", "X-Extra": "ignored"})
+	if err := Execute(prevent.OnError, state); err != nil || state.Returned {
+		t.Fatalf("valid request header = %+v, %v", state, err)
+	}
+
+	state = request(map[string]string{"X-Mode": "loose"})
+	if err := Execute(prevent.OnError, state); err != nil || !state.Returned || state.StatusCode != http.StatusBadRequest {
+		t.Fatalf("invalid request header = %+v, %v", state, err)
+	}
+
+	state = request(nil)
+	if err := Execute(prevent.OnError, state); err != nil || !state.Returned {
+		t.Fatalf("missing request header = %+v, %v", state, err)
+	}
+
+	ignoreRule, err := Compile(`<policies><on-error><validate-headers>`+
+		`<header name="X-Mode" action="ignore"/></validate-headers></on-error></policies>`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state = request(map[string]string{"X-Mode": "loose"})
+	if err := Execute(ignoreRule.OnError, state); err != nil || state.Returned {
+		t.Fatalf("ignored request header = %+v, %v", state, err)
+	}
+
+	unspecified, err := Compile(`<policies><on-error><validate-headers specified-header-action="ignore" `+
+		`unspecified-header-action="prevent"><header name="X-Mode"><value>strict</value></header>`+
+		`</validate-headers></on-error></policies>`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state = request(map[string]string{"X-Other": "value"})
+	if err := Execute(unspecified.OnError, state); err != nil || !state.Returned {
+		t.Fatalf("unspecified request header = %+v, %v", state, err)
+	}
+
+	// The response wins where there is one, so the fallback is a fallback.
+	state = request(map[string]string{"X-Mode": "loose"})
+	state.Response = &http.Response{Header: http.Header{"X-Mode": []string{"strict"}}}
+	if err := Execute(prevent.OnError, state); err != nil || state.Returned {
+		t.Fatalf("a valid response header was overruled by the request = %+v, %v", state, err)
+	}
+}
+
 func TestValidateParametersPolicy(t *testing.T) {
 	plan, err := Compile(`<policies><inbound><validate-parameters specified-parameter-action="prevent" unspecified-parameter-action="ignore"><parameter name="mode"><value>strict</value></parameter></validate-parameters></inbound></policies>`, true)
 	if err != nil || len(plan.Inbound) != 1 || plan.Inbound[0].Kind != ActionValidateParameters {

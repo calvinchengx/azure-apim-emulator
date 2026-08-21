@@ -10,11 +10,20 @@
     "authentication-managed-identity": [
       "inbound"
     ],
+    "authentication-oauth2": [
+      "inbound"
+    ],
     "azure-openai-emit-token-metric": [
       "inbound"
     ],
     "azure-openai-token-limit": [
       "inbound"
+    ],
+    "base": [
+      "inbound",
+      "backend",
+      "outbound",
+      "on-error"
     ],
     "cache-lookup": [
       "inbound"

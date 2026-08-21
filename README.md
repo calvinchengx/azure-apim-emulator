@@ -88,6 +88,7 @@ stable contract.
 - The default expression engine is pure Go and grows toward the documented APIM C# surface.
 - Unsupported expressions are preserved by default and fail explicitly only if executed.
 - Strict mode rejects policies containing unsupported executable behavior at upload time.
+- A policy in a section its reference page does not document is rejected at upload in either mode, because that document is one Azure rejects too.
 - Full product parity is the roadmap target; gaps are tracked, not hidden as permanent non-goals.
 
 ## Documentation

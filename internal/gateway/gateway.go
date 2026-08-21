@@ -151,17 +151,22 @@ type Runtime struct {
 	policySendRequest    func(*http.Request) (*http.Response, error)
 	faultMu              sync.Mutex
 	faults               map[string]Fault
-	rateMu               sync.Mutex
-	rateWindows          map[string][]time.Time
-	tokenWindows         map[string][]tokenStamp
-	metricMu             sync.Mutex
-	tokenMetrics         []TokenMetric
-	bandwidthWindows     map[string][]bandwidthStamp
-	cacheMu              sync.Mutex
-	cache                map[string]cacheEntry
-	valueCache           map[string]valueCacheEntry
-	concurrencyMu        sync.Mutex
-	concurrency          map[string]chan struct{}
+	// failingMu guards failing, the scopes whose stored document did not compile
+	// at the last activation. Held so activation can tell a fault this write
+	// introduced from one the store already carried.
+	failingMu        sync.Mutex
+	failing          map[string]bool
+	rateMu           sync.Mutex
+	rateWindows      map[string][]time.Time
+	tokenWindows     map[string][]tokenStamp
+	metricMu         sync.Mutex
+	tokenMetrics     []TokenMetric
+	bandwidthWindows map[string][]bandwidthStamp
+	cacheMu          sync.Mutex
+	cache            map[string]cacheEntry
+	valueCache       map[string]valueCacheEntry
+	concurrencyMu    sync.Mutex
+	concurrency      map[string]chan struct{}
 }
 
 type bandwidthStamp struct {
@@ -419,10 +424,68 @@ func (r *Runtime) takeFault(service, backend string) (Fault, bool) {
 }
 
 // Activate compiles all stored resources and atomically publishes them.
+// PolicyFailure is one stored document that did not compile, and the scope it
+// was stored under. Typed rather than a formatted string, because activation has
+// to compare the scopes that are failing now against the ones that were failing
+// before.
+type PolicyFailure struct {
+	ScopeID string
+	Err     error
+}
+
+func (f PolicyFailure) Error() string { return fmt.Sprintf("compile policy %s: %v", f.ScopeID, f.Err) }
+
+func (f PolicyFailure) Unwrap() error { return f.Err }
+
+// Activate rebuilds the runtime from the store and rejects a document THIS write
+// introduced.
+//
+// It does not reject one the store already carried. Activation recompiles every
+// stored document, so holding a write to all of them would let one bad document
+// -- an older build's, or one a fragment edit invalidated -- fail every ARM write
+// afterwards, including the write that would replace it. The scope set from the
+// last activation is what tells the two apart.
 func (r *Runtime) Activate(st *store.Store, strict bool) error {
+	_, err := r.activate(st, strict, true)
+	return err
+}
+
+// Restore activates the store at startup and reports the documents it could not
+// compile instead of refusing to start.
+//
+// The store outlives the build that reads it, so a document accepted by an
+// earlier build can be one this build rejects -- which is what tightening the
+// compiler means. Refusing to start leaves the operator with no ARM API to
+// replace it through, so each such document is activated as policy.InvalidPlan
+// and reported here: the emulator serves, and every request that reaches the
+// document gets the compile error.
+func (r *Runtime) Restore(st *store.Store, strict bool) ([]PolicyFailure, error) {
+	return r.activate(st, strict, false)
+}
+
+// wasFailing reports whether this scope's document was already failing at the
+// last activation that took.
+func (r *Runtime) wasFailing(scopeID string) bool {
+	r.failingMu.Lock()
+	defer r.failingMu.Unlock()
+	return r.failing[strings.ToLower(scopeID)]
+}
+
+func (r *Runtime) recordFailing(failures []PolicyFailure) {
+	failing := make(map[string]bool, len(failures))
+	for _, failure := range failures {
+		failing[strings.ToLower(failure.ScopeID)] = true
+	}
+	r.failingMu.Lock()
+	defer r.failingMu.Unlock()
+	r.failing = failing
+}
+
+func (r *Runtime) activate(st *store.Store, strict, rejectNew bool) ([]PolicyFailure, error) {
+	var failures []PolicyFailure
 	services, apis, operations, products, links, subscriptions, policies, err := st.RuntimeData()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	versionSets := map[string]*model.APIVersionSet{}
 	namedValues := map[string]map[string]string{}
@@ -433,7 +496,7 @@ func (r *Runtime) Activate(st *store.Store, strict bool) error {
 	for _, service := range services {
 		values, err := st.ListAPIVersionSets(service.ID())
 		if err != nil {
-			return err
+			return nil, err
 		}
 		for index := range values {
 			value := values[index]
@@ -441,7 +504,7 @@ func (r *Runtime) Activate(st *store.Store, strict bool) error {
 		}
 		serviceValues, err := st.ListNamedValues(service.ID())
 		if err != nil {
-			return err
+			return nil, err
 		}
 		namedValues[strings.ToLower(service.ID())] = map[string]string{}
 		for _, value := range serviceValues {
@@ -449,7 +512,7 @@ func (r *Runtime) Activate(st *store.Store, strict bool) error {
 		}
 		serviceBackends, err := st.ListBackends(service.ID())
 		if err != nil {
-			return err
+			return nil, err
 		}
 		backends[strings.ToLower(service.ID())] = map[string]model.Backend{}
 		for _, value := range serviceBackends {
@@ -457,7 +520,7 @@ func (r *Runtime) Activate(st *store.Store, strict bool) error {
 		}
 		serviceCertificates, err := st.ListCertificates(service.ID())
 		if err != nil {
-			return err
+			return nil, err
 		}
 		certificates[strings.ToLower(service.ID())] = map[string]model.Certificate{}
 		for _, value := range serviceCertificates {
@@ -465,11 +528,11 @@ func (r *Runtime) Activate(st *store.Store, strict bool) error {
 			certificates[strings.ToLower(service.ID())][strings.ToLower(value.Name)] = value
 		}
 		if err := validateBackendCertificates(backends[strings.ToLower(service.ID())], certificates[strings.ToLower(service.ID())]); err != nil {
-			return err
+			return nil, err
 		}
 		serviceFragments, err := st.ListPolicyFragments(service.ID())
 		if err != nil {
-			return err
+			return nil, err
 		}
 		fragments[strings.ToLower(service.ID())] = map[string]string{}
 		for _, value := range serviceFragments {
@@ -477,7 +540,7 @@ func (r *Runtime) Activate(st *store.Store, strict bool) error {
 		}
 		serviceDiagnostics, err := st.ListServiceDiagnostics(service.ID())
 		if err != nil {
-			return err
+			return nil, err
 		}
 		for _, diagnostic := range serviceDiagnostics {
 			diagnostics[strings.ToLower(diagnostic.ScopeID)] = append(diagnostics[strings.ToLower(diagnostic.ScopeID)], diagnostic)
@@ -492,16 +555,28 @@ func (r *Runtime) Activate(st *store.Store, strict bool) error {
 		if isResolverScope(item.ScopeID) {
 			continue
 		}
-		resolved, err := resolveNamedValues(item.Value, namedValues[strings.ToLower(serviceIDFromScope(item.ScopeID))])
+		// One document's three failure modes, handled alike: whether a stored
+		// document names a named value that is gone, no longer compiles, or names
+		// a backend that is gone, the fault is that document's and the choice is
+		// the same one. See Restore for why startup does not take the first.
+		plan, err := func() (policy.Plan, error) {
+			resolved, err := resolveNamedValues(item.Value, namedValues[strings.ToLower(serviceIDFromScope(item.ScopeID))])
+			if err != nil {
+				return policy.Plan{}, err
+			}
+			plan, err := policy.CompileWithFragments(resolved, fragments[strings.ToLower(serviceIDFromScope(item.ScopeID))], strict)
+			if err != nil {
+				return policy.Plan{}, err
+			}
+			if err := resolveBackendReferences(&plan, backends[strings.ToLower(serviceIDFromScope(item.ScopeID))]); err != nil {
+				return policy.Plan{}, err
+			}
+			return plan, nil
+		}()
 		if err != nil {
-			return fmt.Errorf("compile policy %s: %w", item.ScopeID, err)
-		}
-		plan, err := policy.CompileWithFragments(resolved, fragments[strings.ToLower(serviceIDFromScope(item.ScopeID))], strict)
-		if err != nil {
-			return fmt.Errorf("compile policy %s: %w", item.ScopeID, err)
-		}
-		if err := resolveBackendReferences(&plan, backends[strings.ToLower(serviceIDFromScope(item.ScopeID))]); err != nil {
-			return fmt.Errorf("compile policy %s: %w", item.ScopeID, err)
+			failure := PolicyFailure{ScopeID: item.ScopeID, Err: err}
+			failures = append(failures, failure)
+			plan = policy.InvalidPlan(failure)
 		}
 		// Stamped here, where the document's own scope is known. After
 		// composition merges service, product, API and operation policies into
@@ -549,13 +624,13 @@ func (r *Runtime) Activate(st *store.Store, strict bool) error {
 		serviceName := serviceNameFromID(api.ServiceID)
 		service := snapshot.Services[strings.ToLower(serviceName)]
 		if service == nil {
-			return fmt.Errorf("API %s references missing service", api.ID())
+			return nil, fmt.Errorf("API %s references missing service", api.ID())
 		}
 		var versionSet *model.APIVersionSet
 		if api.VersionSetID != "" {
 			versionSet = versionSets[strings.ToLower(api.VersionSetID)]
 			if versionSet == nil {
-				return fmt.Errorf("API %s references missing version set", api.ID())
+				return nil, fmt.Errorf("API %s references missing version set", api.ID())
 			}
 		}
 		plan := policyByScope[strings.ToLower(api.ID())]
@@ -603,21 +678,21 @@ func (r *Runtime) Activate(st *store.Store, strict bool) error {
 			// failing the whole activation over one bad API would take every
 			// other API down with it.
 			if strict {
-				return err
+				return nil, err
 			}
 			schema = nil
 		}
 		soapSchema, err := soapSchemaFor(st, api)
 		if err != nil {
 			if strict {
-				return err
+				return nil, err
 			}
 			soapSchema = nil
 		}
 		grpcSchema, err := grpcSchemaFor(st, api)
 		if err != nil {
 			if strict {
-				return err
+				return nil, err
 			}
 			grpcSchema = nil
 		}
@@ -626,7 +701,7 @@ func (r *Runtime) Activate(st *store.Store, strict bool) error {
 		resolvers, err := graphQLResolversFor(st, api, schema)
 		if err != nil {
 			if strict {
-				return err
+				return nil, err
 			}
 			resolvers = nil
 		}
@@ -636,14 +711,24 @@ func (r *Runtime) Activate(st *store.Store, strict bool) error {
 		sort.SliceStable(service.Routes, func(i, j int) bool { return len(service.Routes[i].API.Path) > len(service.Routes[j].API.Path) })
 	}
 	if err := attachSelfHostedGateways(st, services, snapshot); err != nil {
-		return err
+		return nil, err
 	}
 	if err := loadIdentityGraph(st, services, apis, links, snapshot); err != nil {
-		return err
+		return nil, err
+	}
+	// Checked before the snapshot goes live, so a rejected write leaves the
+	// runtime exactly as it was, the way a failed activation always has.
+	if rejectNew {
+		for _, failure := range failures {
+			if !r.wasFailing(failure.ScopeID) {
+				return nil, failure
+			}
+		}
 	}
 	r.current.Store(snapshot)
 	r.eventStore.Store(st)
-	return nil
+	r.recordFailing(failures)
+	return failures, nil
 }
 
 func composeInheritedPlan(child, parent policy.Plan) policy.Plan {
@@ -1664,11 +1749,22 @@ func (r *Runtime) GetTrace(id string) (Trace, bool) {
 func (r *Runtime) policyFailure(w http.ResponseWriter, req *http.Request, plan policy.Plan, state *policy.State, cause error) {
 	state.LastError = cause
 	state.Response = &http.Response{Header: make(http.Header)}
-	if err := func() error { state.Section = "on-error"; return policy.Execute(plan.OnError, state) }(); err == nil && state.Returned {
+	err := func() error { state.Section = "on-error"; return policy.Execute(plan.OnError, state) }()
+	if err == nil && state.Returned {
 		writePolicyResponse(w, state)
 		return
 	}
-	gatewayError(w, http.StatusInternalServerError, "PolicyExecutionFailure", cause.Error())
+	message := cause.Error()
+	if err != nil {
+		// <on-error> is the last place a fault can be reported from, so a fault IN
+		// it has nowhere further to go: the section stops, the response it was
+		// written to produce is never sent, and the caller gets the generic 500
+		// for the ORIGINAL cause. Reported beside that cause rather than instead
+		// of it. Silently dropping it is how a document whose <on-error> could not
+		// run looked exactly like one that had no <on-error> at all.
+		message = fmt.Sprintf("%s; the <on-error> section also failed: %s", cause, err)
+	}
+	gatewayError(w, http.StatusInternalServerError, "PolicyExecutionFailure", message)
 }
 
 func (r *Runtime) forward(original *http.Request, backend, path string) (*http.Response, error) {

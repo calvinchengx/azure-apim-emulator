@@ -10,6 +10,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -2119,6 +2120,90 @@ func TestRequestClockAndIdentityReachPolicies(t *testing.T) {
 	}
 	if got := seen.Get("X-Original"); got != "/orders/orders/A-1" {
 		t.Fatalf("original url did not reach the policy: %q", got)
+	}
+}
+
+// <on-error> is the last place a fault can be reported from, so a fault IN it has
+// nowhere further to go. It used to go nowhere at all: policyFailure ran the
+// section, and on any error fell through to the generic 500 carrying only the
+// cause it had been called with. A document whose <on-error> could not run was
+// indistinguishable from one that had no <on-error>, and the custom error
+// response it promised was dropped with no trace anywhere -- not at the PUT, not
+// in the response, not in a trace event.
+func TestAFailingOnErrorSectionIsReportedBesideTheCause(t *testing.T) {
+	st, err := store.Open("", clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = st.Close() }()
+	service, _ := st.UpsertService(model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "emulator", Location: "local"})
+	api, _ := st.UpsertAPI(model.API{ServiceID: service.ID(), Name: "orders", DisplayName: "Orders", Path: "orders", ServiceURL: "https://backend.test", IsCurrent: true})
+	_, _ = st.UpsertOperation(model.Operation{APIID: api.ID(), Name: "get", DisplayName: "Get", Method: http.MethodGet, URLTemplate: "/"})
+	// An inbound expression that compiles and cannot evaluate, and an <on-error>
+	// whose own expression cannot evaluate either.
+	if _, err := st.UpsertPolicy(model.Policy{ScopeID: api.ID(), Value: `<policies>` +
+		`<inbound><set-header name="X-Broken" exists-action="override"><value>@(context.Product.Name)</value></set-header></inbound>` +
+		`<on-error><return-response><set-status code="503" reason="Down"/>` +
+		`<set-body>@(context.Nope.Thing)</set-body></return-response></on-error></policies>`}); err != nil {
+		t.Fatal(err)
+	}
+	runtime := New("emulator", nil)
+	if err := runtime.Activate(st, true); err != nil {
+		t.Fatal(err)
+	}
+	recorder := httptest.NewRecorder()
+	runtime.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/orders", nil))
+	if recorder.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", recorder.Code)
+	}
+	var reported struct {
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &reported); err != nil {
+		t.Fatalf("body %s: %v", recorder.Body.String(), err)
+	}
+	// The cause is what the caller asked about, and stays first.
+	if !strings.HasPrefix(reported.Error.Message, "member access on null") {
+		t.Errorf("the original cause was dropped or displaced: %q", reported.Error.Message)
+	}
+	// The section's own fault, which is why they are not getting the 503 the
+	// document promised. Distinct from the cause, so one cannot pass for both.
+	if !strings.Contains(reported.Error.Message, "<on-error> section also failed: unknown member Nope") {
+		t.Errorf("the on-error failure was swallowed: %q", reported.Error.Message)
+	}
+}
+
+// An <on-error> section that runs is untouched by the above: the response it
+// returns is the response, and the cause is not appended to it.
+func TestAWorkingOnErrorSectionStillOwnsTheResponse(t *testing.T) {
+	st, err := store.Open("", clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = st.Close() }()
+	service, _ := st.UpsertService(model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "emulator", Location: "local"})
+	api, _ := st.UpsertAPI(model.API{ServiceID: service.ID(), Name: "orders", DisplayName: "Orders", Path: "orders", ServiceURL: "https://backend.test", IsCurrent: true})
+	_, _ = st.UpsertOperation(model.Operation{APIID: api.ID(), Name: "get", DisplayName: "Get", Method: http.MethodGet, URLTemplate: "/"})
+	if _, err := st.UpsertPolicy(model.Policy{ScopeID: api.ID(), Value: `<policies>` +
+		`<inbound><set-header name="X-Broken" exists-action="override"><value>@(context.Product.Name)</value></set-header></inbound>` +
+		`<on-error><return-response><set-status code="503" reason="Down"/>` +
+		`<set-body>{"error":"down"}</set-body></return-response></on-error></policies>`}); err != nil {
+		t.Fatal(err)
+	}
+	runtime := New("emulator", nil)
+	if err := runtime.Activate(st, true); err != nil {
+		t.Fatal(err)
+	}
+	recorder := httptest.NewRecorder()
+	runtime.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/orders", nil))
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want the 503 the section returned", recorder.Code)
+	}
+	if body := recorder.Body.String(); body != `{"error":"down"}` {
+		t.Errorf("body = %s, want the section's own", body)
 	}
 }
 
