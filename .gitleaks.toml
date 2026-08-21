@@ -42,6 +42,15 @@ paths = [
   # the vendored copy differ from upstream.
   '''swagger\.json$''',
   '''openapi\.(json|ya?ml)$''',
+  # Vendored upstream sources, pinned to a commit of a public repository and
+  # never edited -- third_party/microsoft/README.md says so, and the derivation
+  # scripts rest on it: a page this repo has edited is no longer evidence of what
+  # Microsoft documents. What the tree does hold is example URLs, because it is
+  # documentation. `send-one-way-request-policy.md` and `set-method-policy.md`
+  # both illustrate <set-url> with a Slack webhook, which is the same false
+  # positive `swagger.json` is allowlisted for above, and re-vendoring would
+  # reintroduce it on every refresh.
+  '''^third_party/''',
   # Documentation. A worked example in prose is not a deployed credential, and
   # the docs are where seeded values are deliberately published so a reader can
   # reproduce a call.

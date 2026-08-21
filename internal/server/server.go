@@ -103,7 +103,19 @@ func New(cfg *config.Config, validator auth.RequestValidator, backendClient, jwk
 	}
 	s.PolicyLoadFailures = failures
 	for _, failure := range failures {
-		log.Printf("azure-apim-emulator: stored policy will fail on every request that reaches it: %v", failure)
+		// The scope, not the compile error. resolveNamedValues substitutes named
+		// values -- secrets among them -- into the document BEFORE the compiler
+		// sees it, so an error built from that text is one error message away
+		// from putting a secret on stdout, where a log collector keeps it. The
+		// compiler's messages are structural today ("invalid retry count", not
+		// the value), but that is a convention across some two hundred call
+		// sites rather than a guarantee, and this line would be the one place it
+		// leaves the process.
+		//
+		// The scope is what names the document to fix. The reason still travels
+		// with every request that reaches it, and on PolicyLoadFailures for a
+		// caller that wants it in process.
+		log.Printf("azure-apim-emulator: stored policy %s did not compile; every request that reaches it will fail", failure.ScopeID)
 	}
 	s.register()
 	return s, nil
