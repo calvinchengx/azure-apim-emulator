@@ -1,10 +1,12 @@
 package server
 
 import (
+	"bytes"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"io"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -984,6 +986,86 @@ func TestNewStillFailsOnAFaultThatIsNotOneDocuments(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "missing certificate") {
 		t.Errorf("New = %v, want the certificate the backend references", err)
+	}
+}
+
+// The startup line names the document, not what the compiler said about it.
+//
+// resolveNamedValues substitutes named values -- secrets among them -- into the
+// document before the compiler sees it, so an error built from that text is one
+// error message away from putting a secret on stdout, where a log collector
+// keeps it. CodeQL called this clear-text logging of sensitive information and
+// was right to; the compiler's messages are structural by convention, across
+// enough call sites that the convention is not a guarantee.
+func TestTheStartupLogNamesTheScopeAndNotTheDocument(t *testing.T) {
+	const secret = "s3cr3t-value-substituted-into-the-document"
+	dir := t.TempDir()
+	st, err := store.Open(dir, clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, err := st.UpsertService(model.Service{
+		SubscriptionID: defaultSubscription, ResourceGroup: defaultResourceGroup,
+		Name: "emulator", Location: "local",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.UpsertNamedValue(model.NamedValue{
+		ServiceID: service.ID(), Name: "token", DisplayName: "token", Value: secret, Secret: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// API-scoped, not service-scoped. gateway.serviceIDFromScope looks for
+	// "/subscriptions/" to strip a subscription-scoped id, and every ARM id
+	// begins with it, so a SERVICE id truncates to "" and its document resolves
+	// no named values at all. That is a separate defect from anything here; this
+	// test would just fail on it instead of on what it means to assert.
+	api, err := st.UpsertAPI(model.API{
+		ServiceID: service.ID(), Name: "echo", DisplayName: "Echo",
+		Path: "echo", ServiceURL: "https://backend.invalid", IsCurrent: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The secret is substituted into a fragment-id, and no such fragment exists.
+	// `policy fragment %q was not found` quotes the id, and substitution happens
+	// BEFORE the compiler runs, so the resulting error carries the secret
+	// verbatim -- which is what makes this a leak rather than a theory.
+	if _, err := st.UpsertPolicy(model.Policy{ScopeID: api.ID(),
+		Value: `<policies><inbound><include-fragment fragment-id="{{token}}"/></inbound></policies>`}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	var captured bytes.Buffer
+	flags := log.Flags()
+	log.SetOutput(&captured)
+	log.SetFlags(0)
+	defer func() { log.SetOutput(os.Stderr); log.SetFlags(flags) }()
+
+	cfg := &config.Config{DataDir: dir, DefaultService: "emulator", Location: "local", DisableAuth: true}
+	srv, err := New(cfg, auth.AllowAll{}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = srv.Close() }()
+
+	logged := captured.String()
+	if !strings.Contains(logged, api.ID()) {
+		t.Errorf("the startup log does not name the document to fix: %q", logged)
+	}
+	if strings.Contains(logged, secret) {
+		t.Errorf("the startup log carried a named value's secret: %q", logged)
+	}
+	// The reason is still reachable in process, which is where it is safe.
+	if len(srv.PolicyLoadFailures) != 1 {
+		t.Fatalf("PolicyLoadFailures = %v", srv.PolicyLoadFailures)
+	}
+	if !strings.Contains(srv.PolicyLoadFailures[0].Error(), "was not found") {
+		t.Errorf("the reason did not survive on PolicyLoadFailures: %v", srv.PolicyLoadFailures[0])
 	}
 }
 
