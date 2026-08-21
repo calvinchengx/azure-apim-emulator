@@ -1,10 +1,12 @@
 package server
 
 import (
+	"bytes"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"io"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -17,6 +19,7 @@ import (
 	"github.com/calvinchengx/azure-apim-emulator/internal/clock"
 	"github.com/calvinchengx/azure-apim-emulator/internal/config"
 	"github.com/calvinchengx/azure-apim-emulator/internal/model"
+	"github.com/calvinchengx/azure-apim-emulator/internal/policy"
 	"github.com/calvinchengx/azure-apim-emulator/internal/store"
 )
 
@@ -759,27 +762,6 @@ func TestNewRollsBackInitializationFailures(t *testing.T) {
 		}
 	})
 
-	t.Run("activate runtime", func(t *testing.T) {
-		dir := t.TempDir()
-		st, err := store.Open(dir, clock.New())
-		if err != nil {
-			t.Fatal(err)
-		}
-		service := model.Service{SubscriptionID: defaultSubscription, ResourceGroup: defaultResourceGroup, Name: "emulator", Location: "local"}
-		service, err = st.UpsertService(service)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := st.UpsertPolicy(model.Policy{ScopeID: service.ID(), Value: `<policies><inbound><choose/></inbound></policies>`}); err != nil {
-			t.Fatal(err)
-		}
-		_ = st.Close()
-		configuration := cfg(dir)
-		configuration.StrictPolicies = true
-		if srv, err := New(configuration, nil, nil, nil); err == nil || srv != nil {
-			t.Fatalf("New = %v, %v", srv, err)
-		}
-	})
 }
 
 func newTestServer(t *testing.T, strict bool, backend *http.Client) *Server {
@@ -940,5 +922,298 @@ func TestCollapseSlashes(t *testing.T) {
 		if got := collapseSlashes(input); got != want {
 			t.Errorf("collapseSlashes(%q) = %q, want %q", input, got, want)
 		}
+	}
+}
+
+// seedStoredPolicy puts a document in a data directory the way a build that
+// accepted it would have left it, and hands back the directory to start against.
+func seedStoredPolicy(t *testing.T, document string) (string, string) {
+	t.Helper()
+	dir := t.TempDir()
+	st, err := store.Open(dir, clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, err := st.UpsertService(model.Service{
+		SubscriptionID: defaultSubscription, ResourceGroup: defaultResourceGroup,
+		Name: "emulator", Location: "local",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.UpsertPolicy(model.Policy{ScopeID: service.ID(), Value: document}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return dir, service.ID()
+}
+
+// Restore still fails New for a fault that is not one document's. A backend
+// pointing at a certificate the store does not hold makes no per-scope plan
+// invalid -- there is nothing to activate against -- so it is not the kind of
+// fault a stand-in plan can carry, and starting anyway would serve a runtime
+// built from state that does not add up.
+func TestNewStillFailsOnAFaultThatIsNotOneDocuments(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(dir, clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, err := st.UpsertService(model.Service{
+		SubscriptionID: defaultSubscription, ResourceGroup: defaultResourceGroup,
+		Name: "emulator", Location: "local",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.UpsertBackend(model.Backend{
+		ServiceID: service.ID(), Name: "orders", URL: "https://backend.test", Protocol: "http",
+		Document: map[string]any{"properties": map[string]any{
+			"credentials": map[string]any{"certificateIds": []any{service.ID() + "/certificates/gone"}},
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Close(); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{DataDir: dir, DefaultService: "emulator", Location: "local", DisableAuth: true}
+	srv, err := New(cfg, auth.AllowAll{}, nil, nil)
+	if err == nil || srv != nil {
+		t.Fatalf("New = %v, %v", srv, err)
+	}
+	if !strings.Contains(err.Error(), "missing certificate") {
+		t.Errorf("New = %v, want the certificate the backend references", err)
+	}
+}
+
+// The startup line names the document, not what the compiler said about it.
+//
+// resolveNamedValues substitutes named values -- secrets among them -- into the
+// document before the compiler sees it, so an error built from that text is one
+// error message away from putting a secret on stdout, where a log collector
+// keeps it. CodeQL called this clear-text logging of sensitive information and
+// was right to; the compiler's messages are structural by convention, across
+// enough call sites that the convention is not a guarantee.
+func TestTheStartupLogNamesTheScopeAndNotTheDocument(t *testing.T) {
+	const secret = "s3cr3t-value-substituted-into-the-document"
+	dir := t.TempDir()
+	st, err := store.Open(dir, clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, err := st.UpsertService(model.Service{
+		SubscriptionID: defaultSubscription, ResourceGroup: defaultResourceGroup,
+		Name: "emulator", Location: "local",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.UpsertNamedValue(model.NamedValue{
+		ServiceID: service.ID(), Name: "token", DisplayName: "token", Value: secret, Secret: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// API-scoped, not service-scoped. gateway.serviceIDFromScope looks for
+	// "/subscriptions/" to strip a subscription-scoped id, and every ARM id
+	// begins with it, so a SERVICE id truncates to "" and its document resolves
+	// no named values at all. That is a separate defect from anything here; this
+	// test would just fail on it instead of on what it means to assert.
+	api, err := st.UpsertAPI(model.API{
+		ServiceID: service.ID(), Name: "echo", DisplayName: "Echo",
+		Path: "echo", ServiceURL: "https://backend.invalid", IsCurrent: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The secret is substituted into a fragment-id, and no such fragment exists.
+	// `policy fragment %q was not found` quotes the id, and substitution happens
+	// BEFORE the compiler runs, so the resulting error carries the secret
+	// verbatim -- which is what makes this a leak rather than a theory.
+	if _, err := st.UpsertPolicy(model.Policy{ScopeID: api.ID(),
+		Value: `<policies><inbound><include-fragment fragment-id="{{token}}"/></inbound></policies>`}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	var captured bytes.Buffer
+	flags := log.Flags()
+	log.SetOutput(&captured)
+	log.SetFlags(0)
+	defer func() { log.SetOutput(os.Stderr); log.SetFlags(flags) }()
+
+	cfg := &config.Config{DataDir: dir, DefaultService: "emulator", Location: "local", DisableAuth: true}
+	srv, err := New(cfg, auth.AllowAll{}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = srv.Close() }()
+
+	logged := captured.String()
+	if !strings.Contains(logged, api.ID()) {
+		t.Errorf("the startup log does not name the document to fix: %q", logged)
+	}
+	if strings.Contains(logged, secret) {
+		t.Errorf("the startup log carried a named value's secret: %q", logged)
+	}
+	// The reason is still reachable in process, which is where it is safe.
+	if len(srv.PolicyLoadFailures) != 1 {
+		t.Fatalf("PolicyLoadFailures = %v", srv.PolicyLoadFailures)
+	}
+	if !strings.Contains(srv.PolicyLoadFailures[0].Error(), "was not found") {
+		t.Errorf("the reason did not survive on PolicyLoadFailures: %v", srv.PolicyLoadFailures[0])
+	}
+}
+
+// A document the store already holds and this build rejects must not keep the
+// emulator from starting. The ARM API is the only way to replace it, and it does
+// not run if New fails, so refusing to start leaves hand-editing the database as
+// the operator's remaining option.
+//
+// <rate-limit> in <outbound> is the case: earlier builds compiled it, this one
+// does not, and any data directory written by one of those holds it.
+func TestNewToleratesAStoredPolicyThisBuildRejects(t *testing.T) {
+	for _, strict := range []bool{true, false} {
+		t.Run(map[bool]string{true: "strict", false: "default"}[strict], func(t *testing.T) {
+			dir, scope := seedStoredPolicy(t, `<policies><outbound><rate-limit calls="1" renewal-period="60"/></outbound></policies>`)
+			cfg := &config.Config{DataDir: dir, DefaultService: "emulator", Location: "local", DisableAuth: true, StrictPolicies: strict}
+			srv, err := New(cfg, auth.AllowAll{}, nil, nil)
+			if err != nil || srv == nil {
+				t.Fatalf("New = %v, %v", srv, err)
+			}
+			defer func() { _ = srv.Close() }()
+			if len(srv.PolicyLoadFailures) != 1 {
+				t.Fatalf("PolicyLoadFailures = %v, want the one stored document", srv.PolicyLoadFailures)
+			}
+			failure := srv.PolicyLoadFailures[0].Error()
+			if !strings.Contains(failure, scope) {
+				t.Errorf("%q does not name the scope it came from", failure)
+			}
+			// Named as the fault it is, so the operator reads which document to
+			// edit rather than that some policy is unsupported.
+			if !strings.Contains(failure, "<rate-limit>") || !strings.Contains(failure, "not valid in this section") {
+				t.Errorf("%q does not say what is wrong with the document", failure)
+			}
+			// And classifiable, not only readable: the compile error is reachable
+			// through the failure, so a caller can tell an invalid document from
+			// one this emulator does not run without matching on text.
+			if !errors.Is(srv.PolicyLoadFailures[0], policy.ErrWrongSection) {
+				t.Errorf("%v does not carry the fault it was reported for", srv.PolicyLoadFailures[0])
+			}
+			if errors.Is(srv.PolicyLoadFailures[0], policy.ErrUnsupported) {
+				t.Errorf("%v was reported as an unsupported policy", srv.PolicyLoadFailures[0])
+			}
+		})
+	}
+}
+
+// A document that failed to load fails where it is USED. Dropping it would run
+// the API as though the document had been empty, which reports nothing at all.
+func TestAToleratedPolicyFailsEveryRequestThatReachesIt(t *testing.T) {
+	dir, _ := seedStoredPolicy(t, `<policies><outbound><rate-limit calls="1" renewal-period="60"/></outbound></policies>`)
+	cfg := &config.Config{DataDir: dir, DefaultService: "emulator", Location: "local", DisableAuth: true}
+	srv, err := New(cfg, auth.AllowAll{}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = srv.Close() }()
+	front := httptest.NewServer(srv.Handler())
+	defer front.Close()
+
+	servicePath := "/subscriptions/" + defaultSubscription + "/resourceGroups/" + defaultResourceGroup +
+		"/providers/Microsoft.ApiManagement/service/emulator"
+	// The ARM API runs, which is the whole point of not refusing to start.
+	putOK(t, front, servicePath+"/apis/echo",
+		`{"properties":{"displayName":"Echo","path":"echo","serviceUrl":"https://backend.invalid","protocols":["https"],"subscriptionRequired":false}}`)
+	putOK(t, front, servicePath+"/apis/echo/operations/get-anything",
+		`{"properties":{"displayName":"Anything","method":"GET","urlTemplate":"/anything"}}`)
+
+	response, err := front.Client().Get(front.URL + "/echo/anything")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	body, _ := io.ReadAll(response.Body)
+	if response.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("status %d: %s", response.StatusCode, body)
+	}
+	if !strings.Contains(string(body), "invalid policy document") {
+		t.Errorf("body %s does not report the document that did not compile", body)
+	}
+}
+
+// And the operator can replace it, which is what the ARM API was kept running
+// for. A PUT of a document that compiles clears the failure.
+func TestAToleratedPolicyCanBeReplacedThroughTheAPI(t *testing.T) {
+	dir, _ := seedStoredPolicy(t, `<policies><outbound><rate-limit calls="1" renewal-period="60"/></outbound></policies>`)
+	cfg := &config.Config{DataDir: dir, DefaultService: "emulator", Location: "local", DisableAuth: true}
+	srv, err := New(cfg, auth.AllowAll{}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = srv.Close() }()
+	front := httptest.NewServer(srv.Handler())
+	defer front.Close()
+
+	servicePath := "/subscriptions/" + defaultSubscription + "/resourceGroups/" + defaultResourceGroup +
+		"/providers/Microsoft.ApiManagement/service/emulator"
+	putOK(t, front, servicePath+"/apis/echo",
+		`{"properties":{"displayName":"Echo","path":"echo","serviceUrl":"https://backend.invalid","protocols":["https"],"subscriptionRequired":false}}`)
+	putOK(t, front, servicePath+"/apis/echo/operations/get-anything",
+		`{"properties":{"displayName":"Anything","method":"GET","urlTemplate":"/anything"}}`)
+
+	fixed, _ := json.Marshal(map[string]any{"properties": map[string]any{
+		"format": "rawxml",
+		"value":  `<policies><inbound><rate-limit calls="1" renewal-period="60"/></inbound><outbound><base/></outbound></policies>`,
+	}})
+	response := management(t, front.Client(), http.MethodPut,
+		front.URL+servicePath+"/policies/policy?api-version=2024-05-01", string(fixed))
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK && response.StatusCode != http.StatusCreated {
+		fatalResponse(t, response)
+	}
+
+	gateway, err := front.Client().Get(front.URL + "/echo/anything")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer gateway.Body.Close()
+	body, _ := io.ReadAll(gateway.Body)
+	if strings.Contains(string(body), "invalid policy document") {
+		t.Errorf("the replaced document is still failing: %s", body)
+	}
+}
+
+// The PUT that introduces a misplaced policy is still rejected, in both modes.
+// Tolerating a document at startup is about one the store already holds; it is
+// not a way to store a new one.
+func TestPUTStillRejectsAMisplacedPolicy(t *testing.T) {
+	for _, strict := range []bool{true, false} {
+		t.Run(map[bool]string{true: "strict", false: "default"}[strict], func(t *testing.T) {
+			srv := newTestServer(t, strict, nil)
+			front := httptest.NewServer(srv.Handler())
+			defer front.Close()
+
+			servicePath := "/subscriptions/" + defaultSubscription + "/resourceGroups/" + defaultResourceGroup +
+				"/providers/Microsoft.ApiManagement/service/emulator"
+			body, _ := json.Marshal(map[string]any{"properties": map[string]any{
+				"format": "rawxml",
+				"value":  `<policies><outbound><rate-limit calls="1" renewal-period="60"/></outbound></policies>`,
+			}})
+			response := management(t, front.Client(), http.MethodPut,
+				front.URL+servicePath+"/policies/policy?api-version=2024-05-01", string(body))
+			defer response.Body.Close()
+			if response.StatusCode < 400 {
+				t.Fatalf("a misplaced <rate-limit> was accepted: status %d", response.StatusCode)
+			}
+			text, _ := io.ReadAll(response.Body)
+			if !strings.Contains(string(text), "not valid in this section") {
+				t.Errorf("body %s does not say why the document was rejected", text)
+			}
+		})
 	}
 }

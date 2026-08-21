@@ -1108,57 +1108,139 @@ func TestValidateContentPolicy(t *testing.T) {
 	}
 }
 
+// validate-headers reads RESPONSE headers, and its page documents <outbound> and
+// <on-error> only. This test used <inbound> and a request, which the compiler took
+// because it had no section table; the assertions are the same ones, moved to the
+// sections the policy is documented in. The on-error case is the one that reaches
+// the request: an error before the backend answered leaves no response to read.
 func TestValidateHeadersPolicy(t *testing.T) {
-	plan, err := Compile(`<policies><inbound><validate-headers specified-header-action="prevent" unspecified-header-action="ignore"><header name="X-Mode"><value>strict</value></header></validate-headers></inbound></policies>`, true)
-	if err != nil || len(plan.Inbound) != 1 || plan.Inbound[0].Kind != ActionValidateHeaders {
+	plan, err := Compile(`<policies><outbound><validate-headers specified-header-action="prevent" unspecified-header-action="ignore"><header name="X-Mode"><value>strict</value></header></validate-headers></outbound></policies>`, true)
+	if err != nil || len(plan.Outbound) != 1 || plan.Outbound[0].Kind != ActionValidateHeaders {
 		t.Fatalf("header validation plan = %+v, %v", plan, err)
 	}
-	request := httptest.NewRequest(http.MethodGet, "/", nil)
-	request.Header.Set("X-Mode", "strict")
-	request.Header.Set("X-Extra", "ignored")
-	state := &State{Request: request}
-	if err := Execute(plan.Inbound, state); err != nil || state.Returned {
+	response := &http.Response{Header: http.Header{"X-Mode": []string{"strict"}, "X-Extra": []string{"ignored"}}}
+	state := &State{Response: response}
+	if err := Execute(plan.Outbound, state); err != nil || state.Returned {
 		t.Fatalf("valid header = %+v, %v", state, err)
 	}
-	request.Header.Set("X-Mode", "loose")
-	state = &State{Request: request}
-	if err := Execute(plan.Inbound, state); err != nil || !state.Returned || state.StatusCode != http.StatusBadRequest {
+	response.Header.Set("X-Mode", "loose")
+	state = &State{Response: response}
+	if err := Execute(plan.Outbound, state); err != nil || !state.Returned || state.StatusCode != http.StatusBadRequest {
 		t.Fatalf("invalid header = %+v, %v", state, err)
 	}
-	ignoreRule, err := Compile(`<policies><inbound><validate-headers><header name="X-Mode" action="ignore"/></validate-headers></inbound></policies>`, true)
+	ignoreRule, err := Compile(`<policies><outbound><validate-headers><header name="X-Mode" action="ignore"/></validate-headers></outbound></policies>`, true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	state = &State{Request: request}
-	if err := Execute(ignoreRule.Inbound, state); err != nil || state.Returned {
+	state = &State{Response: response}
+	if err := Execute(ignoreRule.Outbound, state); err != nil || state.Returned {
 		t.Fatalf("ignored header = %+v, %v", state, err)
 	}
-	request = httptest.NewRequest(http.MethodGet, "/", nil)
-	state = &State{Request: request}
-	if err := Execute(plan.Inbound, state); err != nil || !state.Returned {
+	state = &State{Response: &http.Response{Header: http.Header{}}}
+	if err := Execute(plan.Outbound, state); err != nil || !state.Returned {
 		t.Fatalf("missing header = %+v, %v", state, err)
 	}
 	ignore, err := Compile(`<policies><outbound><validate-headers specified-header-action="ignore" unspecified-header-action="prevent"><header name="X-Mode"><value>strict</value></header></validate-headers></outbound></policies>`, true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	response := &http.Response{Header: http.Header{"X-Other": []string{"value"}}}
-	state = &State{Response: response}
+	state = &State{Response: &http.Response{Header: http.Header{"X-Other": []string{"value"}}}}
 	if err := Execute(ignore.Outbound, state); err != nil || !state.Returned {
 		t.Fatalf("unspecified header = %+v, %v", state, err)
 	}
+	// on-error, before the backend answered: the request's headers are all there
+	// is to validate.
+	onError, err := Compile(`<policies><on-error><validate-headers specified-header-action="prevent" unspecified-header-action="ignore"><header name="X-Mode"><value>strict</value></header></validate-headers></on-error></policies>`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	request.Header.Set("X-Mode", "loose")
+	state = &State{Request: request}
+	if err := Execute(onError.OnError, state); err != nil || !state.Returned || state.StatusCode != http.StatusBadRequest {
+		t.Fatalf("invalid request header = %+v, %v", state, err)
+	}
 	for _, value := range []string{
-		`<policies><inbound><validate-headers specified-header-action="bad"/></inbound></policies>`,
-		`<policies><inbound><validate-headers><header name="X" action="bad"/></validate-headers></inbound></policies>`,
-		`<policies><inbound><validate-headers><unknown/></validate-headers></inbound></policies>`,
-		`<policies><inbound><validate-headers><header name="X"><unknown/></header></validate-headers></inbound></policies>`,
+		`<policies><outbound><validate-headers specified-header-action="bad"/></outbound></policies>`,
+		`<policies><outbound><validate-headers><header name="X" action="bad"/></validate-headers></outbound></policies>`,
+		`<policies><outbound><validate-headers><unknown/></validate-headers></outbound></policies>`,
+		`<policies><outbound><validate-headers><header name="X"><unknown/></header></validate-headers></outbound></policies>`,
 	} {
 		if _, err := Compile(value, true); err == nil {
 			t.Fatalf("invalid header validation accepted: %s", value)
 		}
 	}
-	if err := Execute(plan.Inbound, &State{}); err == nil {
-		t.Fatal("header validation without request accepted")
+	if err := Execute(plan.Outbound, &State{}); err == nil {
+		t.Fatal("header validation without a request or response accepted")
+	}
+}
+
+// validate-headers validates the RESPONSE where there is one and falls back to
+// the request where there is not, which in <on-error> is the usual case: the
+// section runs when the backend never answered.
+//
+// The fallback branch is covered here in full. The response path is the one
+// TestValidateHeadersPolicy walks, and when the policy moved out of <inbound> --
+// a section its page does not document -- its four request-path cases moved to
+// the response with it, leaving the fallback asserted only for a header it
+// rejects. Nothing then covered the headers it has to ACCEPT there, which is the
+// half a wrongly-rejecting regression shows up in.
+func TestValidateHeadersFallsBackToTheRequest(t *testing.T) {
+	prevent, err := Compile(`<policies><on-error><validate-headers specified-header-action="prevent" `+
+		`unspecified-header-action="ignore"><header name="X-Mode"><value>strict</value></header>`+
+		`</validate-headers></on-error></policies>`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := func(headers map[string]string) *State {
+		value := httptest.NewRequest(http.MethodGet, "/", nil)
+		for name, header := range headers {
+			value.Header.Set(name, header)
+		}
+		return &State{Request: value}
+	}
+
+	state := request(map[string]string{"X-Mode": "strict", "X-Extra": "ignored"})
+	if err := Execute(prevent.OnError, state); err != nil || state.Returned {
+		t.Fatalf("valid request header = %+v, %v", state, err)
+	}
+
+	state = request(map[string]string{"X-Mode": "loose"})
+	if err := Execute(prevent.OnError, state); err != nil || !state.Returned || state.StatusCode != http.StatusBadRequest {
+		t.Fatalf("invalid request header = %+v, %v", state, err)
+	}
+
+	state = request(nil)
+	if err := Execute(prevent.OnError, state); err != nil || !state.Returned {
+		t.Fatalf("missing request header = %+v, %v", state, err)
+	}
+
+	ignoreRule, err := Compile(`<policies><on-error><validate-headers>`+
+		`<header name="X-Mode" action="ignore"/></validate-headers></on-error></policies>`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state = request(map[string]string{"X-Mode": "loose"})
+	if err := Execute(ignoreRule.OnError, state); err != nil || state.Returned {
+		t.Fatalf("ignored request header = %+v, %v", state, err)
+	}
+
+	unspecified, err := Compile(`<policies><on-error><validate-headers specified-header-action="ignore" `+
+		`unspecified-header-action="prevent"><header name="X-Mode"><value>strict</value></header>`+
+		`</validate-headers></on-error></policies>`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state = request(map[string]string{"X-Other": "value"})
+	if err := Execute(unspecified.OnError, state); err != nil || !state.Returned {
+		t.Fatalf("unspecified request header = %+v, %v", state, err)
+	}
+
+	// The response wins where there is one, so the fallback is a fallback.
+	state = request(map[string]string{"X-Mode": "loose"})
+	state.Response = &http.Response{Header: http.Header{"X-Mode": []string{"strict"}}}
+	if err := Execute(prevent.OnError, state); err != nil || state.Returned {
+		t.Fatalf("a valid response header was overruled by the request = %+v, %v", state, err)
 	}
 }
 
@@ -1427,30 +1509,35 @@ func TestTracePolicy(t *testing.T) {
 	}
 }
 
+// The authentication family is documented in <inbound> -- every one of the three
+// reference pages says so, and the fourteen snippets Microsoft publishes that use
+// one put it there. These tests used <backend>, which the compiler took because it
+// had no section table. authentication-oauth2 has no reference page of its own and
+// follows the family it is modelled on.
 func TestAuthenticationBasicPolicy(t *testing.T) {
-	plan, err := Compile(`<policies><backend><authentication-basic username="user" password="secret"/></backend></policies>`, true)
-	if err != nil || len(plan.Backend) != 1 || plan.Backend[0].Kind != ActionAuthenticationBasic {
+	plan, err := Compile(`<policies><inbound><authentication-basic username="user" password="secret"/></inbound></policies>`, true)
+	if err != nil || len(plan.Inbound) != 1 || plan.Inbound[0].Kind != ActionAuthenticationBasic {
 		t.Fatalf("authentication plan = %+v, %v", plan, err)
 	}
 	request := httptest.NewRequest(http.MethodGet, "/", nil)
 	state := &State{Request: request}
-	if err := Execute(plan.Backend, state); err != nil || request.Header.Get("Authorization") != "Basic dXNlcjpzZWNyZXQ=" {
+	if err := Execute(plan.Inbound, state); err != nil || request.Header.Get("Authorization") != "Basic dXNlcjpzZWNyZXQ=" {
 		t.Fatalf("authentication header = %q, %v", request.Header.Get("Authorization"), err)
 	}
-	if err := Execute(plan.Backend, &State{}); err == nil {
+	if err := Execute(plan.Inbound, &State{}); err == nil {
 		t.Fatal("authentication without request accepted")
 	}
-	exprPlan, err := Compile(`<policies><backend><authentication-basic username="@(context.Variables['user'])" password="secret"/></backend></policies>`, true)
+	exprPlan, err := Compile(`<policies><inbound><authentication-basic username="@(context.Variables['user'])" password="secret"/></inbound></policies>`, true)
 	if err != nil {
 		t.Fatal(err)
 	}
 	request = httptest.NewRequest(http.MethodGet, "/", nil)
-	if err := Execute(exprPlan.Backend, &State{Request: request, Variables: map[string]string{"user": "user"}}); err != nil || request.Header.Get("Authorization") != "Basic dXNlcjpzZWNyZXQ=" {
+	if err := Execute(exprPlan.Inbound, &State{Request: request, Variables: map[string]string{"user": "user"}}); err != nil || request.Header.Get("Authorization") != "Basic dXNlcjpzZWNyZXQ=" {
 		t.Fatalf("authentication expression header = %q, %v", request.Header.Get("Authorization"), err)
 	}
 	for _, value := range []string{
-		`<policies><backend><authentication-basic username="" password="secret"/></backend></policies>`,
-		`<policies><backend><authentication-basic username="user" password="secret"><unknown/></authentication-basic></backend></policies>`,
+		`<policies><inbound><authentication-basic username="" password="secret"/></inbound></policies>`,
+		`<policies><inbound><authentication-basic username="user" password="secret"><unknown/></authentication-basic></inbound></policies>`,
 	} {
 		if _, err := Compile(value, true); err == nil {
 			t.Fatalf("invalid authentication policy accepted: %s", value)
@@ -1459,8 +1546,8 @@ func TestAuthenticationBasicPolicy(t *testing.T) {
 }
 
 func TestAuthenticationManagedIdentityPolicy(t *testing.T) {
-	plan, err := Compile(`<policies><backend><authentication-managed-identity resource="https://backend.test"/></backend></policies>`, true)
-	if err != nil || len(plan.Backend) != 1 || plan.Backend[0].Kind != ActionAuthenticationManagedIdentity {
+	plan, err := Compile(`<policies><inbound><authentication-managed-identity resource="https://backend.test"/></inbound></policies>`, true)
+	if err != nil || len(plan.Inbound) != 1 || plan.Inbound[0].Kind != ActionAuthenticationManagedIdentity {
 		t.Fatalf("managed identity plan = %+v, %v", plan, err)
 	}
 	request := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -1470,35 +1557,35 @@ func TestAuthenticationManagedIdentityPolicy(t *testing.T) {
 		}
 		return "token", nil
 	}}
-	if err := Execute(plan.Backend, state); err != nil || request.Header.Get("Authorization") != "Bearer token" {
+	if err := Execute(plan.Inbound, state); err != nil || request.Header.Get("Authorization") != "Bearer token" {
 		t.Fatalf("managed identity header = %q, %v", request.Header.Get("Authorization"), err)
 	}
-	if err := Execute(plan.Backend, &State{Request: httptest.NewRequest(http.MethodGet, "/", nil)}); err == nil {
+	if err := Execute(plan.Inbound, &State{Request: httptest.NewRequest(http.MethodGet, "/", nil)}); err == nil {
 		t.Fatal("managed identity without provider accepted")
 	}
-	if err := Execute(plan.Backend, &State{}); err == nil {
+	if err := Execute(plan.Inbound, &State{}); err == nil {
 		t.Fatal("managed identity without request accepted")
 	}
 	providerErr := errors.New("token unavailable")
 	state = &State{Request: httptest.NewRequest(http.MethodGet, "/", nil), AcquireToken: func(string) (string, error) { return "", providerErr }}
-	if err := Execute(plan.Backend, state); !errors.Is(err, providerErr) {
+	if err := Execute(plan.Inbound, state); !errors.Is(err, providerErr) {
 		t.Fatalf("provider error = %v", err)
 	}
-	exprPlan, err := Compile(`<policies><backend><authentication-managed-identity resource="@(context.Request.Url)"/></backend></policies>`, true)
+	exprPlan, err := Compile(`<policies><inbound><authentication-managed-identity resource="@(context.Request.Url)"/></inbound></policies>`, true)
 	if err != nil {
 		t.Fatal(err)
 	}
 	request = httptest.NewRequest(http.MethodGet, "https://backend.test/resource", nil)
 	gotResource := ""
-	if err := Execute(exprPlan.Backend, &State{Request: request, AcquireToken: func(resource string) (string, error) {
+	if err := Execute(exprPlan.Inbound, &State{Request: request, AcquireToken: func(resource string) (string, error) {
 		gotResource = resource
 		return "token", nil
 	}}); err != nil || gotResource != "https://backend.test/resource" || request.Header.Get("Authorization") != "Bearer token" {
 		t.Fatalf("managed identity expression resource = %q header %q, %v", gotResource, request.Header.Get("Authorization"), err)
 	}
 	for _, value := range []string{
-		`<policies><backend><authentication-managed-identity resource=""/></backend></policies>`,
-		`<policies><backend><authentication-managed-identity resource="https://backend.test"><unknown/></authentication-managed-identity></backend></policies>`,
+		`<policies><inbound><authentication-managed-identity resource=""/></inbound></policies>`,
+		`<policies><inbound><authentication-managed-identity resource="https://backend.test"><unknown/></authentication-managed-identity></inbound></policies>`,
 	} {
 		if _, err := Compile(value, true); err == nil {
 			t.Fatalf("invalid managed identity policy accepted: %s", value)
@@ -1507,8 +1594,8 @@ func TestAuthenticationManagedIdentityPolicy(t *testing.T) {
 }
 
 func TestAuthenticationOAuth2Policy(t *testing.T) {
-	plan, err := Compile(`<policies><backend><authentication-oauth2 client-id="client" client-secret="secret" token-endpoint="https://login.test/token" resource="api://resource"/></backend></policies>`, true)
-	if err != nil || len(plan.Backend) != 1 || plan.Backend[0].Kind != ActionAuthenticationOAuth2 {
+	plan, err := Compile(`<policies><inbound><authentication-oauth2 client-id="client" client-secret="secret" token-endpoint="https://login.test/token" resource="api://resource"/></inbound></policies>`, true)
+	if err != nil || len(plan.Inbound) != 1 || plan.Inbound[0].Kind != ActionAuthenticationOAuth2 {
 		t.Fatalf("oauth2 plan = %+v, %v", plan, err)
 	}
 	request := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -1518,27 +1605,27 @@ func TestAuthenticationOAuth2Policy(t *testing.T) {
 		}
 		return "oauth-token", nil
 	}}
-	if err := Execute(plan.Backend, state); err != nil || request.Header.Get("Authorization") != "Bearer oauth-token" {
+	if err := Execute(plan.Inbound, state); err != nil || request.Header.Get("Authorization") != "Bearer oauth-token" {
 		t.Fatalf("oauth2 header = %q, %v", request.Header.Get("Authorization"), err)
 	}
-	if err := Execute(plan.Backend, &State{Request: httptest.NewRequest(http.MethodGet, "/", nil)}); err == nil {
+	if err := Execute(plan.Inbound, &State{Request: httptest.NewRequest(http.MethodGet, "/", nil)}); err == nil {
 		t.Fatal("oauth2 without provider accepted")
 	}
-	if err := Execute(plan.Backend, &State{}); err == nil {
+	if err := Execute(plan.Inbound, &State{}); err == nil {
 		t.Fatal("oauth2 without request accepted")
 	}
 	providerErr := errors.New("oauth2 unavailable")
 	state = &State{Request: httptest.NewRequest(http.MethodGet, "/", nil), AcquireOAuth2Token: func(string, string, string, string) (string, error) { return "", providerErr }}
-	if err := Execute(plan.Backend, state); !errors.Is(err, providerErr) {
+	if err := Execute(plan.Inbound, state); !errors.Is(err, providerErr) {
 		t.Fatalf("oauth2 provider error = %v", err)
 	}
-	exprPlan, err := Compile(`<policies><backend><authentication-oauth2 client-id="client" client-secret="secret" token-endpoint="@(context.Variables['endpoint'])" resource="api://resource"/></backend></policies>`, true)
+	exprPlan, err := Compile(`<policies><inbound><authentication-oauth2 client-id="client" client-secret="secret" token-endpoint="@(context.Variables['endpoint'])" resource="api://resource"/></inbound></policies>`, true)
 	if err != nil {
 		t.Fatal(err)
 	}
 	request = httptest.NewRequest(http.MethodGet, "/", nil)
 	gotEndpoint := ""
-	if err := Execute(exprPlan.Backend, &State{Request: request, Variables: map[string]string{"endpoint": "https://login.test/token"}, AcquireOAuth2Token: func(clientID, secret, endpoint, resource string) (string, error) {
+	if err := Execute(exprPlan.Inbound, &State{Request: request, Variables: map[string]string{"endpoint": "https://login.test/token"}, AcquireOAuth2Token: func(clientID, secret, endpoint, resource string) (string, error) {
 		if clientID != "client" || secret != "secret" || resource != "api://resource" {
 			t.Fatalf("oauth2 expression inputs = %q %q %q %q", clientID, secret, endpoint, resource)
 		}
@@ -1548,8 +1635,8 @@ func TestAuthenticationOAuth2Policy(t *testing.T) {
 		t.Fatalf("oauth2 expression endpoint = %q header %q, %v", gotEndpoint, request.Header.Get("Authorization"), err)
 	}
 	for _, value := range []string{
-		`<policies><backend><authentication-oauth2 client-id="" client-secret="secret" token-endpoint="https://login.test/token"/></backend></policies>`,
-		`<policies><backend><authentication-oauth2 client-id="client" client-secret="secret" token-endpoint="https://login.test/token"><unknown/></authentication-oauth2></backend></policies>`,
+		`<policies><inbound><authentication-oauth2 client-id="" client-secret="secret" token-endpoint="https://login.test/token"/></inbound></policies>`,
+		`<policies><inbound><authentication-oauth2 client-id="client" client-secret="secret" token-endpoint="https://login.test/token"><unknown/></authentication-oauth2></inbound></policies>`,
 	} {
 		if _, err := Compile(value, true); err == nil {
 			t.Fatalf("invalid oauth2 policy accepted: %s", value)
@@ -1558,8 +1645,8 @@ func TestAuthenticationOAuth2Policy(t *testing.T) {
 }
 
 func TestAuthenticationCertificatePolicy(t *testing.T) {
-	plan, err := Compile(`<policies><backend><authentication-certificate certificate-id="client-cert"/></backend></policies>`, true)
-	if err != nil || len(plan.Backend) != 1 || plan.Backend[0].Kind != ActionAuthenticationCertificate {
+	plan, err := Compile(`<policies><inbound><authentication-certificate certificate-id="client-cert"/></inbound></policies>`, true)
+	if err != nil || len(plan.Inbound) != 1 || plan.Inbound[0].Kind != ActionAuthenticationCertificate {
 		t.Fatalf("certificate auth plan = %+v, %v", plan, err)
 	}
 	request := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -1571,27 +1658,27 @@ func TestAuthenticationCertificatePolicy(t *testing.T) {
 		attached = id
 		return nil
 	}}
-	if err := Execute(plan.Backend, state); err != nil || attached != "client-cert" {
+	if err := Execute(plan.Inbound, state); err != nil || attached != "client-cert" {
 		t.Fatalf("certificate attachment = %q, %v", attached, err)
 	}
-	if err := Execute(plan.Backend, &State{Request: httptest.NewRequest(http.MethodGet, "/", nil)}); err == nil {
+	if err := Execute(plan.Inbound, &State{Request: httptest.NewRequest(http.MethodGet, "/", nil)}); err == nil {
 		t.Fatal("certificate auth without provider accepted")
 	}
-	if err := Execute(plan.Backend, &State{}); err == nil {
+	if err := Execute(plan.Inbound, &State{}); err == nil {
 		t.Fatal("certificate auth without request accepted")
 	}
 	providerErr := errors.New("certificate unavailable")
 	state = &State{Request: httptest.NewRequest(http.MethodGet, "/", nil), AttachClientCertificate: func(*http.Request, string) error { return providerErr }}
-	if err := Execute(plan.Backend, state); !errors.Is(err, providerErr) {
+	if err := Execute(plan.Inbound, state); !errors.Is(err, providerErr) {
 		t.Fatalf("certificate provider error = %v", err)
 	}
-	exprPlan, err := Compile(`<policies><backend><authentication-certificate certificate-id="@(context.Variables['certificate'])"/></backend></policies>`, true)
+	exprPlan, err := Compile(`<policies><inbound><authentication-certificate certificate-id="@(context.Variables['certificate'])"/></inbound></policies>`, true)
 	if err != nil {
 		t.Fatal(err)
 	}
 	request = httptest.NewRequest(http.MethodGet, "/", nil)
 	attached = ""
-	if err := Execute(exprPlan.Backend, &State{Request: request, Variables: map[string]string{"certificate": "client-cert"}, AttachClientCertificate: func(gotRequest *http.Request, id string) error {
+	if err := Execute(exprPlan.Inbound, &State{Request: request, Variables: map[string]string{"certificate": "client-cert"}, AttachClientCertificate: func(gotRequest *http.Request, id string) error {
 		if gotRequest != request {
 			t.Fatal("certificate expression request changed")
 		}
@@ -1601,8 +1688,8 @@ func TestAuthenticationCertificatePolicy(t *testing.T) {
 		t.Fatalf("certificate expression attachment = %q, %v", attached, err)
 	}
 	for _, value := range []string{
-		`<policies><backend><authentication-certificate certificate-id=""/></backend></policies>`,
-		`<policies><backend><authentication-certificate certificate-id="client-cert"><unknown/></authentication-certificate></backend></policies>`,
+		`<policies><inbound><authentication-certificate certificate-id=""/></inbound></policies>`,
+		`<policies><inbound><authentication-certificate certificate-id="client-cert"><unknown/></authentication-certificate></inbound></policies>`,
 	} {
 		if _, err := Compile(value, true); err == nil {
 			t.Fatalf("invalid certificate auth accepted: %s", value)
@@ -1980,10 +2067,11 @@ func TestCompileAllP0Actions(t *testing.T) {
 	  <inbound>
 	    <set-backend-service base-url="https://backend.test/base"/>
 	    <rewrite-uri template="/new/path"/>
-	    <forward-request/>
 	    <unknown-policy/>
 	  </inbound>
-	  <backend/>
+	  <backend>
+	    <forward-request/>
+	  </backend>
 	  <outbound/>
 	  <on-error>
 	    <return-response>
@@ -1999,13 +2087,17 @@ func TestCompileAllP0Actions(t *testing.T) {
 	}
 	request := httptest.NewRequest(http.MethodGet, "/", nil)
 	state := &State{Request: request, Headers: make(http.Header)}
-	if err := Execute(plan.Inbound[:3], state); err != nil {
+	if err := Execute(plan.Inbound[:2], state); err != nil {
+		t.Fatal(err)
+	}
+	// forward-request is documented in <backend> only, so that is where it is.
+	if err := Execute(plan.Backend, state); err != nil {
 		t.Fatal(err)
 	}
 	if state.BackendURL != "https://backend.test/base" || state.Path != "/new/path" {
 		t.Fatalf("state = %+v", state)
 	}
-	if err := Execute(plan.Inbound[3:], state); err == nil {
+	if err := Execute(plan.Inbound[2:], state); err == nil {
 		t.Fatal("unknown policy should fail")
 	}
 	state.Response = &http.Response{Header: make(http.Header)}
@@ -2207,14 +2299,14 @@ func TestAccessExpressionPolicies(t *testing.T) {
 		`<policies><inbound><cors max-age="@(1 + )"/></inbound></policies>`,
 		`<policies><inbound><limit-concurrency max-count="1" key="@(1 + )"/></inbound></policies>`,
 		`<policies><inbound><rate-limit-by-key calls="1" renewal-period="1" counter-key="@(1 + )"/></inbound></policies>`,
-		`<policies><backend><authentication-basic username="@(1 + )" password="secret"/></backend></policies>`,
-		`<policies><backend><authentication-basic username="user" password="@(1 + )"/></backend></policies>`,
-		`<policies><backend><authentication-managed-identity resource="@(1 + )"/></backend></policies>`,
-		`<policies><backend><authentication-oauth2 client-id="@(1 + )" client-secret="secret" token-endpoint="https://login.test/token"/></backend></policies>`,
-		`<policies><backend><authentication-oauth2 client-id="client" client-secret="@(1 + )" token-endpoint="https://login.test/token"/></backend></policies>`,
-		`<policies><backend><authentication-oauth2 client-id="client" client-secret="secret" token-endpoint="@(1 + )"/></backend></policies>`,
-		`<policies><backend><authentication-oauth2 client-id="client" client-secret="secret" token-endpoint="https://login.test/token" resource="@(1 + )"/></backend></policies>`,
-		`<policies><backend><authentication-certificate certificate-id="@(1 + )"/></backend></policies>`,
+		`<policies><inbound><authentication-basic username="@(1 + )" password="secret"/></inbound></policies>`,
+		`<policies><inbound><authentication-basic username="user" password="@(1 + )"/></inbound></policies>`,
+		`<policies><inbound><authentication-managed-identity resource="@(1 + )"/></inbound></policies>`,
+		`<policies><inbound><authentication-oauth2 client-id="@(1 + )" client-secret="secret" token-endpoint="https://login.test/token"/></inbound></policies>`,
+		`<policies><inbound><authentication-oauth2 client-id="client" client-secret="@(1 + )" token-endpoint="https://login.test/token"/></inbound></policies>`,
+		`<policies><inbound><authentication-oauth2 client-id="client" client-secret="secret" token-endpoint="@(1 + )"/></inbound></policies>`,
+		`<policies><inbound><authentication-oauth2 client-id="client" client-secret="secret" token-endpoint="https://login.test/token" resource="@(1 + )"/></inbound></policies>`,
+		`<policies><inbound><authentication-certificate certificate-id="@(1 + )"/></inbound></policies>`,
 	} {
 		if _, err := Compile(value, false); err == nil {
 			t.Fatalf("invalid access expression accepted: %s", value)
@@ -2231,14 +2323,14 @@ func TestAccessExpressionPolicies(t *testing.T) {
 		`<policies><inbound><cors max-age="@(context.Request.Body.AsJObject())"/></inbound></policies>`,
 		`<policies><inbound><limit-concurrency max-count="1" key="@(context.Request.Body.AsJObject())"/></inbound></policies>`,
 		`<policies><inbound><rate-limit-by-key calls="1" renewal-period="1" counter-key="@(context.Request.Body.AsJObject())"/></inbound></policies>`,
-		`<policies><backend><authentication-basic username="@(context.Request.Body.AsJObject())" password="secret"/></backend></policies>`,
-		`<policies><backend><authentication-basic username="user" password="@(context.Request.Body.AsJObject())"/></backend></policies>`,
-		`<policies><backend><authentication-managed-identity resource="@(context.Request.Body.AsJObject())"/></backend></policies>`,
-		`<policies><backend><authentication-oauth2 client-id="@(context.Request.Body.AsJObject())" client-secret="secret" token-endpoint="https://login.test/token"/></backend></policies>`,
-		`<policies><backend><authentication-oauth2 client-id="client" client-secret="@(context.Request.Body.AsJObject())" token-endpoint="https://login.test/token"/></backend></policies>`,
-		`<policies><backend><authentication-oauth2 client-id="client" client-secret="secret" token-endpoint="@(context.Request.Body.AsJObject())"/></backend></policies>`,
-		`<policies><backend><authentication-oauth2 client-id="client" client-secret="secret" token-endpoint="https://login.test/token" resource="@(context.Request.Body.AsJObject())"/></backend></policies>`,
-		`<policies><backend><authentication-certificate certificate-id="@(context.Request.Body.AsJObject())"/></backend></policies>`,
+		`<policies><inbound><authentication-basic username="@(context.Request.Body.AsJObject())" password="secret"/></inbound></policies>`,
+		`<policies><inbound><authentication-basic username="user" password="@(context.Request.Body.AsJObject())"/></inbound></policies>`,
+		`<policies><inbound><authentication-managed-identity resource="@(context.Request.Body.AsJObject())"/></inbound></policies>`,
+		`<policies><inbound><authentication-oauth2 client-id="@(context.Request.Body.AsJObject())" client-secret="secret" token-endpoint="https://login.test/token"/></inbound></policies>`,
+		`<policies><inbound><authentication-oauth2 client-id="client" client-secret="@(context.Request.Body.AsJObject())" token-endpoint="https://login.test/token"/></inbound></policies>`,
+		`<policies><inbound><authentication-oauth2 client-id="client" client-secret="secret" token-endpoint="@(context.Request.Body.AsJObject())"/></inbound></policies>`,
+		`<policies><inbound><authentication-oauth2 client-id="client" client-secret="secret" token-endpoint="https://login.test/token" resource="@(context.Request.Body.AsJObject())"/></inbound></policies>`,
+		`<policies><inbound><authentication-certificate certificate-id="@(context.Request.Body.AsJObject())"/></inbound></policies>`,
 	} {
 		compiled, err := Compile(value, true)
 		if err != nil {
@@ -2998,13 +3090,16 @@ func TestLimitRenewalPeriodBounds(t *testing.T) {
 
 // TestKeylessLimitOncePerDefinition covers the usage note the keyless pair
 // carries and the by-key pair does not.
+//
+// Every case is one section deep, because the keyless pair is documented in
+// <inbound> only: "once per policy definition" and "once per section" cannot be
+// told apart from a document Azure would accept.
 func TestKeylessLimitOncePerDefinition(t *testing.T) {
 	for _, testCase := range []struct {
 		document string
 		valid    bool
 	}{
 		{`<inbound><rate-limit calls="1" renewal-period="60"/><rate-limit calls="2" renewal-period="60"/></inbound>`, false},
-		{`<inbound><rate-limit calls="1" renewal-period="60"/></inbound><outbound><rate-limit calls="2" renewal-period="60"/></outbound>`, false},
 		{`<inbound><quota calls="1" renewal-period="60"/><quota calls="2" renewal-period="60"/></inbound>`, false},
 		// One of each is a single use of each policy.
 		{`<inbound><rate-limit calls="1" renewal-period="60"/><quota calls="2" renewal-period="60"/></inbound>`, true},

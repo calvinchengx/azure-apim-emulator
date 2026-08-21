@@ -337,7 +337,7 @@ func TestSOAPBackendClientAndOutboundFailures(t *testing.T) {
 
 		if _, err := fixture.store.UpsertPolicy(model.Policy{
 			ScopeID: serviceID + "/apis/orders",
-			Value:   `<policies><outbound><validate-jwt header-name="Authorization" /></outbound></policies>`,
+			Value:   `<policies><outbound><xsl-transform/></outbound></policies>`,
 		}); err != nil {
 			t.Fatal(err)
 		}
@@ -346,6 +346,30 @@ func TestSOAPBackendClientAndOutboundFailures(t *testing.T) {
 		}
 		if got := fixture.post(t, "text/xml", `"http://shop.test/GetOrder"`, soapEnvelope).Code; got < 400 {
 			t.Fatalf("a failing outbound policy returned %d", got)
+		}
+
+		// And a policy that RUNS and then fails, after an earlier outbound action
+		// has already changed the response. <xsl-transform> is unsupported and
+		// stops before anything is applied, so on its own it never exercises the
+		// half-applied response this route has to not serve.
+		if _, err := fixture.store.UpsertPolicy(model.Policy{
+			ScopeID: serviceID + "/apis/orders",
+			Value: `<policies><outbound>` +
+				`<set-header name="X-Half-Applied" exists-action="override"><value>yes</value></set-header>` +
+				`<json-to-xml apply="always"/>` +
+				`</outbound></policies>`,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if err := fixture.runtime.Activate(fixture.store, false); err != nil {
+			t.Fatal(err)
+		}
+		recorder = fixture.post(t, "text/xml", `"http://shop.test/GetOrder"`, soapEnvelope)
+		if recorder.Code < 400 {
+			t.Fatalf("an outbound policy that failed mid-section returned %d", recorder.Code)
+		}
+		if got := recorder.Header().Get("X-Half-Applied"); got != "" {
+			t.Errorf("the half-applied response was served: X-Half-Applied = %q", got)
 		}
 	})
 

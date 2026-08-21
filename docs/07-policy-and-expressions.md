@@ -56,11 +56,32 @@ mutability and lifetime. Policies never receive the storage layer directly.
 ## Policy inventory
 
 All policies in Microsoft's live policy reference are classified in the checked-in
-inventory (`docs/generated/policy-inventory.json`) with status, section hints,
-gateway support, and known expression-bearing fields. `scripts/check_policy_inventory.py
---strict` fails CI when any stable name is `unclassified` or when compiler
-recognition drifts from `implemented`/`partial`. XML schema, remaining
-expression-bearing fields, dependencies, and roadmap owner columns remain open.
+inventory (`docs/generated/policy-inventory.json`) with status, the sections the
+policy is valid in, gateway support, and known expression-bearing fields.
+`scripts/check_policy_inventory.py --strict` fails CI when any stable name is
+`unclassified` or when compiler recognition drifts from `implemented`/`partial`.
+XML schema, remaining expression-bearing fields, dependencies, and roadmap owner
+columns remain open.
+
+The `sections` field is DERIVED, not written. Every policy reference page carries
+a `Policy sections:` line naming where that policy may appear, and Azure rejects a
+document that puts one anywhere else. The hand-written field was wrong for all
+four limit policies -- the only four anyone had checked -- so
+`scripts/derive_policy_sections.py` reads the line out of the vendored pages and
+writes both the ledger's field and `internal/policy/policy_sections.json`, which
+the compiler embeds. A policy in a section its page does not name is REJECTED at
+compile, in every mode: the document is one Azure answers 400 at deploy, so it is
+refused at upload here too rather than stored and failed per request. `<base/>` is
+valid in every section, and the GraphQL resolver policies are configured in a
+resolver rather than a section, so neither is ever rejected for where it appears.
+
+That fault is reported apart from an unsupported one, because the two ask
+opposite things of the reader. `policy.ErrWrongSection` says the document is
+invalid and needs editing; `policy.ErrUnsupported` says the document is fine and
+this emulator does not run that policy yet.
+
+Gateway support is still hand-written, and unverified in the same way the sections
+were.
 
 Implementation tracks include:
 
@@ -81,6 +102,17 @@ Unsupported policy elements are never skipped silently. The default mode accepts
 and stores Azure-valid XML, marks the compiled node unsupported, and produces an
 APIM-shaped runtime failure only when execution reaches it. Strict mode rejects
 such a policy during upload.
+
+Strict mode governs what this emulator RUNS, so it does not reach XML that is not
+Azure-valid in the first place. A policy in a section its page does not document
+is rejected at upload in both modes.
+
+A document the store already holds is treated differently again. Tightening the
+compiler can turn a document an earlier build accepted into one this build
+rejects, and startup does not refuse to serve over it: the document is activated
+as an invalid plan, reported on stderr, and reports its compile error on every
+request that reaches it, so the ARM API stays available to replace it. Activation
+after a write still rejects a document that write introduced.
 
 ## Expression syntax
 

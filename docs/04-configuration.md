@@ -60,7 +60,7 @@ only. Do not use it against anything you did not start yourself.
 | `APIM_ENFORCE_RBAC` | *(none)* | off | make role assignments an access decision |
 | `APIM_RBAC_OWNER` | *(none)* | none | the principal treated as Owner at subscription scope |
 | `APIM_ENFORCE_TIERS` | *(none)* | off | refuse capabilities the service's SKU does not have |
-| `APIM_STRICT_POLICIES` | `--strict-policies` | off | reject unsupported policies at upload instead of ignoring them |
+| `APIM_STRICT_POLICIES` | `--strict-policies` | off | reject policies this emulator does not run at upload instead of deferring them to the request. A policy in a section its page does not document is rejected either way |
 
 **Off by default means the emulator is more permissive than a tenant, and that
 is a real divergence rather than a neutral default.** With RBAC enforcement

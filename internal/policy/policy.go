@@ -24,6 +24,22 @@ import (
 // ErrUnsupported is returned when execution reaches an unsupported policy.
 var ErrUnsupported = errors.New("unsupported policy")
 
+// ErrInvalidDocument is returned when execution reaches a policy document that
+// did not compile. See InvalidPlan.
+var ErrInvalidDocument = errors.New("invalid policy document")
+
+// ErrWrongSection is returned when a policy appears in a section its reference
+// page does not document.
+//
+// Kept apart from ErrUnsupported, which the flag help, the README and the docs
+// all define as "this emulator does not run that policy". The two faults ask
+// opposite things of the reader: an unsupported policy is answered by waiting
+// for the emulator to implement it, and a misplaced one by editing the document
+// Azure would also have rejected. Reported through one sentinel they were
+// indistinguishable, and a rate-limit user reading "unsupported policy:
+// <outbound/rate-limit>" would conclude rate-limit was unimplemented.
+var ErrWrongSection = errors.New("is not valid in this section")
+
 // ActionKind identifies a compiled policy operation.
 type ActionKind int
 
@@ -74,6 +90,9 @@ const (
 	ActionLLMTokenLimit
 	ActionLLMEmitTokenMetric
 	ActionUnsupported
+	// ActionInvalid stands in for a whole document that did not compile. See
+	// InvalidPlan.
+	ActionInvalid
 )
 
 // Action is a compiled policy node.
@@ -481,30 +500,36 @@ func compileRoot(root node, strict bool) (Plan, error) {
 			return Plan{}, fmt.Errorf("duplicate <%s> section", section.Name)
 		}
 		seen[section.Name] = true
-		actions, err := compileNodes(section.Children, strict)
-		if err != nil {
-			return Plan{}, fmt.Errorf("%s: %w", section.Name, err)
-		}
+		// The section name is settled before its children are compiled, because
+		// the children are now compiled AGAINST it: in an unknown section every
+		// policy is out of place, and reporting one of those would bury the
+		// section that is the actual fault.
+		var target *[]Action
 		switch section.Name {
 		case "inbound":
-			plan.Inbound = actions
+			target = &plan.Inbound
 		case "backend":
-			plan.Backend = actions
+			target = &plan.Backend
 		case "outbound":
-			plan.Outbound = actions
+			target = &plan.Outbound
 		case "on-error":
-			plan.OnError = actions
+			target = &plan.OnError
 		default:
 			return Plan{}, fmt.Errorf("unknown policy section <%s>", section.Name)
 		}
+		actions, err := compileNodes(section.Children, section.Name, strict)
+		if err != nil {
+			return Plan{}, fmt.Errorf("%s: %w", section.Name, err)
+		}
+		*target = actions
 	}
 	return plan, nil
 }
 
-func compileNodes(nodes []node, strict bool) ([]Action, error) {
+func compileNodes(nodes []node, section string, strict bool) ([]Action, error) {
 	var actions []Action
 	for _, item := range nodes {
-		action, _, err := compileNode(item, strict)
+		action, _, err := compileNode(item, section, strict)
 		if err != nil {
 			return nil, err
 		}
@@ -521,7 +546,26 @@ func compileNodes(nodes []node, strict bool) ([]Action, error) {
 	return actions, nil
 }
 
-func compileNode(item node, strict bool) (Action, bool, error) {
+func compileNode(item node, section string, strict bool) (Action, bool, error) {
+	// Where a policy may appear is part of its documented surface, and Azure
+	// rejects a document that puts one in the wrong section. Checked before the
+	// switch, so a policy that is out of place is reported as out of place
+	// rather than for whichever attribute it is also missing. <base/>, the
+	// composition names and the resolver policies document no section, and
+	// documentsSection leaves them alone.
+	//
+	// A hard error rather than an unsupported action, and so independent of
+	// strict mode. An unsupported action is deferred to execution, which is the
+	// right answer for a policy this emulator has not implemented: the document
+	// is one Azure accepts, and only the requests that reach that policy are
+	// affected. A misplaced policy is not that. It is a document Azure rejects
+	// at deploy, so deferring it would accept a PUT that Azure answers 400 and
+	// then fail every request against the API instead -- and in <on-error>, fail
+	// them invisibly, because policyFailure reports the cause it was called with.
+	// Strict mode is about what this emulator runs; validity is not optional.
+	if !documentsSection(item.Name, section) {
+		return Action{}, false, fmt.Errorf("<%s> %w", item.Name, ErrWrongSection)
+	}
 	switch item.Name {
 	case "base":
 		return Action{Kind: ActionBase}, true, nil
@@ -671,13 +715,13 @@ func compileNode(item node, strict bool) (Action, bool, error) {
 		if err != nil {
 			return Action{}, false, err
 		}
-		children, err := compileNodes(item.Children, strict)
+		children, err := compileNodes(item.Children, section, strict)
 		if err != nil {
 			return Action{}, false, err
 		}
 		return Action{Kind: ActionLimitConcurrency, Value: key, LimitCalls: count, StatusCode: http.StatusTooManyRequests, Body: "concurrency limit exceeded", Children: children}, true, nil
 	case "wait":
-		return compileWait(item, strict)
+		return compileWait(item, section, strict)
 	case "cache-lookup":
 		return Action{Kind: ActionCacheLookup}, true, nil
 	case "cache-store":
@@ -832,7 +876,7 @@ func compileNode(item node, strict bool) (Action, bool, error) {
 				if condition == "" {
 					return Action{}, false, fmt.Errorf("choose when requires a condition")
 				}
-				actions, err := compileNodes(child.Children, strict)
+				actions, err := compileNodes(child.Children, section, strict)
 				if err != nil {
 					return Action{}, false, err
 				}
@@ -842,7 +886,7 @@ func compileNode(item node, strict bool) (Action, bool, error) {
 					return Action{}, false, fmt.Errorf("choose has multiple otherwise branches")
 				}
 				otherwiseSeen = true
-				actions, err := compileNodes(child.Children, strict)
+				actions, err := compileNodes(child.Children, section, strict)
 				if err != nil {
 					return Action{}, false, err
 				}
@@ -1060,7 +1104,7 @@ func compileNode(item node, strict bool) (Action, bool, error) {
 			}
 			interval = seconds
 		}
-		children, err := compileNodes(item.Children, strict)
+		children, err := compileNodes(item.Children, section, strict)
 		if err != nil {
 			return Action{}, false, err
 		}
@@ -1353,7 +1397,7 @@ func parseLimitBudget(item node, root string) (int, time.Duration, int64, error)
 	return calls, period, bandwidth, nil
 }
 
-func compileWait(item node, strict bool) (Action, bool, error) {
+func compileWait(item node, section string, strict bool) (Action, bool, error) {
 	mode := strings.ToLower(strings.TrimSpace(item.Attrs["for"]))
 	if mode == "" {
 		mode = "all"
@@ -1368,7 +1412,7 @@ func compileWait(item node, strict bool) (Action, bool, error) {
 			return unsupported(item.Name + "/" + child.Name), true, nil
 		}
 	}
-	children, err := compileNodes(item.Children, strict)
+	children, err := compileNodes(item.Children, section, strict)
 	if err != nil {
 		return Action{}, false, err
 	}
@@ -1868,6 +1912,30 @@ func replaceContentURLs(state *State, gateway, backend string) error {
 }
 
 func unsupported(name string) Action { return Action{Kind: ActionUnsupported, Source: name} }
+
+// InvalidPlan is the plan a document that did not compile is activated as.
+//
+// For the store, which is read at startup and is older than the build reading
+// it. A document the store holds and this build rejects must not keep the
+// emulator from starting: the only way to replace that document is the ARM API,
+// which does not run if startup fails, so the operator's remaining option is to
+// edit the database by hand. Refusing the document at the PUT that introduces it
+// is a different matter, and Activate still does.
+//
+// The scope keeps a plan, so the document fails where it is USED rather than
+// where it is loaded: every request that reaches it reports the compile error,
+// and requests that never reach it are unaffected. Dropping the plan instead
+// would run the API as though the document had been empty, which is the one
+// outcome that says nothing.
+//
+// In Inbound alone because inbound runs first for every request, so a later
+// section could only report it twice. A scope whose document is overridden by a
+// child without <base/> composes away here exactly as a valid one would, which is
+// right: a document that would not have run either way is not this request's
+// problem.
+func InvalidPlan(err error) Plan {
+	return Plan{Inbound: []Action{{Kind: ActionInvalid, Value: err.Error()}}}
+}
 func expression(value string) bool {
 	value = strings.TrimSpace(value)
 	return strings.HasPrefix(value, "@(") || strings.HasPrefix(value, "@{")
@@ -2816,6 +2884,8 @@ func executeActions(actions []Action, state *State) error {
 			}
 		case ActionUnsupported:
 			return fmt.Errorf("%w: <%s>", ErrUnsupported, action.Source)
+		case ActionInvalid:
+			return fmt.Errorf("%w: %s", ErrInvalidDocument, action.Value)
 		}
 	}
 	return nil

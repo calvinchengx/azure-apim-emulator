@@ -102,12 +102,20 @@ docs:
 test-operation-inventory:
 	APIM_RUN_OPERATION_INVENTORY=1 go test -count=1 -timeout 20m ./e2e/inventory/...
 
-check-inventory:
+check-inventory: test-scripts
 	python3 scripts/check_docs_links.py --strict
 	python3 scripts/check_policy_inventory.py --strict
 	python3 scripts/check_operation_inventory.py --strict
 	python3 scripts/derive_expression_surface.py --check
 	python3 scripts/derive_limit_attributes.py --check
+	python3 scripts/derive_policy_sections.py --check
+
+# The derivations decide what the compiler rejects, so the reading they do is
+# tested rather than only re-run. `--check` alone proves a record matches what
+# the script derives today; it says nothing about whether the script still reads
+# the source correctly, which is where the section table was wrong before.
+test-scripts:
+	python3 -m unittest discover -s scripts -p 'test_*.py'
 
 # check-format fails on anything gofmt would rewrite. go vet does not look at
 # formatting, so without this an alignment change rides into main unnoticed:
