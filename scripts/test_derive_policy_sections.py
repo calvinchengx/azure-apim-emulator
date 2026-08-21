@@ -214,6 +214,27 @@ class Records(unittest.TestCase):
         for alias, page in derive.ALIASES.items():
             self.assertEqual(self.record["policies"][page], self.record["policies"][alias], alias)
 
+    def test_the_record_publishes_the_nesting_rule_it_read_the_corpus_by(self):
+        # The Go compiler is the other half of this rule and this script cannot
+        # see it, so the rule is published for the compiler's own suite to enforce
+        # (TestTheCompilerAgreesWithTheDerivedNesting).
+        nesting = self.record["nesting"]
+        self.assertEqual(list(derive.TRANSPARENT), nesting["transparent"])
+        self.assertEqual(list(derive.OPAQUE), nesting["opaque"])
+        self.assertTrue(set(nesting["transparent"]).isdisjoint(nesting["opaque"]))
+
+    def test_every_opaque_container_is_in_the_scans_vocabulary(self):
+        # An opaque name the record does not carry is skipped by the scan rather
+        # than stacked, and its children would read as the section's after all.
+        for name in derive.OPAQUE:
+            self.assertIn(name, self.record["policies"], name)
+
+    def test_an_opaque_name_with_no_page_stops_the_derivation(self):
+        with mock.patch.object(derive, "OPAQUE", derive.OPAQUE + ("invented-wrapper",)):
+            with self.assertRaises(SystemExit) as raised:
+                derive.derive()
+        self.assertIn("invented-wrapper", str(raised.exception))
+
     def test_the_record_states_the_commit_it_was_read_from(self):
         self.assertEqual(vendored.pin("policy-reference/*.md"), self.record["commit"])
         self.assertEqual(vendored.pin("policy-snippets/*.xml"), self.record["snippets"]["commit"])

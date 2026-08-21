@@ -1,5 +1,20 @@
 {
   "commit": "f31ac8723a622ba3950df57ba0389d8347f546ab",
+  "nesting": {
+    "opaque": [
+      "send-request",
+      "send-one-way-request",
+      "return-response"
+    ],
+    "transparent": [
+      "choose",
+      "when",
+      "otherwise",
+      "retry",
+      "wait",
+      "limit-concurrency"
+    ]
+  },
   "policies": {
     "authentication-basic": [
       "inbound"

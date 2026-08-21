@@ -1,8 +1,10 @@
 package policy
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -285,5 +287,110 @@ func TestAnInvalidPlanComposesAwayLikeAnyOther(t *testing.T) {
 	// dropped or spliced by <base/> like any other.
 	if plan.Inbound[0].Kind == ActionBase {
 		t.Error("an invalid plan's action must not be a <base/>")
+	}
+}
+
+// nestingRule is the transparent/opaque split the derived record publishes.
+// scripts/derive_policy_sections.py reads Microsoft's snippet corpus by it: a
+// policy is IN a section only when every element between the two passes the
+// section through, and an element under <send-request> and its kind is a child of
+// that policy instead.
+//
+// That rule is a statement about THIS compiler, made by a Python script that
+// cannot see it. Read back here and enforced, so the two cannot drift: routing
+// <return-response>'s children through compileNodes, or dropping the section
+// argument from one recursive call, turns this red instead of leaving the
+// derivation quietly reading the corpus by a rule the compiler no longer follows.
+type nestingRule struct {
+	Transparent []string `json:"transparent"`
+	Opaque      []string `json:"opaque"`
+}
+
+// A wrong-section policy nested inside each transparent construct. The construct
+// has to be well formed enough for the compiler to reach its children, so the
+// document is spelled out per name rather than generated: the section check runs
+// before the switch, but only once compileNode has recursed that far.
+var transparentProbes = map[string]string{
+	"choose":    `<choose><when condition="@(true)">%s</when></choose>`,
+	"when":      `<choose><when condition="@(true)">%s</when></choose>`,
+	"otherwise": `<choose><when condition="@(true)"><set-status code="200"/></when><otherwise>%s</otherwise></choose>`,
+	"retry":     `<retry condition="@(true)" count="1" interval="0">%s</retry>`,
+	"wait":      `<wait for="all"><choose><when condition="@(true)">%s</when></choose></wait>`,
+	// <limit-concurrency> accepts only <wait>, and <wait> only <choose>/
+	// <send-request>/<cache-lookup-value>, so the shortest document that reaches
+	// its children at all is this chain. The section has to survive all of it.
+	"limit-concurrency": `<limit-concurrency key="k" max-count="1"><wait for="all"><choose>` +
+		`<when condition="@(true)">%s</when></choose></wait></limit-concurrency>`,
+}
+
+// A policy its page does not document in <on-error>, nested inside each opaque
+// container, which compiles its own children and holds them to nothing.
+var opaqueProbes = map[string]string{
+	"send-request":         `<send-request mode="new" response-variable-name="r"><set-url>http://x</set-url>%s</send-request>`,
+	"send-one-way-request": `<send-one-way-request mode="new"><set-url>http://x</set-url>%s</send-one-way-request>`,
+	"return-response":      `<return-response>%s</return-response>`,
+}
+
+func TestTheCompilerAgreesWithTheDerivedNesting(t *testing.T) {
+	var record struct {
+		Nesting nestingRule `json:"nesting"`
+	}
+	if err := json.Unmarshal(policySectionsJSON, &record); err != nil {
+		t.Fatal(err)
+	}
+	if len(record.Nesting.Transparent) == 0 || len(record.Nesting.Opaque) == 0 {
+		t.Fatalf("the derived record publishes no nesting rule: %+v", record.Nesting)
+	}
+
+	for _, name := range record.Nesting.Transparent {
+		probe, ok := transparentProbes[name]
+		if !ok {
+			t.Errorf("the record calls <%s> transparent and nothing here probes it", name)
+			continue
+		}
+		// <rate-limit> is inbound-only, so inheriting <outbound> rejects it.
+		document := `<policies><outbound>` +
+			fmt.Sprintf(probe, `<rate-limit calls="1" renewal-period="60"/>`) +
+			`</outbound></policies>`
+		if !sectionRejected(document, "rate-limit", "outbound") {
+			t.Errorf("<%s> did not pass <outbound> through to its children: %s", name, document)
+		}
+	}
+
+	for _, name := range record.Nesting.Opaque {
+		probe, ok := opaqueProbes[name]
+		if !ok {
+			t.Errorf("the record calls <%s> opaque and nothing here probes it", name)
+			continue
+		}
+		// <set-body> is not valid in <on-error>, and must not be rejected here:
+		// it is this policy's child, not the section's.
+		document := `<policies><on-error>` + fmt.Sprintf(probe, `<set-body>x</set-body>`) + `</on-error></policies>`
+		if _, err := Compile(document, true); err != nil {
+			t.Errorf("<%s> held its own child to <on-error>: %v", name, err)
+		}
+	}
+}
+
+// Neither list may be silently empty of the names the other test suite relies on:
+// a corpus scan whose transparent set shrank would stop reporting real
+// section-level uses, and one whose opaque set shrank would start reporting
+// nested ones as section-level. Both fail open, so the count is asserted.
+func TestTheDerivedNestingCoversWhatTheProbesKnow(t *testing.T) {
+	var record struct {
+		Nesting nestingRule `json:"nesting"`
+	}
+	if err := json.Unmarshal(policySectionsJSON, &record); err != nil {
+		t.Fatal(err)
+	}
+	for name := range transparentProbes {
+		if !slices.Contains(record.Nesting.Transparent, name) {
+			t.Errorf("<%s> is probed as transparent but the record no longer calls it that", name)
+		}
+	}
+	for name := range opaqueProbes {
+		if !slices.Contains(record.Nesting.Opaque, name) {
+			t.Errorf("<%s> is probed as opaque but the record no longer calls it that", name)
+		}
 	}
 }

@@ -119,7 +119,19 @@ CORPUS_WIDENS = {
 # covered every future occurrence: a snippet that later put <set-body> DIRECTLY in
 # <on-error> was answered by the same entry and never reached the classifier,
 # which is the widening this file exists to force someone to look at.
-TRANSPARENT = frozenset({"choose", "when", "otherwise", "retry", "wait", "limit-concurrency"})
+TRANSPARENT = ("choose", "when", "otherwise", "retry", "wait", "limit-concurrency")
+
+# The policies that compile their own children and never hold them to a section.
+# Not needed to CLASSIFY -- anything not transparent is opaque -- but named so the
+# claim is checked: each one must be a policy the record carries, or it would be
+# missing from the scan's vocabulary, and an element under it would read as a
+# child of the enclosing section after all. derive() holds them to that.
+#
+# Both lists are published in the derived record, because the compiler is the
+# other half of this claim and nothing here can see it.
+# TestTheCompilerAgreesWithTheDerivedNesting reads them back and holds the Go
+# compiler to the rule this file read the corpus by.
+OPAQUE = ("send-request", "send-one-way-request", "return-response")
 
 # Elements that are not policies but hold policy-shaped children. Named so they
 # reach the stack: everything outside the vocabulary is skipped rather than
@@ -304,6 +316,13 @@ def derive():
             f"vendored pages do not match the inventory: missing {missing}, unexpected {extra}"
         )
 
+    missing = [name for name in OPAQUE if ALIASES.get(name, name) not in vendored_pages]
+    if missing:
+        raise SystemExit(
+            f"OPAQUE names policies the catalog has no page for: {missing}; they would be "
+            f"absent from the scan's vocabulary and stop hiding what they nest"
+        )
+
     derived = {}
     for name in sorted(vendored_pages):
         found = page_sections(SOURCE / f"{name}-policy.md")
@@ -327,6 +346,10 @@ def derive():
             "source": "Azure/api-management-policy-snippets",
             "commit": SNIPPETS_COMMIT,
             "widens": widened,
+        },
+        "nesting": {
+            "transparent": list(TRANSPARENT),
+            "opaque": list(OPAQUE),
         },
         "policies": derived,
     }
