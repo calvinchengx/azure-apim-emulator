@@ -7,6 +7,11 @@ on:
       - 'docs/**'
       - 'site/**'
       - 'website/**'
+      # The two checkers this workflow now runs. Triggering on the docs they
+      # read and not on the scripts that read them would leave an edit to a
+      # checker with nothing running it.
+      - 'scripts/check_witnesses.py'
+      - 'scripts/check_docs_links.py'
       - 'pnpm-lock.yaml'
       - 'pnpm-workspace.yaml'
       - 'package.json'
@@ -19,6 +24,11 @@ on:
       - 'docs/**'
       - 'site/**'
       - 'website/**'
+      # The two checkers this workflow now runs. Triggering on the docs they
+      # read and not on the scripts that read them would leave an edit to a
+      # checker with nothing running it.
+      - 'scripts/check_witnesses.py'
+      - 'scripts/check_docs_links.py'
       - 'pnpm-lock.yaml'
       - 'pnpm-workspace.yaml'
       - 'package.json'
@@ -61,6 +71,24 @@ jobs:
           node-version: '22'
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # THE TWO CHECKS THAT READ DOCS, RUN IN BOTH WORKFLOWS ON PURPOSE.
+      #
+      # ci.yml owns them and ci.yml no longer triggers on a prose change: its
+      # `paths` excludes `!docs/**` and `!**/*.md` and re-includes only
+      # `docs/generated/**`. So as of that filter, editing `docs/parity.md`
+      # skipped `check_witnesses.py --strict` -- the check whose whole job is to
+      # refuse a green claim with no witness behind it -- and editing any page
+      # skipped `check_docs_links.py --strict`. The edit that could break a
+      # parity claim was exactly the edit that skipped the check on it.
+      #
+      # Re-including the two files in ci.yml would fix the witness half and not
+      # the links half, which reads EVERY page: expressing "any docs edit" as a
+      # re-include means re-including all docs, and the filter is then pointless.
+      # So the two trigger sets are complementary instead: a prose change runs
+      # them here, a code change runs them in ci.yml, and neither kind of change
+      # reaches main without the check that reads it having run.
+      - run: ./scripts/check_witnesses.py --strict
+      - run: ./scripts/check_docs_links.py --strict
       - run: pnpm --filter azure-apim-emulator-docs build
       # The published site is the landing page at the root with the rendered
       # docs beneath it, so `/` is the project's front door and every chapter
