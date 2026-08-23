@@ -8,7 +8,31 @@ name: CI
 on:
   push:
     branches: [main]
+    paths:
+      # Prose changes do not need the test suite. This is `paths` with
+      # negations rather than `paths-ignore`, because paths-ignore cannot
+      # re-include anything and docs/generated must be re-included: those
+      # files are gates, not docs, and a hand-edited ledger status must still
+      # be checked against the code it describes.
+      #
+      # Patterns apply in order and the LAST match wins, so the re-include of
+      # docs/generated sits after every exclusion, or its .md files would be
+      # excluded again by the '**/*.md' below it. '*.md' is separate because
+      # '**/*.md' needs a directory and does not match the root README.
+      - '**'
+      - '!docs/**'
+      - '!website/**'
+      - '!*.md'
+      - '!**/*.md'
+      - 'docs/generated/**'
   pull_request:
+    paths:
+      - '**'
+      - '!docs/**'
+      - '!website/**'
+      - '!*.md'
+      - '!**/*.md'
+      - 'docs/generated/**'
 
 # Cancel superseded PR runs, never superseded main runs. A main commit needs its
 # own completed run because that is the record of what main was; a PR branch
