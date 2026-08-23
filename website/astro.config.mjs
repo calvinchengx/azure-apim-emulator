@@ -21,6 +21,9 @@ export default defineConfig({
         // Hosts the parity version picker beside the header search.
         Search: './src/components/Search.astro',
         // Top nav: the parity version picker, rendered beside the search box.
+        // A back-link to the landing page beside the site title. The component
+        // explains why it cannot live in the header icon row or the sidebar.
+        SiteTitle: './src/components/SiteTitle.astro',
       },
       description:
         'A local emulator of the Azure API Management data plane — secrets, keys, and certificates — with real challenge-based authentication against entra-emulator.',
