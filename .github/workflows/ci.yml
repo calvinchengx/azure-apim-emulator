@@ -8,31 +8,7 @@ name: CI
 on:
   push:
     branches: [main]
-    paths:
-      # Prose changes do not need the test suite. This is `paths` with
-      # negations rather than `paths-ignore`, because paths-ignore cannot
-      # re-include anything and docs/generated must be re-included: those
-      # files are gates, not docs, and a hand-edited ledger status must still
-      # be checked against the code it describes.
-      #
-      # Patterns apply in order and the LAST match wins, so the re-include of
-      # docs/generated sits after every exclusion, or its .md files would be
-      # excluded again by the '**/*.md' below it. '*.md' is separate because
-      # '**/*.md' needs a directory and does not match the root README.
-      - '**'
-      - '!docs/**'
-      - '!website/**'
-      - '!*.md'
-      - '!**/*.md'
-      - 'docs/generated/**'
   pull_request:
-    paths:
-      - '**'
-      - '!docs/**'
-      - '!website/**'
-      - '!*.md'
-      - '!**/*.md'
-      - 'docs/generated/**'
 
 # Cancel superseded PR runs, never superseded main runs. A main commit needs its
 # own completed run because that is the record of what main was; a PR branch
@@ -46,7 +22,51 @@ permissions:
   contents: read
 
 jobs:
+  # THE DOCS LANE. Every job below is gated on `docs_only != 'true'`, except the
+  # two that READ the docs. A prose-only change runs those two and nothing else.
+  #
+  # This replaces the `paths:` filters #129 added. A path filter stops the
+  # workflow starting at all, which meant the jobs that check the docs stopped
+  # running on the very changes they exist to check: check_witnesses.py reads
+  # docs/parity.md, check_docs_links.py reads every page. The lane removes the
+  # jobs that cannot see the change, not the ones that check it.
+  #
+  # Ported from fabric-emulator, which worked this out first.
+  changes:
+    name: Is this change documentation only?
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      docs_only: ${{ steps.classify.outputs.docs_only }}
+    steps:
+      # Full history: the classifier diffs against the base commit, which a
+      # depth-1 checkout cannot see.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      # The self-test runs BESIDE the real classification, every time. A path
+      # classifier that stopped matching would answer `false` forever: safe,
+      # plausible, and silently useless. The case list is the only thing that
+      # would notice.
+      - run: python3 scripts/docs_only_change.py --self-test
+      - id: classify
+        env:
+          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          # A force push and a branch's first commit both give the null sha.
+          # Neither is a docs change; both run everything.
+          if ! git rev-parse -q --verify "$BASE^{commit}" >/dev/null; then
+            echo "docs_only=false" >> "$GITHUB_OUTPUT"
+            echo "base '$BASE' is not a commit here; running everything"
+            exit 0
+          fi
+          git diff --name-status "$BASE...$HEAD_SHA" | python3 scripts/docs_only_change.py
+
   go:
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -83,6 +103,8 @@ jobs:
       - run: ./scripts/check_operation_inventory.py --strict
 
   operation-inventory:
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
     name: Published operation surface (every 2024-05-01 operation probed)
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -104,6 +126,8 @@ jobs:
       - run: ./scripts/check_operation_inventory.py --strict
 
   sdk-witnesses:
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -128,6 +152,8 @@ jobs:
       - run: make test-sdks
 
   arm-documents-witness:
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
     name: ARM documents witness (packaged @azure/arm-apimanagement, every family)
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -150,6 +176,8 @@ jobs:
       - run: make test-arm-documents
 
   graphql-witness:
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
     name: GraphQL witness (reference graphql implementation, both ends)
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -170,6 +198,8 @@ jobs:
       - run: make test-graphql
 
   grpc-witness:
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
     name: gRPC witness (grpc-js server and client, real HTTP/2)
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -190,6 +220,8 @@ jobs:
       - run: make test-grpc
 
   soap-witness:
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
     name: SOAP witness (node soap library, server and client)
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -210,6 +242,8 @@ jobs:
       - run: make test-soap
 
   credential-witness:
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
     name: Credential manager witness (real OAuth2 authorization server)
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -230,6 +264,8 @@ jobs:
       - run: make test-credential
 
   openid-witness:
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
     name: openid-config witness (real OpenID Connect provider)
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -250,6 +286,8 @@ jobs:
       - run: make test-openid
 
   openai-witness:
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
     name: LLM token governance witness (OpenAI's own client)
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -270,6 +308,8 @@ jobs:
       - run: make test-openai
 
   mcp-witness:
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
     name: MCP witness (the reference @modelcontextprotocol client)
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -290,6 +330,8 @@ jobs:
       - run: make test-mcp
 
   distribution:
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -324,6 +366,8 @@ jobs:
       - run: pnpm --filter azure-apim-emulator-docs build
 
   lint:
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
     name: golangci-lint
     runs-on: ubuntu-latest
     # A wedged run must fail rather than sit in GitHub's 6-hour default, where
