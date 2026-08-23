@@ -11,7 +11,7 @@ endif
 
 COMPOSE = docker compose -f compose.yaml
 
-.PHONY: build docs test test-coverage test-differential test-sdks setup-sdks \
+.PHONY: build docs-build docs-serve test test-coverage test-differential test-sdks setup-sdks \
         test-operation-inventory setup-graphql test-graphql setup-grpc test-grpc setup-soap test-soap setup-credential test-credential setup-openai test-openai setup-mcp test-mcp setup-openid test-openid verify \
         check-inventory up down clean status doctor ps logs
 
@@ -96,8 +96,56 @@ setup-mcp:
 test-mcp:
 	APIM_RUN_EXTERNAL_SDK_TESTS=1 go test -count=1 -v -run 'TestOfficialManagementSDKs/mcp' ./e2e/sdk
 
-docs:
-	pnpm --filter azure-apim-emulator-docs build
+# ---------------------------------------------------------------------------
+# The documentation site.
+#
+# This target used to be `docs`, and it ran the Starlight build alone. That
+# leaves website/dist, which is NOT the published site: the published site is
+# the landing page at the root with the docs beneath it, plus the redirect
+# stubs and llms.txt. Anyone who ran `make docs` and looked at the result was
+# looking at something GitHub Pages never serves.
+#
+# Renamed as well as widened, because there is a docs/ DIRECTORY here: a target
+# sharing its name is satisfied by the directory existing, so `make docs`
+# without .PHONY prints "nothing to be done" and exits 0. A name that cannot
+# collide fixes that whether or not anyone remembers .PHONY.
+#
+# `pnpm --filter $(DOCS_PKG) dev` is the fast inner loop for PROSE, and it is
+# not this. It is based at the docs subpath and knows nothing about the tree
+# around it, so under it the landing page does not exist, the redirect stubs do
+# not exist, and the manifests the landing page fetches do not exist. Use it to
+# write a page; use `make docs-serve` before believing the site works.
+#
+# CI runs `make docs-build` and publishes exactly what it leaves in ./_site, so
+# the thing previewed here is the thing that deploys.
+DOCS_PKG  ?= azure-apim-emulator-docs
+DOCS_PORT ?= 8099
+# The interpreter CI uses, pinned. These scripts are stdlib-only, hence
+# --no-project: no environment to resolve, and a local 3.9 cannot pass
+# something 3.12 would reject.
+UVPY ?= uv run --no-project --python 3.12 python
+
+docs-build:
+	@command -v uv >/dev/null 2>&1 || { echo "uv is not on PATH: https://docs.astral.sh/uv/" >&2; exit 1; }
+	pnpm install --frozen-lockfile
+	@# Both of these READ the docs, so a prose-only change must run them. See
+	@# the long note in .github/workflows/docs-site.yml for why they live in
+	@# two workflows rather than one.
+	$(UVPY) scripts/check_witnesses.py --strict
+	$(UVPY) scripts/check_docs_links.py --strict
+	pnpm --filter $(DOCS_PKG) build
+	$(UVPY) scripts/assemble_site.py --self-test
+	$(UVPY) scripts/assemble_site.py --out _site
+	@# llms.txt at the SITE root, which is where the convention says to look.
+	@# sync-docs writes it into website/public/, which Astro copies to the root
+	@# of the BUILT site, and this site's base is /azure-apim-emulator/docs/, so
+	@# that lands one level too deep. Copied up rather than moved:
+	@# /docs/llms.txt describes the docs and is correct where it is.
+	cp website/dist/llms.txt _site/llms.txt
+	$(UVPY) scripts/build_landing_data.py --out _site --landing site/index.html
+
+docs-serve: docs-build
+	$(UVPY) scripts/assemble_site.py --serve --site _site --port $(DOCS_PORT)
 
 test-operation-inventory:
 	APIM_RUN_OPERATION_INVENTORY=1 go test -count=1 -timeout 20m ./e2e/inventory/...
