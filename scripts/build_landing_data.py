@@ -26,16 +26,14 @@ GENERATED = ROOT / "docs" / "generated"
 WITNESSES = ROOT / "docs" / "witnesses.json"
 LEDGER = ROOT / "docs" / "parity.md"
 
-# Each is (id the page fills, the file it reads). A page that stops reading one
-# of these shows a dash forever, which is worse than a wrong number because
-# nothing looks broken.
-BINDINGS = {
-    "witness-count": "witnesses-manifest.json",
-    "policy-implemented": "policy-inventory.json",
-    "expr-bound": "expression-members.json",
-    "corpus-parsed": "policy-corpus.json",
-    "verified-count": "parity-summary.json",
-}
+# What the page asks for is READ OUT OF THE PAGE, not listed here. A
+# maintained list only checks the slots someone remembered to add to it, so a
+# new placeholder would publish as an em dash with nothing complaining. Both
+# directions are derived: every file the page fetches must be emitted, and
+# every placeholder must be filled by the script.
+PLACEHOLDER = re.compile(r'id="([\w-]+)"[^>]*>&mdash;<')
+FETCHED = re.compile(r"fetch\('([\w.-]+\.json)'\)")
+FILLED = re.compile(r"text\('([\w-]+)'")
 
 # A literal where a placeholder belongs. Matched against the stat tiles only,
 # which is where a total is stated as a headline.
@@ -80,13 +78,15 @@ def main() -> int:
         )
         return 1
 
-    for element, source in BINDINGS.items():
-        if f'id="{element}"' not in text:
-            print(f"FAIL: {page} no longer has #{element}, so a headline number would never fill.")
-            return 1
-        if source not in text:
-            print(f"FAIL: {page} no longer reads {source}, so #{element} would show a dash forever.")
-            return 1
+    placeholders = set(PLACEHOLDER.findall(text))
+    filled = set(FILLED.findall(text))
+    unfilled = sorted(placeholders - filled)
+    if unfilled:
+        print(
+            f"FAIL: {page} has placeholder(s) {unfilled} that nothing fills. "
+            f"They would publish as em dashes, and nothing would look broken."
+        )
+        return 1
 
     out = pathlib.Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
@@ -99,6 +99,13 @@ def main() -> int:
         (out / name).write_text(source.read_text())
     summary = parity_summary()
     (out / "parity-summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n")
+
+    # Everything the page fetches must now exist beside it. A fetch of a file
+    # nothing emits fails silently in the browser and leaves the tile blank.
+    for name in sorted(set(FETCHED.findall(text))):
+        if not (out / name).exists():
+            print(f"FAIL: {page} fetches {name}, which nothing emits into {out}.")
+            return 1
 
     print(
         "landing data: "
