@@ -39,6 +39,14 @@ jobs:
           HEAD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
         run: |
           set -euo pipefail
+          # THE LANE IS FOR PULL REQUESTS. Every commit on main gets the full
+          # matrix, whatever it touched; the reasoning is at the same step in
+          # ci.yml.
+          if [ "${GITHUB_EVENT_NAME}" != "pull_request" ]; then
+            echo "docs_only=false" >> "$GITHUB_OUTPUT"
+            echo "event is ${GITHUB_EVENT_NAME}, not a pull request: every commit on main gets the full matrix"
+            exit 0
+          fi
           if ! git rev-parse -q --verify "$BASE^{commit}" >/dev/null; then
             echo "docs_only=false" >> "$GITHUB_OUTPUT"
             echo "base '$BASE' is not a commit here; running everything"
