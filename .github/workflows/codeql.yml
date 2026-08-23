@@ -25,6 +25,15 @@ on:
 # results, and that errored analysis becomes the newest one for its category —
 # which is what the code-scanning tool status page then reports. So main runs to
 # completion; only PR pushes cancel.
+# THE DEFAULT TOKEN IS NOT READ-ONLY, so say what this workflow may do.
+# CodeQL's `actions/missing-workflow-permissions` flags a job that sets none:
+# it inherits whatever the repository default is, which is a write token in
+# many configurations and is never what a build needs. Declared here rather
+# than per job, so a job added later cannot forget it; a job that genuinely
+# needs more escalates in its own `permissions:` block, which overrides this.
+permissions:
+  contents: read
+
 concurrency:
   group: codeql-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
