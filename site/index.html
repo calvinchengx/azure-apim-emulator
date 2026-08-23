@@ -1,0 +1,285 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Azure APIM Emulator — prove a policy before it reaches a tenant</title>
+<meta name="description" content="A clean-room Go implementation of Azure API Management you can run on a laptop. Every capability on this page names the check that proves it, and the page says where nothing has yet been compared against Azure itself.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⛩</text></svg>">
+<style>
+:root{
+  --bg:#fbfbfa; --panel:#fff; --ink:#16181d; --muted:#5c6270; --line:#e3e5e9;
+  --accent:#2a5db0; --accent-soft:#e8eef9;
+  --ship:#1f6f3f; --ship-bg:#e6f3ea;
+  --wip:#8a5a00; --wip-bg:#fdf3e0;
+  --plan:#5c6270; --plan-bg:#eef0f3;
+  --none:#a33a3a; --none-bg:#fbe9e9;
+  --code:#f4f5f7;
+  --radius:14px;
+  --font:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme:dark){
+  :root{
+    --bg:#0f1115; --panel:#151920; --ink:#e8eaee; --muted:#98a0ae; --line:#262b34;
+    --accent:#7aa7ee; --accent-soft:#15223a;
+    --ship:#5fcf8a; --ship-bg:#112a1a;
+    --wip:#e0a94a; --wip-bg:#2a2114;
+    --plan:#98a0ae; --plan-bg:#1c212a;
+    --none:#e77f7f; --none-bg:#2e1616;
+    --code:#11151b;
+  }
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--font);line-height:1.65;-webkit-font-smoothing:antialiased}
+.wrap{max-width:1000px;margin:0 auto;padding:0 24px}
+a{color:var(--accent)}
+code{font-family:var(--mono);font-size:.9em;background:var(--code);padding:.15em .4em;border-radius:5px;overflow-wrap:anywhere}
+pre{background:var(--code);border:1px solid var(--line);border-radius:var(--radius);padding:18px 20px;overflow-x:auto;font-family:var(--mono);font-size:.88rem;line-height:1.55}
+pre code{background:none;padding:0}
+h1,h2,h3{line-height:1.25;letter-spacing:-.02em}
+h2{font-size:1.7rem;margin:0 0 8px}
+.sec{padding:60px 0;border-top:1px solid var(--line)}
+.sec>.wrap>p.lede{color:var(--muted);font-size:1.05rem;max-width:70ch;margin:0 0 32px}
+
+/* nav */
+nav{border-bottom:1px solid var(--line);background:var(--bg)}
+nav .wrap{display:flex;align-items:center;justify-content:space-between;height:56px}
+nav .brand{font-family:var(--mono);font-size:.8rem;letter-spacing:.12em;text-transform:uppercase;color:var(--ink);text-decoration:none;font-weight:600}
+nav ul{list-style:none;display:flex;gap:22px;margin:0;padding:0}
+nav li a{color:var(--muted);text-decoration:none;font-size:.9rem}
+nav li a.docs{color:var(--accent);font-weight:600}
+
+/* hero */
+.hero{padding:76px 0 64px}
+.eyebrow{font-family:var(--mono);font-size:.78rem;letter-spacing:.12em;text-transform:uppercase;color:var(--accent);margin:0 0 18px}
+.hero h1{font-size:clamp(2.1rem,5.2vw,3.4rem);margin:0 0 20px;max-width:19ch}
+.hero p{font-size:1.15rem;color:var(--muted);max-width:64ch;margin:0 0 14px}
+.hero .claim{color:var(--ink);font-weight:600;border-left:3px solid var(--accent);padding-left:16px;margin-top:28px;max-width:60ch}
+.cta{display:flex;gap:12px;flex-wrap:wrap;margin-top:32px}
+.btn{display:inline-block;padding:11px 20px;border-radius:10px;text-decoration:none;font-weight:600;font-size:.94rem;border:1px solid var(--line)}
+.btn.primary{background:var(--accent);color:var(--bg);border-color:var(--accent)}
+.btn.ghost{color:var(--ink)}
+.release-pill{display:inline-flex;align-items:center;gap:9px;margin:0 0 20px;padding:6px 14px;border:1px solid var(--line);border-radius:999px;background:var(--panel);text-decoration:none;color:var(--muted);font-size:.86rem}
+.release-pill b{color:var(--ship);font-family:var(--mono);font-size:.8rem}
+
+/* stats */
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:1px;background:var(--line);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;margin-top:40px}
+.stat{background:var(--panel);padding:20px 18px}
+.stat b{display:block;font-size:1.9rem;letter-spacing:-.03em;line-height:1}
+.stat b small{font-size:.9rem;color:var(--muted);margin-left:2px}
+.stat>span{display:block;color:var(--muted);font-size:.84rem;margin-top:6px}
+
+/* cards */
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:16px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:22px 22px 18px}
+.card h3{font-size:1.05rem;margin:0 0 10px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.card p{margin:0 0 12px;color:var(--muted);font-size:.95rem}
+.card .ev{font-family:var(--mono);font-size:.78rem;color:var(--muted);border-top:1px solid var(--line);padding-top:10px;margin-top:auto}
+.tag{font-family:var(--mono);font-size:.68rem;letter-spacing:.08em;text-transform:uppercase;padding:3px 8px;border-radius:999px;font-weight:600}
+.t-ship{color:var(--ship);background:var(--ship-bg)}
+.t-wip{color:var(--wip);background:var(--wip-bg)}
+.t-plan{color:var(--plan);background:var(--plan-bg)}
+.t-none{color:var(--none);background:var(--none-bg)}
+
+/* problem */
+.three{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px}
+.three .card strong{display:block;color:var(--ink);margin-bottom:6px}
+.three .card .fix{color:var(--accent);font-size:.9rem;font-weight:600}
+
+/* honest */
+.honest{background:var(--panel);border:1px solid var(--line);border-left:4px solid var(--wip);border-radius:var(--radius);padding:22px 24px}
+.honest h3{margin:0 0 8px;font-size:1.05rem}
+.honest p{margin:0 0 10px;color:var(--muted)}
+.tiers{display:grid;grid-template-columns:auto 1fr;gap:6px 16px;font-size:.92rem;margin:14px 0 0}
+.tiers code{white-space:nowrap;justify-self:start}
+
+footer{padding:40px 0;color:var(--muted);font-size:.86rem;border-top:1px solid var(--line)}
+</style>
+</head>
+<body>
+
+<nav><div class="wrap">
+  <a class="brand" href="#">Azure APIM Emulator</a>
+  <ul>
+    <li><a href="#get">Get it</a></li>
+    <li><a href="#run">Run it locally</a></li>
+    <li><a href="#honest">Status</a></li>
+    <li><a href="https://github.com/calvinchengx/azure-apim-emulator">GitHub</a></li>
+    <li><a class="docs" href="docs/">Documentation &rarr;</a></li>
+  </ul>
+</div></nav>
+
+<section class="hero"><div class="wrap">
+  <p class="eyebrow">Azure APIM Emulator</p>
+  <a class="release-pill" href="https://github.com/calvinchengx/azure-apim-emulator/releases/latest"><b id="release-tag">&mdash;</b> <span id="release-note">latest release &rarr;</span></a>
+  <h1>Prove an API Management policy before it reaches a tenant.</h1>
+  <p>A clean-room Go implementation of the Azure API Management contract: the ARM management plane, the gateway, and the policy engine with its C# expression language. It runs on a laptop, starts in under a second, and accepts the same SDKs, the same policy XML and the same <code>Ocp-Apim-Subscription-Key</code> a real instance does.</p>
+  <p>Switching to real Azure is configuration, not a code path.</p>
+  <p class="claim">Every capability below names the check that proves it. Where the evidence is a document rather than a tenant, this page says so.</p>
+  <div class="cta">
+    <a class="btn primary" href="docs/">Read the docs</a>
+    <a class="btn ghost" href="https://github.com/calvinchengx/azure-apim-emulator">Source on GitHub</a>
+    <a class="btn ghost" href="#run">Run it locally</a>
+    <a class="btn ghost" href="#honest">Honest status</a>
+  </div>
+  <div class="stats">
+    <div class="stat"><b id="witness-count">&mdash;</b><span>witnesses, every green claim names one</span></div>
+    <div class="stat"><b><span id="policy-implemented">&mdash;</span><small>/<span id="policy-total">&mdash;</span></small></b><span>policies implemented, derived from Microsoft's pages</span></div>
+    <div class="stat"><b><span id="expr-bound">&mdash;</span><small>/<span id="expr-total">&mdash;</span></small></b><span>C# expression members bound</span></div>
+    <div class="stat"><b><span id="corpus-parsed">&mdash;</span><small>/<span id="corpus-total">&mdash;</span></small></b><span>of Microsoft's policy snippets parse</span></div>
+    <div class="stat"><b id="verified-count">&mdash;</b><span>rows verified against a real tenant</span></div>
+  </div>
+</div></section>
+
+<section class="sec"><div class="wrap">
+  <h2>The problem this solves</h2>
+  <p class="lede">API Management policy is code that runs only in Azure. That makes it the part of a platform you can test least and break most expensively.</p>
+  <div class="three">
+    <div class="card"><strong>You cannot run it locally</strong>
+      <p>A <code>rate-limit</code> or <code>validate-jwt</code> policy has no local runtime. The feedback loop is deploy, wait, call, read the trace, repeat, against a billed instance shared with colleagues.</p>
+      <p class="fix">The gateway, the policy engine and the expression language, on your machine</p></div>
+    <div class="card"><strong>The policy language is C#, and nothing checks it</strong>
+      <p>Expressions like <code>@(context.Request.Headers.GetValueOrDefault("x"))</code> are validated by a tenant at save time and by nothing before that. A typo is a 500 in production.</p>
+      <p class="fix">A compiler for the documented subset, derived from Microsoft's own reference</p></div>
+    <div class="card"><strong>"Works on the emulator" proves nothing on its own</strong>
+      <p>An emulator that agrees with itself is a mirror. The only evidence worth having comes from something you did not write: Microsoft's SDKs, a certified OpenID provider, gRPC and SOAP clients.</p>
+      <p class="fix">Third-party clients drive every protocol in CI, and the ledger says which</p></div>
+  </div>
+</div></section>
+
+<section class="sec"><div class="wrap">
+  <h2>What it does</h2>
+  <p class="lede">Each capability carries its evidence tier and an honest status. The tiers are ranked: a packaged third-party client over a network outranks Microsoft's own SDK in-process, which outranks our own tests.</p>
+  <div class="grid">
+    <div class="card"><h3>ARM management plane <span class="tag t-ship">sdk-verified</span></h3>
+      <p>Services, APIs, operations, products, subscriptions, named values, backends, certificates, loggers, diagnostics and more, over the <code>2024-05-01</code> stable contract. Conditional requests, collection queries, the error envelope, and Entra-authenticated calls.</p>
+      <div class="ev">Microsoft's Go, JavaScript, Python and .NET SDKs drive it in CI</div></div>
+    <div class="card"><h3>Gateway and protocols <span class="tag t-ship">witnessed</span></h3>
+      <p>HTTP routing, WebSockets and SSE, GraphQL with synthetic resolvers, gRPC over real HTTP/2, SOAP from WSDL, and an MCP server. Subscription keys, products and operation matching behave as the tenant's do.</p>
+      <div class="ev">grpc-js, node soap, a reference GraphQL and the official MCP client, each over a network</div></div>
+    <div class="card"><h3>Policy engine <span class="tag t-ship" id="policy-tag">&mdash;</span></h3>
+      <p>XML policies compiled and run in every section, with inheritance across service, product, API and operation scope. Rate limits and quotas count per subscription in the windows Microsoft documents. The attribute surface of each policy is derived from the vendored reference page, not transcribed, so an attribute Azure rejects is rejected here.</p>
+      <div class="ev">the inventory is regenerated from Microsoft's pages and gated in CI</div></div>
+    <div class="card"><h3>C# expression language <span class="tag t-ship" id="expr-tag">&mdash;</span></h3>
+      <p>A hand-written parser and evaluator for the documented subset: the <code>context</code> object, lambdas, interpolated strings, <code>new</code>, casts, null-conditionals, named arguments, and the .NET members Microsoft allows. The member list is derived from two Microsoft sources at pinned commits; any disagreement between them stays visible.</p>
+      <div class="ev"><span id="corpus-ev">&mdash;</span> of Microsoft's own policy snippets parse, enforced as a ratchet</div></div>
+    <div class="card"><h3>JWT validation <span class="tag t-ship">witnessed</span></h3>
+      <p><code>validate-jwt</code> fetches signing keys and issuer from an OpenID discovery endpoint with the cache Microsoft documents, requires <code>exp</code> by default, and honours <code>clock-skew</code>, <code>require-scheme</code> and the output variable.</p>
+      <div class="ev">an OpenID Certified provider mints the tokens; it found an expired-token hole on its first run</div></div>
+    <div class="card"><h3>AI gateway <span class="tag t-ship">witnessed</span></h3>
+      <p>Token rate limits per minute and token quotas over fixed periods, token metrics with dimensions, and semantic caching's absence stated plainly. Streamed answers are counted byte-for-byte.</p>
+      <div class="ev">OpenAI's own client drives the surface in CI</div></div>
+    <div class="card"><h3>Workspaces, RBAC, gateways <span class="tag t-wip">partial</span></h3>
+      <p>Workspace scoping across every resource family, Azure RBAC with deny-by-default, and self-hosted and workspace gateways that serve only their associated APIs. Networking, private endpoints and custom domains are modelled; tiers and SKUs enforce on opt-in.</p>
+      <div class="ev">witnessed where green; the ledger names what remains</div></div>
+    <div class="card"><h3>Developer portal <span class="tag t-plan">planned</span></h3>
+      <p>Not started, and deprioritised on purpose: the management and gateway surfaces are what a platform team tests against. The ledger carries it as a row so the gap is visible rather than forgotten.</p>
+      <div class="ev">parity.md, row P3</div></div>
+    <div class="card"><h3>Compared against a real tenant <span class="tag t-none" id="verified-tag">&mdash;</span></h3>
+      <p>The differential harness is built and has never run: it needs a real APIM instance and a bearer token. Until it does, every green row on this page rests on Microsoft's documents and third-party clients, which is the strongest evidence available and still not Azure.</p>
+      <div class="ev">e2e/differential skips without APIM_AZURE_SERVICE_URL</div></div>
+  </div>
+</div></section>
+
+<section class="sec" id="honest"><div class="wrap">
+  <h2>Honest status</h2>
+  <p class="lede">The numbers above are not typed into this page. The build fails if they are.</p>
+  <div class="honest">
+    <h3>Where the evidence comes from</h3>
+    <p>Every capability the parity ledger grades green must name a witness in <code>docs/witnesses.json</code>, and CI fails if a named witness stops existing. A renamed test that leaves a green row behind is a lie the reader cannot see, so the manifest is what makes the claim checkable.</p>
+    <div class="tiers">
+      <code>ci:</code><span>a CI job driving a packaged external client over a network. The strongest tier.</span>
+      <code>sdk:</code><span>Microsoft's own client does the talking, in-process.</span>
+      <code>go:</code><span>our own client on both ends. Proves the emulator agrees with itself.</span>
+      <code>verified</code><span>compared against a running Azure instance. <b id="verified-sentence">&mdash;</b></span>
+    </div>
+    <p style="margin-top:16px">Three ledgers are derived rather than written. The policy inventory and the expression member list are regenerated from Microsoft's vendored pages at pinned commits, and a hand-edit that disagrees with the derivation fails CI. The policy corpus is a ratchet: an expression that parsed yesterday must parse today.</p>
+  </div>
+</div></section>
+
+<section class="sec" id="get"><div class="wrap">
+  <h2>Get it</h2>
+  <p class="lede">One binary, or one container. No database to provision.</p>
+<pre><code>docker pull ghcr.io/calvinchengx/azure-apim-emulator:<span id="release-docker">latest</span></code></pre>
+  <p>Or the Go module, the Homebrew tap, or a release archive: see <a href="docs/02-installation/">installation</a>.</p>
+</div></section>
+
+<section class="sec" id="run"><div class="wrap">
+  <h2>Run the whole thing</h2>
+  <p class="lede">With the Entra emulator beside it, the management plane authenticates the way Azure does.</p>
+<pre><code>git clone https://github.com/calvinchengx/azure-apim-emulator
+cd azure-apim-emulator
+make up        # entra-emulator pinned, apim built from source
+make status    # the pair is healthy</code></pre>
+  <p>Then follow the <a href="docs/01-quickstart/">quickstart</a>: publish an API, attach a policy, call it through the gateway with a subscription key, and read the trace.</p>
+</div></section>
+
+<footer><div class="wrap">
+  Clean-room: built from Microsoft's public documentation, SDKs and REST contracts, never from decompiled binaries. Nothing here is Microsoft's code. The <a href="docs/parity/">parity ledger</a> is the only place a capability is graded.
+</div></footer>
+
+<script>
+(function () {
+  function text(id, value) { var el = document.getElementById(id); if (el) { el.textContent = value; } }
+  function sum(obj) { return Object.keys(obj).reduce(function (n, k) { return n + obj[k]; }, 0); }
+
+  // The witness manifest, beside the page at build time. Counting the unique
+  // witness references rather than the claims: a claim is a row, a witness is
+  // a thing that runs.
+  fetch('witnesses-manifest.json').then(function (r) { return r.ok ? r.json() : null; }).then(function (d) {
+    if (!d || !d.claims) { return; }
+    var seen = {};
+    Object.keys(d.claims).forEach(function (row) { d.claims[row].forEach(function (w) { seen[w] = true; }); });
+    text('witness-count', Object.keys(seen).length);
+  });
+
+  fetch('policy-inventory.json').then(function (r) { return r.ok ? r.json() : null; }).then(function (d) {
+    if (!d || !d.policies) { return; }
+    var counts = {};
+    d.policies.forEach(function (p) { counts[p.status] = (counts[p.status] || 0) + 1; });
+    text('policy-implemented', counts.implemented || 0);
+    text('policy-total', d.policies.length);
+    text('policy-tag', (counts.implemented || 0) + ' of ' + d.policies.length + ' implemented');
+  });
+
+  fetch('expression-members.json').then(function (r) { return r.ok ? r.json() : null; }).then(function (d) {
+    var members = d && (d.members || d);
+    if (!members || !members.length) { return; }
+    var bound = members.filter(function (m) { return m.status === 'bound'; }).length;
+    // The denominator is what Microsoft DOCUMENTS as context members, which
+    // excludes the .NET framework types it merely allows.
+    var documented = members.filter(function (m) { return m.status !== 'framework'; }).length;
+    text('expr-bound', bound);
+    text('expr-total', documented);
+    text('expr-tag', bound + ' of ' + documented + ' members');
+  });
+
+  fetch('policy-corpus.json').then(function (r) { return r.ok ? r.json() : null; }).then(function (d) {
+    if (!d || typeof d.parsed !== 'number') { return; }
+    text('corpus-parsed', d.parsed);
+    text('corpus-total', d.total);
+    text('corpus-ev', d.parsed + ' of ' + d.total);
+  });
+
+  // parity.md is the ledger, and the one number this page must never get
+  // wrong is how many rows have been compared against Azure. It is read from
+  // the ledger so that the day a differential run happens, the page changes
+  // without anyone remembering to edit it.
+  fetch('parity-summary.json').then(function (r) { return r.ok ? r.json() : null; }).then(function (d) {
+    if (!d) { return; }
+    var verified = d.verified || 0;
+    text('verified-count', verified);
+    text('verified-tag', verified ? verified + ' verified' : 'never run');
+    text('verified-sentence', verified ? verified + ' rows carry it.' : 'No row carries it yet.');
+  });
+
+  fetch('https://api.github.com/repos/calvinchengx/azure-apim-emulator/releases/latest').then(function (r) { return r.ok ? r.json() : null; }).then(function (d) {
+    if (!d || !d.tag_name) { return; }
+    text('release-tag', d.tag_name);
+    text('release-docker', d.tag_name.replace(/^v/, ''));
+  });
+}());
+</script>
+</body>
+</html>

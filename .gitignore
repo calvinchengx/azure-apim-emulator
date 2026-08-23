@@ -34,3 +34,4 @@ portal/playwright-report/
 
 # Bytecode from the scripts/ test suite, which imports the derivations as modules.
 __pycache__/
+_site/
