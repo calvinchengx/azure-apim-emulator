@@ -18,7 +18,7 @@ import { collectParity, writeParityHistory, parityManifest } from './parity-vers
 const here = dirname(fileURLToPath(import.meta.url));
 const DOCS_SRC = join(here, '..', '..', 'docs');
 const OUT = join(here, '..', 'src', 'content', 'docs');
-export const BASE = '/azure-apim-emulator/';
+export const BASE = '/azure-apim-emulator/docs/';
 const REPO_ROOT = join(here, '..', '..');
 const PARITY = collectParity(REPO_ROOT);
 const IS_RELEASE = /^v\d+\.\d+\.\d+$/.test(PARITY.version);

@@ -5,7 +5,9 @@ import { remarkMermaid } from './plugins/remark-mermaid.mjs';
 // Project GitHub Pages site: https://calvinchengx.github.io/azure-apim-emulator/
 export default defineConfig({
   site: 'https://calvinchengx.github.io',
-  base: '/azure-apim-emulator/',
+  // Docs live under /docs/ so the landing page at site/index.html can own the
+  // root, the same layout as data-agent-service.
+  base: '/azure-apim-emulator/docs/',
   // remarkMermaid turns ```mermaid fences into <pre class="mermaid"> before
   // Expressive Code sees them; src/components/Head.astro renders them client-side.
   markdown: {

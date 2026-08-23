@@ -104,7 +104,7 @@ function diffParity(prev, cur) {
 }
 
 const versionSlug = (v) => v.replace(/[.+]/g, '-');
-const BASE = '/azure-apim-emulator/';
+const BASE = '/azure-apim-emulator/docs/';
 
 export function collectParity(repo) {
   const version = gitVersion(repo);

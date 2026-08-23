@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - 'docs/**'
+      - 'site/**'
       - 'website/**'
       - 'pnpm-lock.yaml'
       - 'pnpm-workspace.yaml'
@@ -16,6 +17,7 @@ on:
   pull_request:
     paths:
       - 'docs/**'
+      - 'site/**'
       - 'website/**'
       - 'pnpm-lock.yaml'
       - 'pnpm-workspace.yaml'
@@ -60,10 +62,23 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter azure-apim-emulator-docs build
+      # The published site is the landing page at the root with the rendered
+      # docs beneath it, so `/` is the project's front door and every chapter
+      # lives under /docs/.
+      - name: Assemble the site
+        run: |
+          mkdir -p _site
+          cp site/index.html _site/index.html
+          cp -R website/dist _site/docs
+      # The landing page states five totals and types none of them. This copies
+      # the manifests it reads and FAILS on a page that hardcodes a number, so
+      # a stale headline is a red build rather than a quiet lie.
+      - name: Landing page totals come from the manifests
+        run: python3 scripts/build_landing_data.py --out _site --landing site/index.html
       - uses: actions/upload-pages-artifact@v5
         if: github.event_name != 'pull_request'
         with:
-          path: website/dist
+          path: _site
 
   deploy:
     name: Deploy to GitHub Pages
