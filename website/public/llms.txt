@@ -1,0 +1,22 @@
+# Azure APIM Emulator
+
+> A local emulator of the Azure API Management management plane, gateway and policy engine, with real challenge-based authentication against entra-emulator. Every green parity claim names the test that proves it.
+
+## Documentation
+
+- [Charter and parity definition](https://calvinchengx.github.io/azure-apim-emulator/docs/00-charter-and-parity/): azure-apim-emulator lets applications, deployment tools, API publishers, and API consumers exercise Azure API Management workflows locally and in CI without…
+- [Quickstart](https://calvinchengx.github.io/azure-apim-emulator/docs/01-quickstart/): Publish an API and call it through the gateway, in about a minute, with nothing running but this emulator.
+- [Installation](https://calvinchengx.github.io/azure-apim-emulator/docs/02-installation/): Four ways to run it, in the order most people want them.
+- [System architecture](https://calvinchengx.github.io/azure-apim-emulator/docs/03-architecture/): One Go process hosts multiple logical APIM services and exposes separate public surfaces:
+- [Configuration](https://calvinchengx.github.io/azure-apim-emulator/docs/04-configuration/): Every setting, what it defaults to, and which ones change behaviour in ways worth knowing about.
+- [Management plane and resource model](https://calvinchengx.github.io/azure-apim-emulator/docs/05-management-plane/): The canonical contract is the public Microsoft.ApiManagement specification in Azure/azure-rest-api-specs.
+- [Gateway and protocol runtime](https://calvinchengx.github.io/azure-apim-emulator/docs/06-gateway-and-protocols/): Default local endpoints are:
+- [Policy and expression engine](https://calvinchengx.github.io/azure-apim-emulator/docs/07-policy-and-expressions/): APIM policy documents are XML with four ordered sections:
+- [Developer portal, workspaces, and platform features](https://calvinchengx.github.io/azure-apim-emulator/docs/08-portal-workspaces-platform/): The developer portal is part of parity, not merely the emulator's operator UI. It includes:
+- [Identity, networking, and observability](https://calvinchengx.github.io/azure-apim-emulator/docs/09-identity-networking-observability/): APIM uses identity in several distinct places:
+- [Testing and SDK matrix](https://calvinchengx.github.io/azure-apim-emulator/docs/10-testing-and-sdk-matrix/): No single oracle proves APIM parity. The project combines:
+- [Implementation roadmap](https://calvinchengx.github.io/azure-apim-emulator/docs/11-roadmap/): Each phase is independently useful, SDK-witnessed, documented, and reflected in the parity ledger.
+- [Risk register](https://calvinchengx.github.io/azure-apim-emulator/docs/12-risk-register/)
+- [Clean-room grounding](https://calvinchengx.github.io/azure-apim-emulator/docs/13-clean-room-grounding/): Implementation and compatibility claims may use only:
+- [Azure APIM Emulator](https://calvinchengx.github.io/azure-apim-emulator/docs/index/): Azure APIM Emulator is a clean-room, low-memory Go implementation of the publicly observable Azure API Management contract.
+- [APIM parity ledger](https://calvinchengx.github.io/azure-apim-emulator/docs/parity/): This is the live top-level ledger. Detailed generated operation, policy, portal-workflow, protocol and gateway matrices will be added as implementation…

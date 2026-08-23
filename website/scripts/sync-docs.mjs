@@ -114,6 +114,8 @@ function description(raw) {
   return text;
 }
 
+const entries = [];
+
 function convert(srcPath, name, editPath) {
   const raw = readFileSync(srcPath, 'utf8');
   const lines = raw.split('\n');
@@ -131,11 +133,48 @@ function convert(srcPath, name, editPath) {
   // under src/content/docs/ is git-ignored.
   const editUrl = `https://github.com/calvinchengx/azure-apim-emulator/edit/main/docs/${editPath}`;
   const desc = description(raw);
+  // Top-level docs only. `generated/` holds machine-produced operation and
+  // policy inventories: thousands of rows that answer no question a reader
+  // asks, and pointing a model at them buries the pages that do.
+  if (editPath === name) entries.push({ slug: name.replace(/\.md$/, ''), title, desc });
   return (
     `---\ntitle: ${yamlEscape(title)}\n` +
     (desc ? `description: ${yamlEscape(desc)}\n` : '') +
     `editUrl: ${yamlEscape(editUrl)}\n---\n\n` + body
   );
+}
+
+
+// ---------------------------------------------------------------------------
+// llms.txt for this site.
+//
+// A PROPOSED convention (llmstxt.org), not a standard: a markdown file at a
+// site root giving a model a short, link-dense map of what the site holds, so
+// a crawler need not infer the shape from HTML. No major provider has
+// committed to consuming it. It is cheap and cannot hurt; it is not a
+// substitute for the per-page descriptions above, which affect search today.
+//
+// GENERATED FROM THE SAME PASS that writes the pages, so the title, the
+// description and the URL of every entry are the ones actually published. A
+// hand-written index of a docs tree is wrong within a fortnight.
+//
+// Written to public/, which Astro copies to the root of the built site, so it
+// lands beside the pages it describes at whatever `base` this site uses.
+const LLMS_TITLE = 'Azure APIM Emulator';
+const LLMS_BLURB = 'A local emulator of the Azure API Management management plane, gateway and policy engine, with real challenge-based authentication against entra-emulator. Every green parity claim names the test that proves it.';
+
+function writeLlms(entries) {
+  const origin = 'https://calvinchengx.github.io';
+  const out = [`# ${LLMS_TITLE}`, '', `> ${LLMS_BLURB}`, '', '## Documentation', ''];
+  for (const e of entries) {
+    const url = `${origin}${BASE}${e.slug}/`;
+    out.push(e.desc ? `- [${e.title}](${url}): ${e.desc}` : `- [${e.title}](${url})`);
+  }
+  out.push('');
+  const dir = join(here, '..', 'public');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'llms.txt'), out.join('\n'));
+  return entries.length;
 }
 
 rmSync(OUT, { recursive: true, force: true });
@@ -161,6 +200,7 @@ const info = writeParityHistory(OUT, PARITY, { convertBody: rewriteLinks });
 const DATA = join(here, '..', 'src', 'data');
 mkdirSync(DATA, { recursive: true });
 writeFileSync(join(DATA, 'parity-versions.json'), JSON.stringify(parityManifest(PARITY), null, 2) + '\n');
+const llms = writeLlms(entries);
 console.log(
   `sync-docs: wrote ${names.length} docs + ${generated.length} generated to src/content/docs/ ` +
     `(parity ${info.version}; ${info.snapshots.length} tagged snapshot(s))`,

@@ -98,6 +98,13 @@ jobs:
           mkdir -p _site
           cp site/index.html _site/index.html
           cp -R website/dist _site/docs
+          # llms.txt at the SITE root, which is where the convention says to
+          # look. sync-docs writes it into website/public/, which Astro copies
+          # to the root of the BUILT site -- and this site's base is
+          # /azure-apim-emulator/docs/, so that lands one level too deep. Copied
+          # up rather than moved: /docs/llms.txt describes the docs and is
+          # correct where it is.
+          cp website/dist/llms.txt _site/llms.txt
       # The landing page states five totals and types none of them. This copies
       # the manifests it reads and FAILS on a page that hardcodes a number, so
       # a stale headline is a red build rather than a quiet lie.
