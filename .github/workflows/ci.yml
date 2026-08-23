@@ -22,8 +22,10 @@ permissions:
   contents: read
 
 jobs:
-  # THE DOCS LANE. Every job below is gated on `docs_only != 'true'`, except the
-  # two that READ the docs. A prose-only change runs those two and nothing else.
+  # THE DOCS LANE, ON PULL REQUESTS ONLY. Every job below is gated on
+  # `docs_only != 'true'`, except the two that READ the docs. A prose-only
+  # PULL REQUEST runs those two and nothing else; a push to main runs
+  # everything, whatever it touched -- see the classify step below.
   #
   # This replaces the `paths:` filters #129 added. A path filter stops the
   # workflow starting at all, which meant the jobs that check the docs stopped
@@ -57,6 +59,35 @@ jobs:
           set -euo pipefail
           # A force push and a branch's first commit both give the null sha.
           # Neither is a docs change; both run everything.
+          # THE LANE IS FOR PULL REQUESTS. EVERY COMMIT ON MAIN GETS THE
+          # FULL MATRIX, whatever it touched.
+          #
+          # This was not the original rule, and the original rule was wrong.
+          # A docs-only commit on main took the cheap lane and reported CI
+          # SUCCESS having run a handful of jobs, so main's tip carried a
+          # verdict no full run had produced. Each such green is locally true
+          # -- a markdown file cannot break a Go test -- and that is exactly
+          # what makes it dangerous: the commit is green and the branch's
+          # state is unknown. fabric-emulator found this the expensive way,
+          # with four tests broken under a green main for two days and two
+          # open pull requests inheriting a red baseline nobody knew about.
+          #
+          # No commit on main has taken the lane here yet, in the last 20; the
+          # defect is latent rather than realised. Left unfixed it is a matter of
+          # time, and the failure mode is a green tip nobody can distinguish from
+          # a measured one.
+          #
+          # Every commit on main is shipped, and each is what a bisect will
+          # later ask about. A carried-forward verdict is not a verdict.
+          #
+          # The saving that matters is kept: iteration happens on the pull
+          # request, where a docs change still runs a couple of jobs instead
+          # of the whole matrix. Merging it costs one full run, once.
+          if [ "${GITHUB_EVENT_NAME}" != "pull_request" ]; then
+            echo "docs_only=false" >> "$GITHUB_OUTPUT"
+            echo "event is ${GITHUB_EVENT_NAME}, not a pull request: every commit on main gets the full matrix"
+            exit 0
+          fi
           if ! git rev-parse -q --verify "$BASE^{commit}" >/dev/null; then
             echo "docs_only=false" >> "$GITHUB_OUTPUT"
             echo "base '$BASE' is not a commit here; running everything"
