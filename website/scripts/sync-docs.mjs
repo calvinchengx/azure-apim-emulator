@@ -61,6 +61,59 @@ function parityStamp() {
   return `:::note\nThis ledger describes ${what}. Earlier releases are under [parity history](${BASE}parity-history/).\n:::\n\n`;
 }
 
+// The page's own meta description, taken from the first real paragraph.
+//
+// WHY. Starlight falls back to the SITE description when a page declares none,
+// so every page of a site shipped the same `<meta name="description">` --
+// checked on three pages of this site and they were byte-identical. Google
+// discards duplicate descriptions and writes its own snippet, so 300+ pages
+// across this family were competing with one sentence between them.
+//
+// FIRST PARAGRAPH, not a summary. It is the one sentence the author already
+// wrote to introduce the page, and deriving it means it cannot go stale. Skips
+// headings, code fences, tables, quotes, images, lists and HTML, which are all
+// things that read badly as a search snippet.
+//
+// Absent rather than empty when nothing suitable is found: Starlight then falls
+// back to the site description, which is the old behaviour and no worse.
+function description(raw) {
+  const lines = raw.split('\n');
+  let inFence = false;
+  const para = [];
+  for (const line of lines) {
+    const t = line.trim();
+    if (/^(```|~~~)/.test(t)) { inFence = !inFence; continue; }
+    if (inFence) continue;
+    if (para.length === 0) {
+      if (!t) continue;
+      if (/^(#|>|\||-|\*|\d+\.|!\[|<)/.test(t)) continue;
+      para.push(t);
+    } else {
+      if (!t || /^(#|>|\||```|~~~)/.test(t)) break;
+      para.push(t);
+    }
+  }
+  if (para.length === 0) return null;
+  // Markdown emphasis, links and code marks read as noise in a snippet.
+  let text = para
+    .join(' ')
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+    .replace(/[`*_]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  // 25, not 40. "Seven services, one discipline." is 30 characters and is a
+  // better description than the site-wide sentence it would otherwise inherit:
+  // distinctive and short beats generic and long, for a snippet.
+  if (text.length < 25) return null;
+  // Search engines truncate around 160; cut on a sentence, else on a word.
+  if (text.length > 160) {
+    const stop = text.lastIndexOf('. ', 160);
+    text = stop > 80 ? text.slice(0, stop + 1)
+                     : text.slice(0, text.lastIndexOf(' ', 157)) + '\u2026';
+  }
+  return text;
+}
+
 function convert(srcPath, name, editPath) {
   const raw = readFileSync(srcPath, 'utf8');
   const lines = raw.split('\n');
@@ -77,7 +130,12 @@ function convert(srcPath, name, editPath) {
   // Point "Edit this page" at the real source in /docs — the generated copy
   // under src/content/docs/ is git-ignored.
   const editUrl = `https://github.com/calvinchengx/azure-apim-emulator/edit/main/docs/${editPath}`;
-  return `---\ntitle: ${yamlEscape(title)}\neditUrl: ${yamlEscape(editUrl)}\n---\n\n` + body;
+  const desc = description(raw);
+  return (
+    `---\ntitle: ${yamlEscape(title)}\n` +
+    (desc ? `description: ${yamlEscape(desc)}\n` : '') +
+    `editUrl: ${yamlEscape(editUrl)}\n---\n\n` + body
+  );
 }
 
 rmSync(OUT, { recursive: true, force: true });
