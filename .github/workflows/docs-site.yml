@@ -95,9 +95,8 @@ jobs:
       # lives under /docs/.
       - name: Assemble the site
         run: |
-          mkdir -p _site
-          cp site/index.html _site/index.html
-          cp -R website/dist _site/docs
+          python3 scripts/assemble_site.py --self-test
+          python3 scripts/assemble_site.py --out _site
           # llms.txt at the SITE root, which is where the convention says to
           # look. sync-docs writes it into website/public/, which Astro copies
           # to the root of the BUILT site -- and this site's base is
