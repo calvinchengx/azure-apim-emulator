@@ -34,7 +34,7 @@
 body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--font);line-height:1.65;-webkit-font-smoothing:antialiased}
 .wrap{max-width:1000px;margin:0 auto;padding:0 24px}
 a{color:var(--accent)}
-code{font-family:var(--mono);font-size:.9em;background:var(--code);padding:.15em .4em;border-radius:5px}
+code{font-family:var(--mono);font-size:.9em;background:var(--code);padding:.15em .4em;border-radius:5px;overflow-wrap:anywhere}
 pre{background:var(--code);border:1px solid var(--line);border-radius:var(--radius);padding:18px 20px;overflow-x:auto;font-family:var(--mono);font-size:.88rem;line-height:1.55}
 pre code{background:none;padding:0}
 h1,h2,h3{line-height:1.25;letter-spacing:-.02em}
@@ -68,7 +68,7 @@ nav li a.docs{color:var(--accent);font-weight:600}
 .stat{background:var(--panel);padding:20px 18px}
 .stat b{display:block;font-size:1.9rem;letter-spacing:-.03em;line-height:1}
 .stat b small{font-size:.9rem;color:var(--muted);margin-left:2px}
-.stat span{display:block;color:var(--muted);font-size:.84rem;margin-top:6px}
+.stat>span{display:block;color:var(--muted);font-size:.84rem;margin-top:6px}
 
 /* cards */
 .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:16px}
@@ -92,7 +92,7 @@ nav li a.docs{color:var(--accent);font-weight:600}
 .honest h3{margin:0 0 8px;font-size:1.05rem}
 .honest p{margin:0 0 10px;color:var(--muted)}
 .tiers{display:grid;grid-template-columns:auto 1fr;gap:6px 16px;font-size:.92rem;margin:14px 0 0}
-.tiers code{white-space:nowrap}
+.tiers code{white-space:nowrap;justify-self:start}
 
 footer{padding:40px 0;color:var(--muted);font-size:.86rem;border-top:1px solid var(--line)}
 </style>
