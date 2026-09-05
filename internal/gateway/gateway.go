@@ -30,7 +30,6 @@ import (
 	"github.com/calvinchengx/azure-apim-emulator/internal/policy"
 	soapc "github.com/calvinchengx/azure-apim-emulator/internal/soap"
 	"github.com/calvinchengx/azure-apim-emulator/internal/store"
-	"golang.org/x/net/websocket"
 )
 
 // Snapshot is the complete active gateway configuration.
@@ -1239,43 +1238,112 @@ func isWebSocketRequest(req *http.Request) bool {
 	return false
 }
 
+// serveWebSocket tunnels the upgrade BYTE FOR BYTE, and negotiates nothing.
+//
+// It used to terminate the handshake itself: it read the CLIENT's
+// Sec-WebSocket-Protocol, offered `binary` to the backend when that was the
+// exact value, and then answered the client out of its own config rather than
+// out of the backend's reply. Three consequences, each of which the lax Go
+// client in our own tests accepted and a real client does not:
+//
+//   - a backend that REFUSED the subprotocol was overridden, and the client was
+//     told the request it made had been granted
+//   - a client offering two protocols was answered with BOTH, joined by a
+//     comma, which names no single selection and real clients reject
+//   - any subprotocol other than the literal string `binary` was dropped
+//
+// The fix is not a better negotiation table. A tunnel has no business
+// negotiating on either party's behalf, and enumerating protocols is how the
+// old code came to know about exactly one. Forwarding the handshake verbatim
+// makes subprotocols, extensions and versions correct BY CONSTRUCTION, and it
+// retires the per-connection PayloadType guess as well: a connection mixing
+// text and binary frames is now carried faithfully rather than coerced.
+//
+// The backend is dialled BEFORE the client connection is hijacked, so failing
+// to reach it is still an ARM-shaped 502 rather than a dead socket. After the
+// hijack the response belongs to the backend and this writes no status of its
+// own.
 func (r *Runtime) serveWebSocket(w http.ResponseWriter, req *http.Request, backend, path string) {
 	base, err := websocketBackendURL(backend, path, req.URL.RawQuery)
 	if err != nil {
 		gatewayError(w, http.StatusBadGateway, "BackendConnectionFailure", "The WebSocket backend URL is invalid.")
 		return
 	}
-	config, _ := websocket.NewConfig(base.String(), "http://"+base.Host)
-	config.Header = websocketHeaders(req.Header)
-	binary := strings.EqualFold(req.Header.Get("Sec-WebSocket-Protocol"), "binary")
-	if binary {
-		config.Protocol = []string{"binary"}
+	upstream, err := websocketDialer(base)
+	if err != nil {
+		gatewayError(w, http.StatusBadGateway, "BackendConnectionFailure", "The WebSocket backend could not be reached.")
+		return
 	}
-	server := websocket.Server{Handler: websocket.Handler(func(client *websocket.Conn) {
-		if binary {
-			client.PayloadType = websocket.BinaryFrame
-		} else {
-			client.PayloadType = websocket.TextFrame
+	defer func() { _ = upstream.Close() }()
+	if err := writeWebSocketHandshake(upstream, req, base); err != nil {
+		gatewayError(w, http.StatusBadGateway, "BackendConnectionFailure", "The WebSocket handshake could not be sent to the backend.")
+		return
+	}
+	hijacker, ok := w.(http.Hijacker)
+	if !ok {
+		gatewayError(w, http.StatusInternalServerError, "GatewayError", "The WebSocket connection could not be taken over.")
+		return
+	}
+	client, buffered, err := hijacker.Hijack()
+	if err != nil {
+		gatewayError(w, http.StatusInternalServerError, "GatewayError", "The WebSocket connection could not be taken over.")
+		return
+	}
+	defer func() { _ = client.Close() }()
+	// The backend's 101 and every frame after it are copied through untouched.
+	// `buffered` rather than `client` for the inbound direction: the hijack may
+	// already hold bytes the client sent behind its handshake, and reading the
+	// socket directly would drop them.
+	done := make(chan struct{}, 1)
+	go func() {
+		_, _ = io.Copy(upstream, buffered)
+		done <- struct{}{}
+	}()
+	_, _ = io.Copy(client, upstream)
+	_ = client.Close()
+	<-done
+}
+
+// websocketDialer is a variable so a test can supply a connection that fails on
+// write. Every other branch of the tunnel is reachable over a real socket.
+var websocketDialer = dialWebSocketBackend
+
+// websocketDialTarget resolves the address and, for wss, the TLS settings. It
+// is separate from the dial so the default-port rules are testable without a
+// listener on 80 or 443.
+func websocketDialTarget(base *url.URL) (string, *tls.Config) {
+	host := base.Host
+	if base.Scheme == "wss" {
+		if base.Port() == "" {
+			host = net.JoinHostPort(host, "443")
 		}
-		backendConfig := *config
-		backendConn, dialErr := websocket.DialConfig(&backendConfig)
-		if dialErr != nil {
-			_ = client.Close()
-			return
-		}
-		backendConn.PayloadType = client.PayloadType
-		defer func() { _ = backendConn.Close() }()
-		done := make(chan struct{}, 1)
-		go func() {
-			proxyWebSocketMessages(backendConn, client)
-			_ = backendConn.Close()
-			done <- struct{}{}
-		}()
-		proxyWebSocketMessages(client, backendConn)
-		_ = client.Close()
-		<-done
-	})}
-	server.ServeHTTP(w, req)
+		return host, &tls.Config{ServerName: base.Hostname(), MinVersion: tls.VersionTLS12}
+	}
+	if base.Port() == "" {
+		host = net.JoinHostPort(host, "80")
+	}
+	return host, nil
+}
+
+func dialWebSocketBackend(base *url.URL) (net.Conn, error) {
+	address, tlsConfig := websocketDialTarget(base)
+	if tlsConfig != nil {
+		return tls.Dial("tcp", address, tlsConfig)
+	}
+	return net.Dial("tcp", address)
+}
+
+// writeWebSocketHandshake replays the client's request to the backend. Only the
+// request target and Host change; every other header, including the
+// Sec-WebSocket-* set the old code stripped and then re-invented, is forwarded
+// exactly as the client sent it.
+func writeWebSocketHandshake(upstream net.Conn, req *http.Request, base *url.URL) error {
+	outbound := req.Clone(req.Context())
+	outbound.URL = &url.URL{Path: base.Path, RawQuery: base.RawQuery}
+	outbound.Host = base.Host
+	outbound.RequestURI = ""
+	outbound.Body = nil
+	return outbound.Write(upstream)
 }
 
 func websocketBackendURL(backend, path, query string) (*url.URL, error) {
@@ -1295,36 +1363,6 @@ func websocketBackendURL(backend, path, query string) (*url.URL, error) {
 	base.Path = strings.TrimRight(base.Path, "/") + "/" + strings.TrimLeft(path, "/")
 	base.RawQuery = query
 	return base, nil
-}
-
-func websocketHeaders(source http.Header) http.Header {
-	result := make(http.Header)
-	for name, values := range source {
-		lower := strings.ToLower(name)
-		if lower == "connection" || lower == "upgrade" || strings.HasPrefix(lower, "sec-websocket-") {
-			continue
-		}
-		result[name] = append([]string(nil), values...)
-	}
-	return result
-}
-
-func proxyWebSocketMessages(destination, source *websocket.Conn) {
-	for {
-		if source.PayloadType == websocket.TextFrame {
-			var message string
-			if err := websocket.Message.Receive(source, &message); err != nil {
-				return
-			}
-			_ = websocket.Message.Send(destination, message)
-			continue
-		}
-		var message []byte
-		if err := websocket.Message.Receive(source, &message); err != nil {
-			return
-		}
-		_ = websocket.Message.Send(destination, message)
-	}
 }
 
 func writeGatewayBody(w http.ResponseWriter, response *http.Response) {

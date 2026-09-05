@@ -47,7 +47,9 @@ const MIN_SEPARATION_MS = 150;
 const socketBackend = createServer();
 const sockets = new WebSocketServer({
   server: socketBackend,
-  handleProtocols: (offered) => (offered.has("binary") ? "binary" : false),
+  // Selects the SECOND of the two offered, so an echo of the client request
+  // is distinguishable from a relay of the backend answer.
+  handleProtocols: (offered) => (offered.has("chosen") ? "chosen" : (offered.has("binary") ? "binary" : false)),
 });
 sockets.on("connection", (socket) => {
   // Echo whatever arrives, preserving text-vs-binary. `ws` reports the frame
@@ -135,25 +137,17 @@ const bytes = Uint8Array.from([0, 1, 2, 253, 254, 255]);
 const binary = await roundTrip(bytes, ["binary"]);
 assert.ok(binary.data instanceof ArrayBuffer, "a binary frame came back as text");
 assert.deepEqual(new Uint8Array(binary.data), bytes, "binary payload was altered in the tunnel");
-// NOT ASSERTED, AND THE REASON IS A DEFECT THIS WITNESS FOUND.
+// THE SUBPROTOCOL MUST BE THE BACKEND'S CHOICE, NOT AN ECHO OF THE REQUEST.
 //
-// The gateway does not relay the backend's chosen subprotocol. It reflects the
-// client's REQUESTED one, and recognises only the single literal value
-// `binary` (internal/gateway/gateway.go, serveWebSocket). Measured three ways:
-//
-//   backend refuses the subprotocol   -> the client still sees "binary" and
-//                                        connects; direct to the same backend
-//                                        it correctly refuses the handshake
-//   client offers ["binary","chosen"],
-//   backend selects "chosen"          -> the handshake fails, because what
-//                                        comes back names neither one choice
-//                                        nor a protocol the client offered
-//
-// So `socket.protocol` here is the echo of what we asked for, and asserting it
-// would be asserting our own request. It is left unasserted rather than
-// dressed up as evidence. The fix belongs in the gateway: complete the client
-// handshake only after dialling the backend, and answer with the backend's
-// selection or with nothing.
+// This is the assertion that found the defect and then could not be made: the
+// gateway used to reflect the client's requested Sec-WebSocket-Protocol and
+// never read the backend's reply, so asserting it was asserting our own
+// request. `binary` alone could not tell the two apart, which is why the offer
+// below names TWO and the backend selects the second. An echo answers
+// "binary", or answers both joined by a comma, and undici rejects either.
+const chosen = await roundTrip("pick one", ["binary", "chosen"]);
+assert.equal(chosen.negotiated, "chosen",
+  "the gateway did not relay the backend's chosen subprotocol");
 
 // --- SSE, through the gateway, measured ------------------------------------
 
@@ -191,7 +185,8 @@ assert.ok(arrivals[0].at < sseWrites[2].at,
 
 console.log(
   `websocket witness: text and binary frames round-trip through the gateway, ` +
-  `frame type preserved, driven by ws and undici rather than by our own client`,
+  `frame type preserved, the backend's chosen subprotocol relayed rather than ` +
+  `echoed, driven by ws and undici rather than by our own client`,
 );
 console.log(
   `websocket witness: SSE flushed, ${arrivals.length} events ${separation}ms apart ` +
