@@ -28,9 +28,9 @@
   ],
   "summary": {
     "total": 611,
-    "routed": 373,
-    "absent": 115,
-    "unmeasured": 123
+    "routed": 385,
+    "absent": 109,
+    "unmeasured": 117
   },
   "byGroup": {
     "AllPolicies": {
@@ -504,14 +504,14 @@
       "unmeasured": 0
     },
     "TenantAccess": {
-      "routed": 0,
-      "absent": 5,
-      "unmeasured": 3
+      "routed": 8,
+      "absent": 0,
+      "unmeasured": 0
     },
     "TenantAccessGit": {
-      "routed": 0,
+      "routed": 2,
       "absent": 0,
-      "unmeasured": 2
+      "unmeasured": 0
     },
     "TenantConfiguration": {
       "routed": 0,
@@ -519,9 +519,9 @@
       "unmeasured": 4
     },
     "TenantSettings": {
-      "routed": 0,
-      "absent": 1,
-      "unmeasured": 1
+      "routed": 2,
+      "absent": 0,
+      "unmeasured": 0
     },
     "User": {
       "routed": 8,
@@ -3550,71 +3550,71 @@
     {
       "operationId": "TenantAccessGit_RegeneratePrimaryKey",
       "method": "POST",
-      "verdict": "unmeasured",
-      "status": 404,
-      "setupStatus": 404
+      "verdict": "routed",
+      "status": 204,
+      "setupStatus": 405
     },
     {
       "operationId": "TenantAccessGit_RegenerateSecondaryKey",
       "method": "POST",
-      "verdict": "unmeasured",
-      "status": 404,
-      "setupStatus": 404
+      "verdict": "routed",
+      "status": 204,
+      "setupStatus": 405
     },
     {
       "operationId": "TenantAccess_Create",
       "method": "PUT",
-      "verdict": "absent",
-      "status": 404
+      "verdict": "routed",
+      "status": 400
     },
     {
       "operationId": "TenantAccess_Get",
       "method": "GET",
-      "verdict": "absent",
-      "status": 404,
-      "setupStatus": 404
+      "verdict": "routed",
+      "status": 200,
+      "setupStatus": 400
     },
     {
       "operationId": "TenantAccess_GetEntityTag",
       "method": "HEAD",
-      "verdict": "absent",
-      "status": 404,
-      "setupStatus": 404
+      "verdict": "routed",
+      "status": 200,
+      "setupStatus": 400
     },
     {
       "operationId": "TenantAccess_ListByService",
       "method": "GET",
-      "verdict": "absent",
-      "status": 404,
-      "setupStatus": 404
+      "verdict": "routed",
+      "status": 200,
+      "setupStatus": 405
     },
     {
       "operationId": "TenantAccess_ListSecrets",
       "method": "POST",
-      "verdict": "unmeasured",
-      "status": 404,
-      "setupStatus": 404
+      "verdict": "routed",
+      "status": 200,
+      "setupStatus": 405
     },
     {
       "operationId": "TenantAccess_RegeneratePrimaryKey",
       "method": "POST",
-      "verdict": "unmeasured",
-      "status": 404,
-      "setupStatus": 404
+      "verdict": "routed",
+      "status": 204,
+      "setupStatus": 405
     },
     {
       "operationId": "TenantAccess_RegenerateSecondaryKey",
       "method": "POST",
-      "verdict": "unmeasured",
-      "status": 404,
-      "setupStatus": 404
+      "verdict": "routed",
+      "status": 204,
+      "setupStatus": 405
     },
     {
       "operationId": "TenantAccess_Update",
       "method": "PATCH",
-      "verdict": "absent",
-      "status": 404,
-      "setupStatus": 404
+      "verdict": "routed",
+      "status": 400,
+      "setupStatus": 400
     },
     {
       "operationId": "TenantConfiguration_Deploy",
@@ -3647,16 +3647,16 @@
     {
       "operationId": "TenantSettings_Get",
       "method": "GET",
-      "verdict": "unmeasured",
-      "status": 404,
-      "setupStatus": 404
+      "verdict": "routed",
+      "status": 200,
+      "setupStatus": 405
     },
     {
       "operationId": "TenantSettings_ListByService",
       "method": "GET",
-      "verdict": "absent",
-      "status": 404,
-      "setupStatus": 404
+      "verdict": "routed",
+      "status": 200,
+      "setupStatus": 405
     },
     {
       "operationId": "UserConfirmationPassword_Send",

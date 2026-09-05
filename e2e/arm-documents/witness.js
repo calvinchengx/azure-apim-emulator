@@ -410,3 +410,123 @@ if (filtered.length !== 1 || filtered[0].name !== "js-product") {
   throw new Error(`a name filter returned ${JSON.stringify(filtered.map((p) => p.name))}`);
 }
 console.log("arm-documents witness: If-Match applies and a stale ETag is refused, the error envelope carries a code, and $top/$filter are served");
+
+// ---------------------------------------------------------------------------
+// TENANT ACCESS AND THE PUBLIC SETTINGS
+//
+// These two are singletons rather than collections, so the family loop above
+// cannot express them: nothing creates them, `AccessIdName` has exactly two
+// members, and `SettingsTypeName` has one. That is also why they are worth
+// asking a packaged client about. Four things here are shaped by the generated
+// client and by nothing we could have inferred from the REST paths:
+//
+//   1. `create` and `update` take `ifMatch` as a POSITIONAL, REQUIRED argument.
+//      There is no overload without it.
+//   2. `create` declares only a 200. A 201 is an undeclared status and the
+//      client would fail to deserialize the very response it asked for.
+//   3. `get` is typed `AccessInformationContract`, which HAS NO KEY FIELDS.
+//      `listSecrets` returns a different type, unwrapped.
+//   4. `regeneratePrimaryKey` returns `Promise<void>`: 204, no body.
+
+const beforeSecrets = await client.tenantAccess.listSecrets(resourceGroup, serviceName, "access");
+if (!beforeSecrets.primaryKey || !beforeSecrets.secondaryKey) {
+  throw new Error(`listSecrets returned no keys: ${JSON.stringify(beforeSecrets)}`);
+}
+
+// Both members of the enum exist without anyone creating them.
+const accessNames = (await collect(client.tenantAccess.listByService(resourceGroup, serviceName)))
+  .map((item) => item.name)
+  .sort();
+if (accessNames.join(",") !== "access,gitAccess") {
+  throw new Error(`tenant access listing = ${JSON.stringify(accessNames)}, want both members of AccessIdName`);
+}
+
+let accessBody = "";
+const access = await client.tenantAccess.get(resourceGroup, serviceName, "access", {
+  onResponse: (raw) => { accessBody = raw.bodyAsText ?? ""; },
+});
+canonical(access, "tenant", "access", "Microsoft.ApiManagement/service/tenant");
+// The GET must not carry key material, and this reads the RAW BODY to say so.
+//
+// The obvious version of this check -- `"primaryKey" in access` on the object
+// the SDK handed back -- is a TAUTOLOGY, and only a negative control showed it.
+// `AccessInformationContract` has no key fields, so core-client's deserializer
+// drops them before the caller ever sees the response: with the emulator
+// deliberately leaking both keys on GET, that check still passed. A client
+// being unable to see a leak is not the same as there being none, and it is the
+// wire that a proxy, a log or a portal reads.
+for (const [label, key] of [["primary", beforeSecrets.primaryKey], ["secondary", beforeSecrets.secondaryKey]]) {
+  if (accessBody.includes(key)) {
+    throw new Error(`a tenant access GET put the ${label} key on the wire: ${accessBody}`);
+  }
+}
+if (!access.eTag) {
+  throw new Error("the packaged client saw no ETag on tenant access, so it can send no If-Match");
+}
+
+// `ifMatch` is required and positional. A matching tag applies the write, and
+// the response is a 200 the client could deserialize at all.
+const created = await client.tenantAccess.create(
+  resourceGroup, serviceName, "access", access.eTag, { enabled: true },
+);
+if (created.enabled !== true) {
+  throw new Error(`create did not report the value it set: ${JSON.stringify(created)}`);
+}
+const reread = await client.tenantAccess.get(resourceGroup, serviceName, "access");
+if (reread.enabled !== true) {
+  throw new Error(`create did not persist: ${JSON.stringify(reread)}`);
+}
+await client.tenantAccess.update(resourceGroup, serviceName, "access", reread.eTag, { enabled: false });
+if ((await client.tenantAccess.get(resourceGroup, serviceName, "access")).enabled !== false) {
+  throw new Error("update did not persist");
+}
+
+// The other half, without which the two calls above pass against a service
+// that ignores If-Match: a stale tag must be refused.
+//
+// Note what this canNOT witness: `ifMatch` is a required positional argument,
+// so the SDK cannot omit the header, and the 400 that a MISSING If-Match must
+// produce is unreachable from here. That half is asserted in the Go suite.
+let staleTenant;
+try {
+  await client.tenantAccess.update(resourceGroup, serviceName, "access", '"stale-etag"', { enabled: true });
+} catch (error) {
+  staleTenant = error;
+}
+if (!staleTenant || staleTenant.statusCode !== 412) {
+  throw new Error(`a stale If-Match on tenant access was accepted: ${staleTenant?.statusCode ?? "no error"}`);
+}
+
+// Regeneration moves exactly one key on exactly one configuration. Asserting
+// WHICH key moved is the whole assertion; a check that the call returned would
+// pass with every one of these wired to the same row.
+const gitBefore = await client.tenantAccess.listSecrets(resourceGroup, serviceName, "gitAccess");
+await client.tenantAccess.regeneratePrimaryKey(resourceGroup, serviceName, "access");
+const afterPrimary = await client.tenantAccess.listSecrets(resourceGroup, serviceName, "access");
+if (afterPrimary.primaryKey === beforeSecrets.primaryKey) {
+  throw new Error("regeneratePrimaryKey did not move the primary key");
+}
+if (afterPrimary.secondaryKey !== beforeSecrets.secondaryKey) {
+  throw new Error("regeneratePrimaryKey moved the secondary key as well");
+}
+await client.tenantAccessGit.regeneratePrimaryKey(resourceGroup, serviceName, "access");
+const gitAfter = await client.tenantAccess.listSecrets(resourceGroup, serviceName, "gitAccess");
+if (gitAfter.primaryKey === gitBefore.primaryKey) {
+  throw new Error("the git regeneration did not move the git primary key");
+}
+if ((await client.tenantAccess.listSecrets(resourceGroup, serviceName, "access")).primaryKey !== afterPrimary.primaryKey) {
+  throw new Error("the git regeneration moved the management key");
+}
+
+// The public settings: one settingsType, read-only, and the values a fresh
+// service reports.
+const settings = await client.tenantSettings.get(resourceGroup, serviceName, "public");
+canonical(settings, "settings", "public", "Microsoft.ApiManagement/service/settings");
+if (!settings.settings || settings.settings["CustomPortalSettings.DelegationEnabled"] !== "False") {
+  throw new Error(`the public settings did not deserialize: ${JSON.stringify(settings)}`);
+}
+const settingsList = await collect(client.tenantSettings.listByService(resourceGroup, serviceName));
+if (settingsList.length !== 1 || settingsList[0].name !== "public") {
+  throw new Error(`settings listing = ${JSON.stringify(settingsList.map((s) => s.name))}, want one public entry`);
+}
+console.log("arm-documents witness: tenant access is a seeded singleton pair whose keys leave only through listSecrets, If-Match is enforced on both writes, each regeneration moves exactly one key, and the public settings deserialize");

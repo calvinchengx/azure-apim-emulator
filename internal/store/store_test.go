@@ -652,6 +652,15 @@ func TestScanFunctionsRejectMalformedRows(t *testing.T) {
 		scan   func(*sql.DB) error
 	}{
 		{
+			"tenant access",
+			`CREATE TABLE tenant_access (id, service_id, name, principal_id, primary_key, secondary_key, enabled, etag)`,
+			// The NULL is in `name`, not `service_id`: the listing filters on
+			// service_id, and a NULL there matches nothing, so the scan would
+			// never run and the row would look accepted.
+			`INSERT INTO tenant_access VALUES ('id', 'svc', NULL, '', '', '', 0, '')`,
+			func(db *sql.DB) error { _, err := (&Store{db: db}).ListTenantAccess("svc"); return err },
+		},
+		{
 			"services",
 			`CREATE TABLE services (id, subscription_id, resource_group, name, location, sku_name, sku_capacity, publisher_name, publisher_email, provisioning_state, etag);
 			 CREATE TABLE resource_documents (id, document_json)`,
@@ -3062,4 +3071,91 @@ func TestGlobalSchemaJSONFailures(t *testing.T) {
 	if _, err := st.UpsertGlobalSchema(model.GlobalSchema{Document: map[string]any{"bad": bad}}); err == nil {
 		t.Fatal("global schema ARM document marshal succeeded")
 	}
+}
+
+func TestTenantAccessStoreFailures(t *testing.T) {
+	service := model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "svc"}
+	access := model.TenantAccess{ServiceID: service.ID(), Name: "access", Enabled: true}
+
+	t.Run("seeding failure aborts the service", func(t *testing.T) {
+		// The two rows are seeded inside the service's own transaction, so a
+		// failure there must take the service with it rather than leave a
+		// service whose tenant access can never be read.
+		st := openStore(t)
+		if _, err := st.db.Exec(`DROP TABLE tenant_access`); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := st.UpsertService(service); err == nil {
+			t.Fatal("a service was created without its tenant access")
+		}
+		if _, err := st.GetService(service.ID()); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("the failed service was not rolled back: %v", err)
+		}
+	})
+
+	t.Run("update of a name Azure does not publish", func(t *testing.T) {
+		// There is no create here. A third accessName must be refused rather
+		// than inserted, or the emulator would publish a resource Azure cannot
+		// return.
+		st := openStore(t)
+		if _, err := st.UpsertService(service); err != nil {
+			t.Fatal(err)
+		}
+		invented := access
+		invented.Name = "invented"
+		if _, err := st.UpsertTenantAccess(invented); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("error = %v, want ErrNotFound", err)
+		}
+		if _, err := st.GetTenantAccess(invented.ID()); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("the invented configuration was written anyway: %v", err)
+		}
+	})
+
+	t.Run("failing statements", func(t *testing.T) {
+		st := openStore(t)
+		if _, err := st.UpsertService(service); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := st.db.Exec(`CREATE TRIGGER reject_tenant_access BEFORE UPDATE ON tenant_access
+		    BEGIN SELECT RAISE(FAIL, 'rejected'); END`); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := st.UpsertTenantAccess(access); err == nil {
+			t.Fatal("a rejected update was reported as a success")
+		}
+		if err := st.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := st.GetTenantAccess(access.ID()); err == nil {
+			t.Fatal("a failing read reported success")
+		}
+		if _, err := st.ListTenantAccess(service.ID()); err == nil {
+			t.Fatal("a failing list reported success")
+		}
+	})
+}
+
+// A tenant access key is minted from the same source as every other opaque
+// value here, so it fails the same way when that source does.
+func TestNewAccessKeyPanicsOnAFailingRandomSource(t *testing.T) {
+	old := readRandom
+	t.Cleanup(func() { readRandom = old })
+	want := errors.New("no entropy")
+	readRandom = func([]byte) (int, error) { return 0, want }
+	defer func() {
+		if recovered := recover(); !errors.Is(recovered.(error), want) {
+			t.Fatalf("panic = %v", recovered)
+		}
+	}()
+	NewAccessKey()
+}
+
+func openStore(t *testing.T) *Store {
+	t.Helper()
+	st, err := Open("", clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	return st
 }

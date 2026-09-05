@@ -52,7 +52,7 @@ func TestServiceOnlyFamiliesAreRefusedAtWorkspaceScope(t *testing.T) {
 
 	// The read-only networking surfaces are refused the same way. They take no
 	// PUT, so only their GET form is meaningful here.
-	for _, family := range []string{"privateLinkResources", "networkstatus", "outboundNetworkDependenciesEndpoints", "locations", "skus", "regions"} {
+	for _, family := range []string{"privateLinkResources", "networkstatus", "outboundNetworkDependenciesEndpoints", "locations", "skus", "regions", "tenant", "settings"} {
 		assertStatus(t, handler, http.MethodGet, basePath+"/workspaces/team/"+family+apiQuery, "", http.StatusNotFound)
 	}
 
@@ -107,6 +107,9 @@ func TestServiceOnlyFamilyListIsExact(t *testing.T) {
 		"locations": true,
 		// A tier and a region belong to the service; a workspace has neither.
 		"skus": true, "regions": true,
+		// Tenant access and the public settings describe the service as a
+		// whole. Neither has a Workspace* operation group.
+		"tenant": true, "settings": true,
 	}
 	if len(serviceOnlyFamilies) != len(want) {
 		t.Fatalf("serviceOnlyFamilies = %v, want %v", serviceOnlyFamilies, want)

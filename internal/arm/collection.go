@@ -121,6 +121,14 @@ func writeCollectionResponseWithHandler(h *Handler, w http.ResponseWriter, r *ht
 	document["value"] = filtered[skip:end]
 	document["count"] = len(filtered)
 	document["nextLink"] = ""
+	// Not every collection in this provider carries a count. Microsoft's
+	// `TenantSettingsCollection` has `value` and `nextLink` only, where its
+	// `AccessInformationCollection` neighbour has all three, and Azure's own
+	// examples agree with both. An extra field is invisible to a generated
+	// client, which is exactly why it would never be found later.
+	if collectionsWithoutCount[strings.ToLower(collectionFilterKey(rt.Tail))] {
+		delete(document, "count")
+	}
 	if end < len(filtered) {
 		next := *r.URL
 		query := next.Query()
@@ -137,6 +145,10 @@ type collectionSelectorError struct {
 	target  string
 	message string
 }
+
+// collectionsWithoutCount are the list operations whose response model has no
+// `count`, keyed the same way as collectionFilterKey but lowercased.
+var collectionsWithoutCount = map[string]bool{"settings": true}
 
 var collectionSelectors = map[string]map[string]bool{
 	"apis":            {"tags": true, "expandApiVersionSet": true},
