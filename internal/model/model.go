@@ -234,6 +234,34 @@ type GlobalSchema struct {
 // ID returns the global schema ARM resource ID.
 func (v GlobalSchema) ID() string { return v.ServiceID + "/schemas/" + v.Name }
 
+// TenantAccess is a service's direct-management access configuration, at
+// `/tenant/{accessName}`.
+//
+// It is a SINGLETON PAIR, not a collection: Microsoft's `AccessIdName` enum has
+// exactly two members, `access` (the Management REST API) and `gitAccess` (the
+// configuration git repository), and both exist for every service from the
+// moment it does. There is no create and no delete in the contract; the PUT is
+// spelled `Create` but its only declared response is 200, never 201.
+//
+// The keys are held here but must never leave through a GET. Microsoft splits
+// the surface into two models for exactly that reason:
+// `AccessInformationContract` (the GET/PUT/PATCH body) has no key fields at
+// all, while `AccessInformationSecretsContract` (the `/listSecrets` body) does
+// and is not even wrapped in `properties`.
+type TenantAccess struct {
+	ServiceID string
+	// Name is `access` or `gitAccess`, and doubles as `properties.id`.
+	Name         string
+	PrincipalID  string
+	PrimaryKey   string
+	SecondaryKey string
+	Enabled      bool
+	ETag         string
+}
+
+// ID returns the tenant access ARM resource ID.
+func (v TenantAccess) ID() string { return v.ServiceID + "/tenant/" + v.Name }
+
 // Certificate is backend client-certificate material or a Key Vault reference.
 type Certificate struct {
 	ServiceID             string

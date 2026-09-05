@@ -67,6 +67,15 @@ func (h *Handler) handleConditionalRequest(w http.ResponseWriter, r *http.Reques
 }
 
 func requiresIfMatch(rt route, method string) bool {
+	// Tenant access is the only family whose PUT requires an entity tag.
+	// Microsoft marks `ifMatch` required on BOTH `TenantAccess_Create` and
+	// `TenantAccess_Update`, which is why this check comes before the
+	// PATCH/DELETE narrowing below rather than inside it: the two rows always
+	// exist, so `If-Match: *` is a real precondition there and not the
+	// no-op it is on a create.
+	if len(rt.Tail) == 2 && equal(rt.Tail[0], "tenant") {
+		return method == http.MethodPut || method == http.MethodPatch
+	}
 	if method != http.MethodPatch && method != http.MethodDelete {
 		return false
 	}

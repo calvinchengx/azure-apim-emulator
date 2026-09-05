@@ -4,6 +4,7 @@ package store
 import (
 	"crypto/rand"
 	"database/sql"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -303,6 +304,12 @@ CREATE TABLE IF NOT EXISTS global_schemas (
   value TEXT NOT NULL, schema_json TEXT NOT NULL,
   document_json TEXT NOT NULL, etag TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS tenant_access (
+  id TEXT PRIMARY KEY, service_id TEXT NOT NULL REFERENCES scopes(id) ON DELETE CASCADE,
+  name TEXT NOT NULL, principal_id TEXT NOT NULL,
+  primary_key TEXT NOT NULL, secondary_key TEXT NOT NULL,
+  enabled INTEGER NOT NULL, etag TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS authorization_servers (
   id TEXT PRIMARY KEY, service_id TEXT NOT NULL REFERENCES scopes(id) ON DELETE CASCADE,
   name TEXT NOT NULL, display_name TEXT NOT NULL, description TEXT NOT NULL,
@@ -417,6 +424,19 @@ func NewOpaqueID() string {
 
 func newETag() string { return `"` + NewOpaqueID() + `"` }
 
+// NewAccessKey mints a tenant access key. Base64 of 32 random bytes, which is
+// the shape Azure returns and long enough that nothing is tempted to treat it
+// as an identifier. Generated rather than written down: a fixed key in source
+// is indistinguishable from a leaked credential to any scanner, and to anyone
+// reading the file.
+func NewAccessKey() string {
+	var value [32]byte
+	if _, err := readRandom(value[:]); err != nil {
+		panic(err)
+	}
+	return base64.StdEncoding.EncodeToString(value[:])
+}
+
 func unixTime(value time.Time) int64 {
 	if value.IsZero() {
 		return 0
@@ -464,6 +484,21 @@ func (s *Store) UpsertService(v model.Service) (model.Service, error) {
             (id, service_id, name, display_name, description, type, external_id, built_in, etag)
             VALUES (?, ?, ?, ?, '', 'system', '', 1, ?) ON CONFLICT(id) DO NOTHING`,
 			v.ID()+"/groups/"+group.name, v.ID(), group.name, group.displayName, newETag()); err != nil {
+			return v, err
+		}
+	}
+	// Both tenant access configurations exist from the moment the service does:
+	// Microsoft's `AccessIdName` enum has exactly two members and no operation
+	// creates or deletes either, so a service without them would 404 on a GET
+	// that cannot 404 in Azure. `enabled` starts false because direct
+	// management access and the configuration git repository are both off on a
+	// new service until someone turns them on.
+	for _, access := range []struct{ name, principal string }{{"access", ""}, {"gitAccess", "git"}} {
+		if _, err := tx.Exec(`INSERT INTO tenant_access
+            (id, service_id, name, principal_id, primary_key, secondary_key, enabled, etag)
+            VALUES (?, ?, ?, ?, ?, ?, 0, ?) ON CONFLICT(id) DO NOTHING`,
+			v.ID()+"/tenant/"+access.name, v.ID(), access.name, access.principal,
+			NewAccessKey(), NewAccessKey(), newETag()); err != nil {
 			return v, err
 		}
 	}
@@ -2315,6 +2350,66 @@ func scanGlobalSchemas(rows *sql.Rows, err error) ([]model.GlobalSchema, error) 
 // DeleteGlobalSchema removes one global schema.
 func (s *Store) DeleteGlobalSchema(id string) error {
 	return deleteScopedResource(s.db, "global_schemas", id)
+}
+
+// UpsertTenantAccess replaces one tenant access configuration.
+//
+// There is no create and no delete: the two rows are seeded with the service
+// and only ever updated, so this returns ErrNotFound rather than inserting a
+// third `accessName` a caller invented.
+func (s *Store) UpsertTenantAccess(v model.TenantAccess) (model.TenantAccess, error) {
+	v.ETag = newETag()
+	result, err := s.db.Exec(`UPDATE tenant_access
+      SET principal_id=?, primary_key=?, secondary_key=?, enabled=?, etag=?
+      WHERE lower(id)=lower(?)`,
+		v.PrincipalID, v.PrimaryKey, v.SecondaryKey, v.Enabled, v.ETag, v.ID())
+	if err != nil {
+		return v, err
+	}
+	// The error is discarded the way every other RowsAffected call in this file
+	// discards it: the driver cannot fail to count the rows of an Exec that has
+	// already succeeded, and a branch nothing can reach is a branch nothing can
+	// test.
+	if affected, _ := result.RowsAffected(); affected == 0 {
+		return v, ErrNotFound
+	}
+	return v, nil
+}
+
+// GetTenantAccess finds one tenant access configuration by ARM ID.
+func (s *Store) GetTenantAccess(id string) (model.TenantAccess, error) {
+	values, err := scanTenantAccess(s.db.Query(`SELECT service_id, name, principal_id, primary_key, secondary_key, enabled, etag
+      FROM tenant_access WHERE lower(id)=lower(?)`, id))
+	if err != nil {
+		return model.TenantAccess{}, err
+	}
+	if len(values) == 0 {
+		return model.TenantAccess{}, ErrNotFound
+	}
+	return values[0], nil
+}
+
+// ListTenantAccess returns a service's tenant access configurations in stable
+// ID order.
+func (s *Store) ListTenantAccess(serviceID string) ([]model.TenantAccess, error) {
+	return scanTenantAccess(s.db.Query(`SELECT service_id, name, principal_id, primary_key, secondary_key, enabled, etag
+      FROM tenant_access WHERE lower(service_id)=lower(?) ORDER BY id`, serviceID))
+}
+
+func scanTenantAccess(rows *sql.Rows, err error) ([]model.TenantAccess, error) {
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	values := make([]model.TenantAccess, 0)
+	for rows.Next() {
+		var v model.TenantAccess
+		if err := rows.Scan(&v.ServiceID, &v.Name, &v.PrincipalID, &v.PrimaryKey, &v.SecondaryKey, &v.Enabled, &v.ETag); err != nil {
+			return nil, err
+		}
+		values = append(values, v)
+	}
+	return values, rows.Err()
 }
 
 // UpsertAuthorizationServer creates or replaces an OAuth authorization server while preserving its ARM document.

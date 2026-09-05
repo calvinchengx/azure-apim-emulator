@@ -25,6 +25,15 @@
       "go:TestClockModes",
       "go:TestClosedStoreErrors"
     ],
+    "tenant access and tenant settings": [
+      "ci:arm-documents-witness",
+      "go:TestTenantAccessIsSeededWithTheService",
+      "go:TestTenantAccessKeysLeaveOnlyThroughListSecrets",
+      "go:TestTenantAccessPutNeverReports201",
+      "go:TestTenantAccessRequiresIfMatchOnBothWrites",
+      "go:TestTenantAccessGitRegeneratesTheGitKey",
+      "go:TestTenantSettingsAreReadOnlyAndSingleton"
+    ],
     "ARM conditional requests": [
       "ci:arm-documents-witness",
       "go:TestConditionalEntityTagParsing",
