@@ -3844,3 +3844,23 @@ func TestValidateJWTAttributeFailures(t *testing.T) {
 		}
 	}
 }
+
+func TestTraceFromStateLabelsTheSource(t *testing.T) {
+	// The adapter is only interesting when the closure it returns is CALLED:
+	// `context.Trace(message)` must reach the engine's two-argument trace with
+	// "expression" as the source, so a reader can tell an expression wrote the
+	// entry rather than a <trace> element.
+	var gotSource, gotMessage string
+	state := &State{Trace: func(source, message string) { gotSource, gotMessage = source, message }}
+	trace := traceFromState(state)
+	if trace == nil {
+		t.Fatal("traceFromState returned nil for a state that traces")
+	}
+	trace("from an expression")
+	if gotSource != "expression" || gotMessage != "from an expression" {
+		t.Errorf("traced (%q, %q), want (expression, from an expression)", gotSource, gotMessage)
+	}
+	if traceFromState(&State{}) != nil {
+		t.Error("traceFromState returned a closure for a state that does not trace")
+	}
+}

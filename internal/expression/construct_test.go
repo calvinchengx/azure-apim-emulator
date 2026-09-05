@@ -222,3 +222,17 @@ func TestConstructionPropagatesArgumentFailures(t *testing.T) {
 		t.Fatal("a non-numeric upper bound was accepted")
 	}
 }
+
+func TestNewGuidRejectsTheWrongArity(t *testing.T) {
+	// `Guid()` and `Guid(a, b)` are both a caller error rather than a null
+	// result: the message names what the constructor does take.
+	for _, args := range [][]Value{nil, {String("a"), String("b")}} {
+		value, err := newGuid(args)
+		if err == nil {
+			t.Fatalf("newGuid(%d args) returned %v, want an error", len(args), value)
+		}
+		if !strings.Contains(err.Error(), "byte array or a string") {
+			t.Errorf("error = %q, want it to name what Guid accepts", err)
+		}
+	}
+}

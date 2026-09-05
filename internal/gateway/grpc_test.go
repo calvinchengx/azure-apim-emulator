@@ -489,3 +489,25 @@ func TestGRPCClientCarriesAConfiguredTLSConfig(t *testing.T) {
 		t.Fatalf("ServerName = %q; a backend requiring mutual TLS must keep working over gRPC", transport.TLSClientConfig.ServerName)
 	}
 }
+
+func TestGRPCRefusesAMethodItCannotForward(t *testing.T) {
+	// The forwarded request is built from the INBOUND method, so a method that
+	// http.NewRequestWithContext will not accept must produce a gRPC status
+	// rather than a panic or a silent hang.
+	fixture := newGRPCFixture(t, "grpc", ordersProto, okGRPCBackend)
+	request := httptest.NewRequest(http.MethodPost, "/shop.v1.Orders/GetOrder", strings.NewReader("x"))
+	request.Header.Set("Content-Type", "application/grpc")
+	request.Proto, request.ProtoMajor, request.ProtoMinor = "HTTP/2.0", 2, 0
+	// Assigned after construction on purpose: httptest.NewRequest rejects it,
+	// and a real server would never parse it off the wire. The guard is for the
+	// case where something else hands this handler a request.
+	request.Method = "BAD METHOD"
+	recorder := httptest.NewRecorder()
+	fixture.runtime.ServeHTTP(recorder, request)
+	if got := recorder.Header().Get("Grpc-Status"); got != grpcStatusInternal {
+		t.Fatalf("Grpc-Status = %q, want %s (INTERNAL)", got, grpcStatusInternal)
+	}
+	if fixture.seen != nil {
+		t.Fatal("a request that could not be forwarded must not reach the backend")
+	}
+}

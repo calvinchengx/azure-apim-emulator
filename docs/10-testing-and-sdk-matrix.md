@@ -96,6 +96,20 @@ The P0 service differential is non-destructive. Set
 inventory, replays that document into an isolated emulator, and compares the
 writable projection without changing Azure.
 
+**It runs in CI as `azure-differential`, and until 2026-09-05 it ran nowhere at
+all.** The harness had existed for months while appearing in no workflow, which
+produces exactly the evidence a failing one would: none. That is why `verified`
+is the only grade in `docs/witnesses.json` never used, and why three `partial`
+rows name the same missing leg.
+
+Set the repository secrets `APIM_AZURE_SERVICE_URL` and
+`APIM_AZURE_BEARER_TOKEN` to turn it on. Without them the job warns on the run
+summary rather than failing, because a red main on every commit is a check
+somebody switches off. With them, the job additionally asserts that
+`TestAzureServiceDocumentDifferential` actually **passed**: the test skips
+itself when either variable is empty, and a skip exits 0, so a renamed secret
+would otherwise present as a healthy green job.
+
 Declarative replay scenarios live under `e2e/differential/testdata/` and are
 listed in `fixture-manifest.json`. Each implemented scenario defines ordered
 management or gateway steps, fixture-backed request bodies, expected status
@@ -169,7 +183,10 @@ changed, and it would look like a regression in the emulator.
 
 ## Coverage gates
 
-- 100 percent aggregate statement coverage for committed Go code
+- 100 percent aggregate statement coverage for committed Go code, enforced by
+  `scripts/check_coverage.py` reading the profile rather than `go tool cover`'s
+  rounded total. The rounded form passed with six uncovered statements in five
+  thousand, which is what a gate reporting `100.0%` for 99.961% is worth
 - 100 percent operation inventory classification
 - 100 percent policy inventory classification
 - every `verified` parity item links to an automated differential fixture

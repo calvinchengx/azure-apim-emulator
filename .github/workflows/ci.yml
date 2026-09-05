@@ -106,6 +106,12 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      # `make verify` runs scripts/check_coverage.py, so this job needs uv even
+      # though it is otherwise pure Go. Adding the gate without adding this is
+      # what turned it red: `make: uv: No such file or directory`.
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.11.32"
       - run: make verify
 
   witnesses:
@@ -227,6 +233,63 @@ jobs:
           cache: pnpm
       - run: make setup-graphql
       - run: make test-graphql
+
+  azure-differential:
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
+    name: Azure differential (the only thing that can grade a row `verified`)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      # THE POINT OF THIS JOB IS THAT ITS ABSENCE IS VISIBLE.
+      #
+      # `e2e/differential` has existed for months, reads two environment
+      # variables, and appeared in no workflow at all. A harness nothing runs
+      # produces exactly the same evidence as one that passes: none. Three rows
+      # in docs/parity.md name this same missing leg in their own words
+      # ("authorized Azure evidence pending", "Azure differential fixtures
+      # pending"), and `verified` is the only grade in docs/witnesses.json that
+      # has never been used.
+      #
+      # Without the secrets this cannot fail, because a red main on every commit
+      # would be turned off within a week. So it warns instead, on the run
+      # summary where somebody actually looks.
+      - name: Run the differential, or say plainly that it did not
+        env:
+          APIM_AZURE_SERVICE_URL: ${{ secrets.APIM_AZURE_SERVICE_URL }}
+          APIM_AZURE_BEARER_TOKEN: ${{ secrets.APIM_AZURE_BEARER_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${APIM_AZURE_SERVICE_URL:-}" ] || [ -z "${APIM_AZURE_BEARER_TOKEN:-}" ]; then
+            echo "::warning title=The Azure differential has never run::Set the APIM_AZURE_SERVICE_URL and APIM_AZURE_BEARER_TOKEN secrets. Until then no parity row can be graded verified, and every green row rests on this project agreeing with itself or with a packaged client."
+            {
+              echo "### Azure differential: NOT RUN"
+              echo
+              echo "\`APIM_AZURE_SERVICE_URL\` and \`APIM_AZURE_BEARER_TOKEN\` are not set."
+              echo
+              echo "Nothing in \`docs/witnesses.json\` is graded \`verified\`, and it cannot be"
+              echo "until this leg runs against a real API Management service. The token is a"
+              echo "bearer for the ARM data plane; the URL is the service's ARM id with an"
+              echo "\`api-version\`."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          make test-differential 2>&1 | tee differential.log
+          # RUNNING THE SUITE IS NOT EVIDENCE THAT THE DIFFERENTIAL RAN. The test
+          # skips itself when either variable is empty, and a skip exits 0, so a
+          # renamed or misspelled secret would present as a healthy green job.
+          if ! grep -q -- "--- PASS: TestAzureServiceDocumentDifferential" differential.log; then
+            echo "::error::The credentials were present but TestAzureServiceDocumentDifferential did not pass. It was skipped or it failed; either way this job must not be green."
+            exit 1
+          fi
+          echo "### Azure differential: RAN against a live service" >> "$GITHUB_STEP_SUMMARY"
 
   keyvault-witness:
     needs: changes
