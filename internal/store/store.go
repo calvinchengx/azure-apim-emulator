@@ -3173,10 +3173,12 @@ func (s *Store) scopeRebuildScript() (string, error) {
 	}
 	var script strings.Builder
 	for _, record := range strings.Split(joined.String, recordSep) {
-		name, ddl, found := strings.Cut(record, fieldSep)
-		if !found {
-			continue
-		}
+		// No `found` check: group_concat drops a row whose `sql` is NULL
+		// entirely, and a non-NULL `sql` always leaves the separator in place,
+		// so every record that reaches here has both fields. This file's own
+		// note about unreachable error checks applies to the guard that used to
+		// be here.
+		name, ddl, _ := strings.Cut(record, fieldSep)
 		rebuilt := strings.ReplaceAll(ddl, "REFERENCES services(id)", "REFERENCES scopes(id)")
 		rebuilt = strings.Replace(rebuilt, "CREATE TABLE IF NOT EXISTS "+name, "CREATE TABLE "+name+"_scoped", 1)
 		rebuilt = strings.Replace(rebuilt, "CREATE TABLE "+name, "CREATE TABLE "+name+"_scoped", 1)

@@ -24,7 +24,10 @@ test:
 test-coverage:
 	go test -coverpkg=./... -coverprofile=cover.raw ./...
 	awk 'NR == 1 { print; next } { key = $$1 FS $$2; if (!(key in max) || $$3 > max[key]) { max[key] = $$3; line[key] = $$0 } } END { for (key in line) print line[key] }' cover.raw > cover.out
-	go tool cover -func=cover.out | awk '/^total:/ { print; if ($$3 != "100.0%") exit 1 }'
+	@# NOT `go tool cover -func | awk '/^total:/ ...'`: that prints one decimal
+	@# place, so six uncovered statements in five thousand read as 100.0% and
+	@# passed. See scripts/check_coverage.py.
+	$(UVPY) scripts/check_coverage.py cover.out
 
 test-differential:
 	go test -count=1 -v ./e2e/differential

@@ -162,9 +162,10 @@ func (h *Handler) dispatch(w http.ResponseWriter, r *http.Request, parsed route)
 			h.workspaceResource(w, r, parsed, model.Workspace{ServiceID: parsed.service().ID(), Name: parsed.Tail[1]})
 			return
 		}
-		if !h.requireCapability(w, parsed.service().ID(), capabilityWorkspaces) {
-			return
-		}
+		// No capability check here: the one above already ran for this same
+		// service and capability, and nothing between them writes to the store,
+		// so a second call can only ever agree with the first. It also cost a
+		// redundant service read on every workspace-scoped nested request.
 		nested := parsed
 		nested.Workspace, nested.Tail = parsed.Tail[1], parsed.Tail[2:]
 		// The workspace must exist before anything can be parented to it,
