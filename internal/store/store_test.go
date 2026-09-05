@@ -652,6 +652,12 @@ func TestScanFunctionsRejectMalformedRows(t *testing.T) {
 		scan   func(*sql.DB) error
 	}{
 		{
+			"policy restrictions",
+			`CREATE TABLE policy_restrictions (id, service_id, name, scope, require_base, document_json, etag)`,
+			`INSERT INTO policy_restrictions VALUES ('id', 'svc', NULL, '', '', '{}', '')`,
+			func(db *sql.DB) error { _, err := (&Store{db: db}).ListPolicyRestrictions("svc"); return err },
+		},
+		{
 			"tenant access",
 			`CREATE TABLE tenant_access (id, service_id, name, principal_id, primary_key, secondary_key, enabled, etag)`,
 			// The NULL is in `name`, not `service_id`: the listing filters on
@@ -3158,4 +3164,30 @@ func openStore(t *testing.T) *Store {
 	}
 	t.Cleanup(func() { _ = st.Close() })
 	return st
+}
+
+func TestPolicyRestrictionJSONFailures(t *testing.T) {
+	st := openStore(t)
+	if _, err := st.UpsertPolicyRestriction(model.PolicyRestriction{Document: map[string]any{"bad": make(chan int)}}); err == nil {
+		t.Fatal("policy restriction ARM document marshal succeeded")
+	}
+	// And the read side: a row whose document column is not JSON must fail the
+	// scan rather than be handed back as an empty document, which would look
+	// like a resource that simply has no ARM properties.
+	service := model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "svc"}
+	if _, err := st.UpsertService(service); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := st.UpsertPolicyRestriction(model.PolicyRestriction{
+		ServiceID: service.ID(), Name: "pr1", Document: map[string]any{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.db.Exec(`UPDATE policy_restrictions SET document_json='not json' WHERE id=?`, stored.ID()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.ListPolicyRestrictions(service.ID()); err == nil {
+		t.Fatal("a row with a malformed document was accepted")
+	}
 }

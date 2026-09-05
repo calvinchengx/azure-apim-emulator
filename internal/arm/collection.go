@@ -148,7 +148,7 @@ type collectionSelectorError struct {
 
 // collectionsWithoutCount are the list operations whose response model has no
 // `count`, keyed the same way as collectionFilterKey but lowercased.
-var collectionsWithoutCount = map[string]bool{"settings": true}
+var collectionsWithoutCount = map[string]bool{"settings": true, "policyrestrictions": true}
 
 var collectionSelectors = map[string]map[string]bool{
 	"apis":            {"tags": true, "expandApiVersionSet": true},

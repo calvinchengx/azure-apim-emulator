@@ -29,6 +29,7 @@ func TestServiceOnlyFamiliesAreRefusedAtWorkspaceScope(t *testing.T) {
 		{"gateways", `{"properties":{"locationData":{"name":"dc"}}}`},
 		{"users", `{"properties":{"email":"a@b.test","firstName":"A","lastName":"B"}}`},
 		{"privateEndpointConnections", `{"properties":{"privateLinkServiceConnectionState":{"status":"Approved"}}}`},
+		{"policyRestrictions", `{"properties":{"scope":"/apis","requireBase":"true"}}`},
 	}
 	for _, family := range refused {
 		collection := basePath + "/workspaces/team/" + family.family
@@ -52,7 +53,7 @@ func TestServiceOnlyFamiliesAreRefusedAtWorkspaceScope(t *testing.T) {
 
 	// The read-only networking surfaces are refused the same way. They take no
 	// PUT, so only their GET form is meaningful here.
-	for _, family := range []string{"privateLinkResources", "networkstatus", "outboundNetworkDependenciesEndpoints", "locations", "skus", "regions", "tenant", "settings"} {
+	for _, family := range []string{"privateLinkResources", "networkstatus", "outboundNetworkDependenciesEndpoints", "locations", "skus", "regions", "tenant", "settings", "getssotoken"} {
 		assertStatus(t, handler, http.MethodGet, basePath+"/workspaces/team/"+family+apiQuery, "", http.StatusNotFound)
 	}
 
@@ -110,6 +111,11 @@ func TestServiceOnlyFamilyListIsExact(t *testing.T) {
 		// Tenant access and the public settings describe the service as a
 		// whole. Neither has a Workspace* operation group.
 		"tenant": true, "settings": true,
+		// A policy RESTRICTION is service-wide, and the publisher-portal SSO
+		// token is issued for the service. Note the contrast that makes the
+		// first one a real claim rather than a guess: every kind of policy
+		// DOCUMENT does have a Workspace* group, and this does not.
+		"policyrestrictions": true, "getssotoken": true,
 	}
 	if len(serviceOnlyFamilies) != len(want) {
 		t.Fatalf("serviceOnlyFamilies = %v, want %v", serviceOnlyFamilies, want)

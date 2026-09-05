@@ -25,6 +25,17 @@
       "go:TestClockModes",
       "go:TestClosedStoreErrors"
     ],
+    "policy restrictions and service-level operations": [
+      "ci:arm-documents-witness",
+      "go:TestPolicyRestrictionRoundTrips",
+      "go:TestPolicyRestrictionUpdateMergesAndPutReplaces",
+      "go:TestPolicyRestrictionRequiresIfMatchOnUpdateOnly",
+      "go:TestCheckNameAvailabilityAnswersAllThreeReasons",
+      "go:TestCheckNameAvailabilityIsGlobalAcrossSubscriptions",
+      "go:TestDomainOwnershipIdentifierIsStablePerSubscription",
+      "go:TestSsoTokenReturnsAResolvableRedirect",
+      "go:TestUnimplementedServiceOperationsStayAbsent"
+    ],
     "tenant access and tenant settings": [
       "ci:arm-documents-witness",
       "go:TestTenantAccessIsSeededWithTheService",

@@ -28,8 +28,8 @@
   ],
   "summary": {
     "total": 611,
-    "routed": 385,
-    "absent": 109,
+    "routed": 394,
+    "absent": 100,
     "unmeasured": 117
   },
   "byGroup": {
@@ -84,8 +84,8 @@
       "unmeasured": 0
     },
     "ApiManagementService": {
-      "routed": 6,
-      "absent": 7,
+      "routed": 9,
+      "absent": 4,
       "unmeasured": 0
     },
     "ApiManagementServiceSkus": {
@@ -369,8 +369,8 @@
       "unmeasured": 3
     },
     "PolicyRestriction": {
-      "routed": 0,
-      "absent": 6,
+      "routed": 6,
+      "absent": 0,
       "unmeasured": 0
     },
     "PolicyRestrictionValidations": {
@@ -973,9 +973,9 @@
     {
       "operationId": "ApiManagementService_CheckNameAvailability",
       "method": "POST",
-      "verdict": "absent",
-      "status": 404,
-      "setupStatus": 404
+      "verdict": "routed",
+      "status": 200,
+      "setupStatus": 405
     },
     {
       "operationId": "ApiManagementService_CreateOrUpdate",
@@ -1000,16 +1000,16 @@
     {
       "operationId": "ApiManagementService_GetDomainOwnershipIdentifier",
       "method": "POST",
-      "verdict": "absent",
-      "status": 404,
-      "setupStatus": 404
+      "verdict": "routed",
+      "status": 200,
+      "setupStatus": 405
     },
     {
       "operationId": "ApiManagementService_GetSsoToken",
       "method": "POST",
-      "verdict": "absent",
-      "status": 404,
-      "setupStatus": 404
+      "verdict": "routed",
+      "status": 200,
+      "setupStatus": 405
     },
     {
       "operationId": "ApiManagementService_List",
@@ -2683,43 +2683,43 @@
     {
       "operationId": "PolicyRestriction_CreateOrUpdate",
       "method": "PUT",
-      "verdict": "absent",
-      "status": 404
+      "verdict": "routed",
+      "status": 201
     },
     {
       "operationId": "PolicyRestriction_Delete",
       "method": "DELETE",
-      "verdict": "absent",
-      "status": 404,
-      "setupStatus": 404
+      "verdict": "routed",
+      "status": 204,
+      "setupStatus": 201
     },
     {
       "operationId": "PolicyRestriction_Get",
       "method": "GET",
-      "verdict": "absent",
-      "status": 404,
-      "setupStatus": 404
+      "verdict": "routed",
+      "status": 200,
+      "setupStatus": 201
     },
     {
       "operationId": "PolicyRestriction_GetEntityTag",
       "method": "HEAD",
-      "verdict": "absent",
-      "status": 404,
-      "setupStatus": 404
+      "verdict": "routed",
+      "status": 200,
+      "setupStatus": 201
     },
     {
       "operationId": "PolicyRestriction_ListByService",
       "method": "GET",
-      "verdict": "absent",
-      "status": 404,
-      "setupStatus": 404
+      "verdict": "routed",
+      "status": 200,
+      "setupStatus": 405
     },
     {
       "operationId": "PolicyRestriction_Update",
       "method": "PATCH",
-      "verdict": "absent",
-      "status": 404,
-      "setupStatus": 404
+      "verdict": "routed",
+      "status": 400,
+      "setupStatus": 201
     },
     {
       "operationId": "Policy_CreateOrUpdate",

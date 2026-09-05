@@ -115,6 +115,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.providerSKURoute(w, r, location)
 		return
 	}
+	// Two more subscription-scoped siblings, for the same reason.
+	if action, ok := parseServiceProviderAction(split(r.URL.Path)); ok {
+		h.serviceProviderAction(w, r, split(r.URL.Path)[1], action)
+		return
+	}
 	parsed, ok := parse(split(r.URL.Path))
 	if !ok {
 		writeError(w, http.StatusNotFound, "ResourceNotFound", "The requested resource was not found.", r.URL.Path)
@@ -233,6 +238,14 @@ func (h *Handler) dispatch(w http.ResponseWriter, r *http.Request, parsed route)
 		h.documentation(w, r, parsed)
 	case "schemas":
 		h.globalSchema(w, r, parsed)
+	case "policyRestrictions":
+		h.policyRestriction(w, r, parsed)
+	case "getssotoken":
+		if len(parsed.Tail) == 1 {
+			h.serviceSsoToken(w, r, parsed)
+			return
+		}
+		writeError(w, http.StatusNotFound, "ResourceNotFound", "The requested APIM resource is not implemented in the P0 surface.", r.URL.Path)
 	case "tenant":
 		h.tenantAccess(w, r, parsed)
 	case "settings":
@@ -323,6 +336,12 @@ var serviceOnlyFamilies = map[string]bool{
 	// service: the SDK publishes no Workspace* group for either.
 	"tenant":   true,
 	"settings": true,
+	// A policy RESTRICTION is service-wide. There are Workspace* groups for
+	// every kind of policy DOCUMENT (WorkspacePolicy, WorkspaceApiPolicy,
+	// WorkspaceProductPolicy, WorkspacePolicyFragment) and none for this.
+	"policyrestrictions": true,
+	// The publisher-portal SSO token is issued for the service.
+	"getssotoken": true,
 }
 
 type route struct {
@@ -3650,6 +3669,254 @@ func globalSchemaWire(v model.GlobalSchema) map[string]any {
 	// read-only, so whatever a caller sent has already been dropped.
 	properties["provisioningState"] = "Succeeded"
 	return result
+}
+
+// policyRestriction serves `/policyRestrictions` and its members.
+//
+// Ordinary CRUD, unlike the tenant singletons: PUT declares 200 AND 201, DELETE
+// declares 200 and 204, and the only unusual bit is that `ifMatch` is REQUIRED
+// on PATCH (`ifMatch1` in the generated client) while it is optional on PUT and
+// DELETE.
+//
+// `requireBase` is the string "true" or "false", not a boolean. Microsoft's
+// `PolicyRestrictionRequireBase` is a string enum and the client maps the field
+// as a String, so emitting a JSON boolean would be a different value than the
+// one the contract names, and the SDK would hand the caller something its own
+// type says cannot occur.
+func (h *Handler) policyRestriction(w http.ResponseWriter, r *http.Request, rt route) {
+	scope := rt.scopeID()
+	if len(rt.Tail) == 1 {
+		if r.Method != http.MethodGet {
+			methodNotAllowed(w)
+			return
+		}
+		values, err := h.Store.ListPolicyRestrictions(scope)
+		if err != nil {
+			h.storeError(w, err, scope)
+			return
+		}
+		resources := make([]map[string]any, 0, len(values))
+		for _, value := range values {
+			resources = append(resources, policyRestrictionWire(value))
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"value": resources})
+		return
+	}
+	if len(rt.Tail) != 2 {
+		writeError(w, http.StatusNotFound, "ResourceNotFound", "The requested policy restriction was not found.", r.URL.Path)
+		return
+	}
+	if rt.Tail[1] == "" || len(rt.Tail[1]) > 80 {
+		writeError(w, http.StatusBadRequest, "ValidationError", "policyRestrictionId must be 1-80 characters.", "policyRestrictionId")
+		return
+	}
+	value := model.PolicyRestriction{ServiceID: scope, Name: rt.Tail[1]}
+	switch r.Method {
+	case http.MethodGet, http.MethodHead:
+		got, err := h.Store.GetPolicyRestriction(value.ID())
+		if err != nil {
+			h.storeError(w, err, value.ID())
+			return
+		}
+		if r.Method == http.MethodHead {
+			w.Header().Set("ETag", got.ETag)
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		writeResource(w, http.StatusOK, policyRestrictionWire(got), got.ETag)
+	case http.MethodPut, http.MethodPatch:
+		existing, existingErr := h.Store.GetPolicyRestriction(value.ID())
+		if existingErr != nil && !errors.Is(existingErr, store.ErrNotFound) {
+			h.storeError(w, existingErr, value.ID())
+			return
+		}
+		if r.Method == http.MethodPatch && errors.Is(existingErr, store.ErrNotFound) {
+			h.storeError(w, existingErr, value.ID())
+			return
+		}
+		var body struct {
+			Properties struct {
+				Scope       *string `json:"scope"`
+				RequireBase *string `json:"requireBase"`
+			} `json:"properties"`
+		}
+		var document map[string]any
+		if err := decodeDocument(r, &body, &document); err != nil {
+			writeError(w, http.StatusBadRequest, "InvalidRequestContent", err.Error(), "")
+			return
+		}
+		// PATCH is a MERGE: Azure's own update example sends `scope` alone and
+		// its response still carries the `requireBase` set by the create. PUT
+		// replaces, so an omitted field falls back to the contract's default
+		// rather than to whatever was there before.
+		if r.Method == http.MethodPatch {
+			value.Scope, value.RequireBase = existing.Scope, existing.RequireBase
+			value.Document = existing.Document
+		} else {
+			// `defaultValue: "false"` on the generated mapper.
+			value.RequireBase = "false"
+			value.Document = document
+		}
+		if body.Properties.Scope != nil {
+			value.Scope = *body.Properties.Scope
+		}
+		if body.Properties.RequireBase != nil {
+			requireBase := strings.ToLower(strings.TrimSpace(*body.Properties.RequireBase))
+			if requireBase != "true" && requireBase != "false" {
+				writeError(w, http.StatusBadRequest, "ValidationError",
+					"properties.requireBase must be the string true or false.", "properties.requireBase")
+				return
+			}
+			value.RequireBase = requireBase
+		}
+		cleanResourceDocument(value.Document)
+		got, err := h.Store.UpsertPolicyRestriction(value)
+		if err != nil {
+			h.storeError(w, err, value.ID())
+			return
+		}
+		status := http.StatusOK
+		if errors.Is(existingErr, store.ErrNotFound) {
+			status = http.StatusCreated
+		}
+		writeResource(w, status, policyRestrictionWire(got), got.ETag)
+	case http.MethodDelete:
+		if err := h.Store.DeletePolicyRestriction(value.ID()); err != nil && !errors.Is(err, store.ErrNotFound) {
+			h.storeError(w, err, value.ID())
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	default:
+		methodNotAllowed(w)
+	}
+}
+
+func policyRestrictionWire(v model.PolicyRestriction) map[string]any {
+	result := cloneObject(v.Document)
+	// `Microsoft.ApiManagement/service/policyRestrictions`, per the Get and List
+	// examples. Azure's CREATE example says `.../policyFragments` and names the
+	// resource `policyRestrictions1` for a request that asked for
+	// `policyRestriction1`, so that example contradicts its own neighbours twice
+	// and is not followed.
+	result["id"], result["name"], result["type"] = v.ID(), v.Name, "Microsoft.ApiManagement/service/policyRestrictions"
+	properties, ok := result["properties"].(map[string]any)
+	if !ok {
+		properties = map[string]any{}
+		result["properties"] = properties
+	}
+	properties["scope"] = v.Scope
+	properties["requireBase"] = v.RequireBase
+	return result
+}
+
+// parseServiceProviderAction recognises the two SUBSCRIPTION-scoped operations
+// in the `ApiManagementService` group. They are siblings of `service` rather
+// than children of one, so they are answered before the service parser runs,
+// the same way the SKU catalogue is.
+func parseServiceProviderAction(parts []string) (string, bool) {
+	if len(parts) == 5 && equal(parts[0], "subscriptions") && equal(parts[2], "providers") &&
+		equal(parts[3], "Microsoft.ApiManagement") &&
+		oneOf(strings.ToLower(parts[4]), "checknameavailability", "getdomainownershipidentifier") {
+		return strings.ToLower(parts[4]), true
+	}
+	return "", false
+}
+
+// serviceNamePattern is Microsoft's own constraint on `serviceName`, taken from
+// the parameter definition in `apimanagement.json` at the pinned spec commit
+// (`minLength: 1`, `maxLength: 50`, this pattern) rather than from a
+// recollection of the portal's error message.
+var serviceNamePattern = regexp.MustCompile(`^[a-zA-Z](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?$`)
+
+// serviceProviderAction serves `checkNameAvailability` and
+// `getDomainOwnershipIdentifier`.
+func (h *Handler) serviceProviderAction(w http.ResponseWriter, r *http.Request, subscriptionID, action string) {
+	if r.Method != http.MethodPost {
+		methodNotAllowed(w)
+		return
+	}
+	if action == "getdomainownershipidentifier" {
+		// DERIVED from the subscription rather than minted fresh, because the
+		// value's whole purpose is to be published in a DNS TXT record and then
+		// checked later. One that changed per call would be useless in exactly
+		// the workflow it exists for, and the emulator would look fine while
+		// every verification failed.
+		sum := sha256.Sum256([]byte("domain-ownership:" + strings.ToLower(subscriptionID)))
+		writeJSON(w, http.StatusOK, map[string]any{
+			"domainOwnershipIdentifier": base64.StdEncoding.EncodeToString(sum[:]),
+		})
+		return
+	}
+	var body struct {
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "InvalidRequestContent", "malformed request body: "+err.Error(), "")
+		return
+	}
+	writeJSON(w, http.StatusOK, h.nameAvailability(body.Name))
+}
+
+// nameAvailability answers the three cases Microsoft's `NameAvailabilityReason`
+// names, and answers them for real.
+//
+// The namespace is checked across ALL subscriptions, not just the caller's,
+// because an APIM service name becomes `<name>.azure-api.net`: it is a DNS
+// label, and DNS has no idea whose subscription it is. Scoping the check to one
+// subscription would report a name available that a create then refuses.
+func (h *Handler) nameAvailability(name string) map[string]any {
+	if name == "" || len(name) > 50 || !serviceNamePattern.MatchString(name) {
+		return map[string]any{
+			"nameAvailable": false,
+			"reason":        "Invalid",
+			"message": "A service name must be 1-50 characters, start with a letter, end with a letter or digit, " +
+				"and contain only letters, digits and hyphens.",
+		}
+	}
+	services, err := h.Store.ListServices()
+	if err != nil {
+		// Unknown is not available. Reporting a name free because the lookup
+		// broke is the one answer that cannot be recovered from: the caller
+		// goes on to create, and the create is what fails.
+		return map[string]any{
+			"nameAvailable": false,
+			"reason":        "AlreadyExists",
+			"message":       "The name could not be checked, so it is not being reported as available.",
+		}
+	}
+	for _, service := range services {
+		if equal(service.Name, name) {
+			return map[string]any{
+				"nameAvailable": false,
+				"reason":        "AlreadyExists",
+				"message":       name + " is already in use. Please select a different name.",
+			}
+		}
+	}
+	return map[string]any{"nameAvailable": true, "reason": "Valid"}
+}
+
+// serviceSsoToken serves `POST /service/{name}/getssotoken`.
+//
+// The redirect URI points at THIS emulator's portal and resolves. Azure's
+// example returns `https://<service>.portal.azure-api.net/signin-sso?token=...`,
+// and returning that shape here would hand a caller a link to a service that
+// does not exist. The token is opaque and is NOT consumed: the emulator's
+// portal has no session to establish, so this proves the operation answers with
+// a working URI and claims nothing about single sign-on.
+func (h *Handler) serviceSsoToken(w http.ResponseWriter, r *http.Request, rt route) {
+	if r.Method != http.MethodPost {
+		methodNotAllowed(w)
+		return
+	}
+	if _, err := h.Store.GetService(rt.service().ID()); err != nil {
+		h.storeError(w, err, rt.service().ID())
+		return
+	}
+	token := url.Values{"token": []string{store.NewOpaqueID()}}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"redirectUri": absolute(r, "/_emulator/portal/?"+token.Encode()),
+	})
 }
 
 // tenantAccess serves `/tenant` and `/tenant/{accessName}` and everything under
