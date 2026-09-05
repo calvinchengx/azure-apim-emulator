@@ -3534,3 +3534,197 @@ func setRequiredIfMatch(request *http.Request) {
 		request.Header.Set("If-Match", "*")
 	}
 }
+
+func TestGlobalSchemaBranches(t *testing.T) {
+	handler, st := testHandler(t)
+	seedService(t, st)
+	path := basePath + "/schemas/orders" + apiQuery
+
+	empty := request(t, handler, http.MethodGet, basePath+"/schemas"+apiQuery, "")
+	if !strings.Contains(empty.Body.String(), `"count":0`) {
+		t.Fatalf("empty schema list = %s", empty.Body.String())
+	}
+	assertStatus(t, handler, http.MethodPost, basePath+"/schemas"+apiQuery, "", http.StatusMethodNotAllowed)
+	assertStatus(t, handler, http.MethodGet, basePath+"/schemas/too/deep"+apiQuery, "", http.StatusNotFound)
+	assertStatus(t, handler, http.MethodGet, basePath+"/schemas/"+strings.Repeat("x", 81)+apiQuery, "", http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodGet, path, "", http.StatusNotFound)
+	assertStatus(t, handler, http.MethodPut, path, "{", http.StatusBadRequest)
+	// schemaType is required and constrained: the contract names xml and json.
+	assertStatus(t, handler, http.MethodPut, path, `{"properties":{}}`, http.StatusBadRequest)
+	assertStatus(t, handler, http.MethodPut, path, `{"properties":{"schemaType":"yaml"}}`, http.StatusBadRequest)
+	// PATCH is not in the spec for this family.
+	assertStatus(t, handler, http.MethodPatch, path, `{"properties":{"schemaType":"json"}}`, http.StatusMethodNotAllowed)
+
+	created := request(t, handler, http.MethodPut, path,
+		`{"id":"ignored","properties":{"schemaType":"json","description":"orders","document":{"type":"object"},"provisioningState":"Creating","custom":"kept"}}`)
+	if created.Code != http.StatusCreated {
+		t.Fatalf("create = %d, want 201: %s", created.Code, created.Body.String())
+	}
+	// Long-running in Azure: a poller with nowhere to poll never completes.
+	if created.Header().Get("Azure-AsyncOperation") == "" {
+		t.Error("a long-running create must advertise Azure-AsyncOperation")
+	}
+	var document map[string]any
+	if err := json.Unmarshal(created.Body.Bytes(), &document); err != nil {
+		t.Fatal(err)
+	}
+	if document["id"] == "ignored" {
+		t.Error("the caller's id was echoed instead of the resource's own")
+	}
+	if document["type"] != "Microsoft.ApiManagement/service/schemas" {
+		t.Errorf("type = %v", document["type"])
+	}
+	properties, _ := document["properties"].(map[string]any)
+	if properties["provisioningState"] != "Succeeded" {
+		t.Errorf("provisioningState = %v; it is read-only and server-populated", properties["provisioningState"])
+	}
+	if properties["custom"] != "kept" {
+		t.Error("an unknown property was dropped from the ARM document")
+	}
+	if _, present := properties["value"]; present {
+		t.Error("a json schema must not carry `value`")
+	}
+
+	// Immutable, per the contract. Accepting the change is the leniency
+	// direction: it would work here and fail in a tenant.
+	assertStatus(t, handler, http.MethodPut, path,
+		`{"properties":{"schemaType":"xml","value":"<xs:schema/>"}}`, http.StatusBadRequest)
+
+	updated := request(t, handler, http.MethodPut, path,
+		`{"properties":{"schemaType":"json","description":"changed","document":{"type":"array"}}}`)
+	if updated.Code != http.StatusOK {
+		t.Fatalf("update = %d, want 200: %s", updated.Code, updated.Body.String())
+	}
+
+	head := request(t, handler, http.MethodHead, path, "")
+	if head.Code != http.StatusOK || head.Header().Get("ETag") == "" {
+		t.Fatalf("head = %d etag=%q", head.Code, head.Header().Get("ETag"))
+	}
+	listed := request(t, handler, http.MethodGet, basePath+"/schemas"+apiQuery, "")
+	if !strings.Contains(listed.Body.String(), `"count":1`) {
+		t.Fatalf("list = %s", listed.Body.String())
+	}
+
+	// An xml schema carries `value` and no `document`.
+	xmlPath := basePath + "/schemas/legacy" + apiQuery
+	xmlCreated := request(t, handler, http.MethodPut, xmlPath,
+		`{"properties":{"schemaType":"xml","value":"<xs:schema/>","document":{"ignored":true}}}`)
+	if xmlCreated.Code != http.StatusCreated {
+		t.Fatalf("xml create = %d: %s", xmlCreated.Code, xmlCreated.Body.String())
+	}
+	var xmlDocument map[string]any
+	if err := json.Unmarshal(xmlCreated.Body.Bytes(), &xmlDocument); err != nil {
+		t.Fatal(err)
+	}
+	xmlProperties, _ := xmlDocument["properties"].(map[string]any)
+	if xmlProperties["value"] != "<xs:schema/>" {
+		t.Errorf("xml value = %v", xmlProperties["value"])
+	}
+	if _, present := xmlProperties["document"]; present {
+		t.Error("an xml schema must not carry `document`")
+	}
+
+	assertStatus(t, handler, http.MethodDelete, path, "", http.StatusNoContent)
+	// Deleting what is already gone is not an error.
+	assertStatus(t, handler, http.MethodDelete, path, "", http.StatusNoContent)
+	assertStatus(t, handler, http.MethodGet, path, "", http.StatusNotFound)
+}
+
+// The workspace variant exists in the SDK (WorkspaceGlobalSchema), so the
+// family-blind peeling must serve it rather than refuse it.
+func TestGlobalSchemaIsWorkspaceScoped(t *testing.T) {
+	handler, st := testHandler(t)
+	seedService(t, st)
+	if _, err := st.UpsertWorkspace(model.Workspace{ServiceID: serviceModel().ID(), Name: "team", DisplayName: "Team"}); err != nil {
+		t.Fatal(err)
+	}
+	path := basePath + "/workspaces/team/schemas/orders" + apiQuery
+	created := request(t, handler, http.MethodPut, path, `{"properties":{"schemaType":"json","document":{"type":"object"}}}`)
+	if created.Code != http.StatusCreated {
+		t.Fatalf("workspace create = %d: %s", created.Code, created.Body.String())
+	}
+	var document map[string]any
+	if err := json.Unmarshal(created.Body.Bytes(), &document); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(document["id"].(string), "/workspaces/team/schemas/orders") {
+		t.Errorf("id = %v, want it parented to the workspace", document["id"])
+	}
+	// And the service scope must not see it.
+	listed := request(t, handler, http.MethodGet, basePath+"/schemas"+apiQuery, "")
+	if !strings.Contains(listed.Body.String(), `"count":0`) {
+		t.Errorf("a workspace schema leaked into the service list: %s", listed.Body.String())
+	}
+}
+
+func TestGlobalSchemaStoreAndProjectionEdges(t *testing.T) {
+	// A delete that fails for a reason other than "already gone" is a store
+	// error, not a 204: the caller must not be told the schema is deleted.
+	brokenHandler, brokenStore := testHandler(t)
+	seedService(t, brokenStore)
+	if err := brokenStore.Close(); err != nil {
+		t.Fatal(err)
+	}
+	deleted := request(t, brokenHandler, http.MethodDelete, basePath+"/schemas/orders"+apiQuery, "")
+	if deleted.Code == http.StatusNoContent {
+		t.Error("a failing delete reported 204")
+	}
+
+	// A stored ARM document whose `properties` is not an object. The projection
+	// has to replace it rather than panic on the type assertion.
+	handler, st := testHandler(t)
+	seedService(t, st)
+	if _, err := st.UpsertGlobalSchema(model.GlobalSchema{
+		ServiceID:  serviceModel().ID(),
+		Name:       "odd",
+		SchemaType: "xml",
+		Value:      "<xs:schema/>",
+		Document:   map[string]any{"properties": "not an object"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got := request(t, handler, http.MethodGet, basePath+"/schemas/odd"+apiQuery, "")
+	if got.Code != http.StatusOK {
+		t.Fatalf("get = %d: %s", got.Code, got.Body.String())
+	}
+	var document map[string]any
+	if err := json.Unmarshal(got.Body.Bytes(), &document); err != nil {
+		t.Fatal(err)
+	}
+	properties, ok := document["properties"].(map[string]any)
+	if !ok || properties["value"] != "<xs:schema/>" {
+		t.Errorf("properties = %v, want a rebuilt object carrying the schema", document["properties"])
+	}
+}
+
+func TestGlobalSchemaStoreFailures(t *testing.T) {
+	// Every read path has to report the store's failure rather than an empty
+	// list or a 404, both of which read as "there is nothing here".
+	handler, st := testHandler(t)
+	seedService(t, st)
+	if err := st.Close(); err != nil {
+		t.Fatal(err)
+	}
+	listed := request(t, handler, http.MethodGet, basePath+"/schemas"+apiQuery, "")
+	if listed.Code == http.StatusOK {
+		t.Error("a failing list reported 200")
+	}
+	put := request(t, handler, http.MethodPut, basePath+"/schemas/orders"+apiQuery,
+		`{"properties":{"schemaType":"json","document":{}}}`)
+	if put.Code == http.StatusCreated || put.Code == http.StatusOK {
+		t.Errorf("a failing lookup reported %d", put.Code)
+	}
+}
+
+func TestGlobalSchemaRefusesAnUnparentedWrite(t *testing.T) {
+	// No service seeded, so the row has no scope to hang off. The lookup still
+	// answers "not found" cleanly, and it is the WRITE that fails on the
+	// foreign key — which is the only way to reach that branch, and the reason
+	// a failing upsert must not be reported as a create.
+	handler, _ := testHandler(t)
+	created := request(t, handler, http.MethodPut, basePath+"/schemas/orders"+apiQuery,
+		`{"properties":{"schemaType":"json","document":{"type":"object"}}}`)
+	if created.Code == http.StatusCreated || created.Code == http.StatusOK {
+		t.Fatalf("an unparented write reported %d: %s", created.Code, created.Body.String())
+	}
+}

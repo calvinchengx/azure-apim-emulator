@@ -584,6 +584,10 @@ func TestClosedStoreErrors(t *testing.T) {
 		"get documentation":              func() error { _, err := st.GetDocumentation("doc"); return err },
 		"list documentations":            func() error { _, err := st.ListDocumentations("service"); return err },
 		"delete documentation":           func() error { return st.DeleteDocumentation("doc") },
+		"upsert global schema":           func() error { _, err := st.UpsertGlobalSchema(model.GlobalSchema{}); return err },
+		"get global schema":              func() error { _, err := st.GetGlobalSchema("schema"); return err },
+		"list global schemas":            func() error { _, err := st.ListGlobalSchemas("service"); return err },
+		"delete global schema":           func() error { return st.DeleteGlobalSchema("schema") },
 		"upsert cache":                   func() error { _, err := st.UpsertCache(model.Cache{}); return err },
 		"get cache":                      func() error { _, err := st.GetCache("cache"); return err },
 		"list caches":                    func() error { _, err := st.ListCaches("service"); return err },
@@ -876,6 +880,26 @@ func TestScanFunctionsRejectMalformedRows(t *testing.T) {
 			`CREATE TABLE documentations (id, service_id, name, title, content, document_json, etag)`,
 			`INSERT INTO documentations VALUES ('id', 'service', NULL, '', '', '{}', '')`,
 			func(db *sql.DB) error { _, err := (&Store{db: db}).ListDocumentations("service"); return err },
+		},
+		{
+			"global_schemas",
+			`CREATE TABLE global_schemas (id, service_id, name, schema_type, description, value, schema_json, document_json, etag)`,
+			`INSERT INTO global_schemas VALUES ('id', 'service', NULL, '', '', '', '{}', '{}', '')`,
+			func(db *sql.DB) error { _, err := (&Store{db: db}).ListGlobalSchemas("service"); return err },
+		},
+		{
+			// The two JSON columns decode separately, so a bad one in either
+			// place has to fail rather than yield a half-read schema.
+			"global_schemas schema_json",
+			`CREATE TABLE global_schemas (id, service_id, name, schema_type, description, value, schema_json, document_json, etag)`,
+			`INSERT INTO global_schemas VALUES ('id', 'service', 'n', 'json', '', '', 'not json', '{}', '')`,
+			func(db *sql.DB) error { _, err := (&Store{db: db}).ListGlobalSchemas("service"); return err },
+		},
+		{
+			"global_schemas document_json",
+			`CREATE TABLE global_schemas (id, service_id, name, schema_type, description, value, schema_json, document_json, etag)`,
+			`INSERT INTO global_schemas VALUES ('id', 'service', 'n', 'json', '', '', '{}', 'not json', '')`,
+			func(db *sql.DB) error { _, err := (&Store{db: db}).ListGlobalSchemas("service"); return err },
 		},
 		{
 			"caches",
@@ -3020,5 +3044,22 @@ func TestCredentialManagerRejectsUnencodableDocuments(t *testing.T) {
 	}
 	if _, err := st.UpsertAuthorizationAccessPolicy(model.AuthorizationAccessPolicy{AuthorizationID: "/s/x/authorizations/a", Name: "ap", Document: bad}); err == nil {
 		t.Error("an unencodable access policy document must be reported")
+	}
+}
+
+func TestGlobalSchemaJSONFailures(t *testing.T) {
+	st, err := Open("", clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = st.Close() }()
+	bad := make(chan int)
+	// The two JSON columns are marshalled separately, so each has to refuse
+	// independently rather than one masking the other.
+	if _, err := st.UpsertGlobalSchema(model.GlobalSchema{Schema: map[string]any{"bad": bad}}); err == nil {
+		t.Fatal("global schema document marshal succeeded")
+	}
+	if _, err := st.UpsertGlobalSchema(model.GlobalSchema{Document: map[string]any{"bad": bad}}); err == nil {
+		t.Fatal("global schema ARM document marshal succeeded")
 	}
 }

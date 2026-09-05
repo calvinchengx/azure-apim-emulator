@@ -248,6 +248,22 @@ const families = [
     check: (doc) => doc.loggerType === "applicationInsights",
   },
   {
+    // A LONG-RUNNING create, so the client polls rather than reading the first
+    // response. `beginCreateOrUpdateAndWait` is the whole point of listing it
+    // here: a hand-rolled PUT would pass against a response no poller accepts.
+    family: "schemas",
+    type: "Microsoft.ApiManagement/service/schemas",
+    name: "js-global-schema",
+    create: (id) => client.globalSchema.beginCreateOrUpdateAndWait(resourceGroup, serviceName, id, {
+      schemaType: "json",
+      description: "packaged client",
+      document: { type: "object", properties: { id: { type: "string" } } },
+    }),
+    get: (id) => client.globalSchema.get(resourceGroup, serviceName, id),
+    list: () => client.globalSchema.listByService(resourceGroup, serviceName),
+    check: (doc) => doc.schemaType === "json" && doc.document?.type === "object",
+  },
+  {
     // The last family still resting on `go:` witnesses alone, i.e. on the
     // emulator agreeing with its own client. `documentation` is a first-class
     // operation group in the packaged SDK, so there was never a reason for it

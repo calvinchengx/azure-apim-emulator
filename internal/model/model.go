@@ -210,6 +210,30 @@ type Documentation struct {
 // ID returns the documentation ARM resource ID.
 func (v Documentation) ID() string { return v.ServiceID + "/documentations/" + v.Name }
 
+// GlobalSchema is a schema shared across a service's APIs, at `/schemas/{id}`.
+//
+// NOT the same family as APISchema, which hangs off one API at
+// `/apis/{id}/schemas/{id}`. Azure spells both segments `schemas`, which is why
+// the two are distinguished by depth rather than by name.
+//
+// The field split follows Microsoft's own contract rather than convenience:
+// `value` carries a json-ENCODED STRING for a non-json schema (an XSD), while
+// `document` carries an object for a json schema. A single field would have to
+// guess which one a caller meant.
+type GlobalSchema struct {
+	ServiceID   string
+	Name        string
+	SchemaType  string // "xml" or "json"; the contract marks it Immutable
+	Description string
+	Value       string
+	Schema      map[string]any // properties.document
+	Document    map[string]any // the lossless ARM document
+	ETag        string
+}
+
+// ID returns the global schema ARM resource ID.
+func (v GlobalSchema) ID() string { return v.ServiceID + "/schemas/" + v.Name }
+
 // Certificate is backend client-certificate material or a Key Vault reference.
 type Certificate struct {
 	ServiceID             string

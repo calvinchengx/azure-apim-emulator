@@ -297,6 +297,12 @@ CREATE TABLE IF NOT EXISTS documentations (
   name TEXT NOT NULL, title TEXT NOT NULL, content TEXT NOT NULL,
   document_json TEXT NOT NULL, etag TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS global_schemas (
+  id TEXT PRIMARY KEY, service_id TEXT NOT NULL REFERENCES scopes(id) ON DELETE CASCADE,
+  name TEXT NOT NULL, schema_type TEXT NOT NULL, description TEXT NOT NULL,
+  value TEXT NOT NULL, schema_json TEXT NOT NULL,
+  document_json TEXT NOT NULL, etag TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS authorization_servers (
   id TEXT PRIMARY KEY, service_id TEXT NOT NULL REFERENCES scopes(id) ON DELETE CASCADE,
   name TEXT NOT NULL, display_name TEXT NOT NULL, description TEXT NOT NULL,
@@ -2240,6 +2246,75 @@ func scanDocumentations(rows *sql.Rows, err error) ([]model.Documentation, error
 // DeleteDocumentation removes one documentation article.
 func (s *Store) DeleteDocumentation(id string) error {
 	return deleteScopedResource(s.db, "documentations", id)
+}
+
+// UpsertGlobalSchema creates or replaces a global schema, preserving its ARM
+// document. `schemaType` is Immutable in Microsoft's contract, so the CALLER
+// enforces that on update; the store records what it is given.
+func (s *Store) UpsertGlobalSchema(v model.GlobalSchema) (model.GlobalSchema, error) {
+	v.ETag = newETag()
+	schema, err := json.Marshal(v.Schema)
+	if err != nil {
+		return v, err
+	}
+	document, err := json.Marshal(v.Document)
+	if err != nil {
+		return v, err
+	}
+	_, err = s.db.Exec(`INSERT INTO global_schemas (id, service_id, name, schema_type, description, value, schema_json, document_json, etag)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET schema_type=excluded.schema_type, description=excluded.description,
+        value=excluded.value, schema_json=excluded.schema_json,
+        document_json=excluded.document_json, etag=excluded.etag`,
+		v.ID(), v.ServiceID, v.Name, v.SchemaType, v.Description, v.Value, schema, document, v.ETag)
+	return v, err
+}
+
+// GetGlobalSchema finds one global schema by ARM ID.
+func (s *Store) GetGlobalSchema(id string) (model.GlobalSchema, error) {
+	values, err := scanGlobalSchemas(s.db.Query(`SELECT service_id, name, schema_type, description, value, schema_json, document_json, etag
+      FROM global_schemas WHERE lower(id)=lower(?)`, id))
+	if err != nil {
+		return model.GlobalSchema{}, err
+	}
+	if len(values) == 0 {
+		return model.GlobalSchema{}, ErrNotFound
+	}
+	return values[0], nil
+}
+
+// ListGlobalSchemas returns a scope's global schemas in stable ID order.
+func (s *Store) ListGlobalSchemas(serviceID string) ([]model.GlobalSchema, error) {
+	return scanGlobalSchemas(s.db.Query(`SELECT service_id, name, schema_type, description, value, schema_json, document_json, etag
+      FROM global_schemas WHERE lower(service_id)=lower(?) ORDER BY id`, serviceID))
+}
+
+func scanGlobalSchemas(rows *sql.Rows, err error) ([]model.GlobalSchema, error) {
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	values := make([]model.GlobalSchema, 0)
+	for rows.Next() {
+		var v model.GlobalSchema
+		var schema, document string
+		if err := rows.Scan(&v.ServiceID, &v.Name, &v.SchemaType, &v.Description, &v.Value, &schema, &document, &v.ETag); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal([]byte(schema), &v.Schema); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal([]byte(document), &v.Document); err != nil {
+			return nil, err
+		}
+		values = append(values, v)
+	}
+	return values, rows.Err()
+}
+
+// DeleteGlobalSchema removes one global schema.
+func (s *Store) DeleteGlobalSchema(id string) error {
+	return deleteScopedResource(s.db, "global_schemas", id)
 }
 
 // UpsertAuthorizationServer creates or replaces an OAuth authorization server while preserving its ARM document.
