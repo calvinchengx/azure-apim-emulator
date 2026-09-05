@@ -228,6 +228,28 @@ jobs:
       - run: make setup-graphql
       - run: make test-graphql
 
+  keyvault-witness:
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
+    name: Key Vault witness (real vault, real Entra token, packaged SDK writes)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: make setup-keyvault
+      - run: make test-keyvault
+      # The stack is four containers; leaving them running would starve later
+      # jobs on a self-hosted runner and costs nothing to stop on a hosted one.
+      - if: always()
+        run: make clean-keyvault
+
   websocket-witness:
     needs: changes
     if: needs.changes.outputs.docs_only != 'true'

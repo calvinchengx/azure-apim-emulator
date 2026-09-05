@@ -1217,3 +1217,19 @@ func TestPUTStillRejectsAMisplacedPolicy(t *testing.T) {
 		})
 	}
 }
+
+func TestKeyVaultClientIsOptInAndSeparate(t *testing.T) {
+	// nil unless asked for, so the vault leg cannot loosen API imports by
+	// accident: ImportClient keeps its own verification either way.
+	if got := keyVaultClient(&config.Config{}); got != nil {
+		t.Errorf("keyVaultClient without the opt-in = %v, want nil", got)
+	}
+	client := keyVaultClient(&config.Config{KeyVaultTLSInsecure: true})
+	if client == nil {
+		t.Fatal("keyVaultClient with the opt-in = nil")
+	}
+	transport, ok := client.Transport.(*http.Transport)
+	if !ok || transport.TLSClientConfig == nil || !transport.TLSClientConfig.InsecureSkipVerify {
+		t.Errorf("the opt-in client does not skip verification: %#v", client.Transport)
+	}
+}

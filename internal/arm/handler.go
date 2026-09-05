@@ -71,7 +71,12 @@ type Handler struct {
 	ExportKey      []byte
 	Secrets        keyvault.Retriever
 	AcquireToken   func(context.Context, string, string) (string, error)
-	mutationMu     sync.Mutex
+	// KeyVaultClient overrides ImportClient for the vault leg only, so trusting
+	// a sibling emulator's certificate does not loosen API imports.
+	KeyVaultClient       *http.Client
+	IdentityClientID     string
+	IdentityClientSecret string
+	mutationMu           sync.Mutex
 }
 
 // ServeHTTP routes APIM provider requests.
@@ -4724,7 +4729,11 @@ func (h *Handler) secretRetriever() keyvault.Retriever {
 	if h.Secrets != nil {
 		return h.Secrets
 	}
-	return keyvault.HTTP{Client: h.ImportClient, AcquireToken: h.AcquireToken}
+	client := h.KeyVaultClient
+	if client == nil {
+		client = h.ImportClient
+	}
+	return keyvault.HTTP{Client: client, AcquireToken: h.AcquireToken, ClientID: h.IdentityClientID, ClientSecret: h.IdentityClientSecret}
 }
 
 func (h *Handler) keyVaultNow() time.Time {

@@ -1,0 +1,13 @@
+{
+  "name": "azure-apim-emulator-keyvault-witness",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "preinstall": "npx only-allow pnpm",
+    "test": "node witness.js"
+  },
+  "dependencies": {
+    "@azure/identity": "4.5.0",
+    "@azure/keyvault-secrets": "4.9.0"
+  }
+}

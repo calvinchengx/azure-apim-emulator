@@ -79,9 +79,21 @@ the same managed-identity and HTTPS flow used by Azure:
 - identity selection and permission failures
 - certificate rotation and hostname/backend TLS activation
 
-Live retrieval of the secret payload is implemented. Challenge-based
-managed-identity token acquisition against `entra-emulator` remains assigned
-to the companion-auth slice.
+Live retrieval of the secret payload is implemented, and so is challenge-based
+token acquisition against `entra-emulator`. Set `APIM_IDENTITY_CLIENT_ID` and
+`APIM_IDENTITY_CLIENT_SECRET` to the service's own credentials: when a vault
+answers `401 WWW-Authenticate`, the emulator authenticates to the authority the
+challenge names and asks for the resource it names.
+
+There is no IMDS in this family. Azure APIM holds a managed identity and asks
+IMDS for a token; without credentials configured this emulator still
+approximates that by rewriting the challenge authority's path, which is correct
+only if something actually serves IMDS there. Pointed at `entra-emulator` it
+reaches the operator portal's catch-all and the retrieval fails on
+`<!doctype html>`, so configure the credentials when using a vault that
+challenges. `e2e/keyvault` is the witness for the whole path, and
+`APIM_KEYVAULT_TLS_INSECURE` accepts a sibling emulator's self-signed
+certificate on that leg only.
 
 Static local named values remain available without a companion emulator.
 

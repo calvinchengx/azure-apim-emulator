@@ -37,27 +37,39 @@ type Config struct {
 	// owner, whose access does not come from an assignment either.
 	RBACOwner string
 
-	EntraIssuer      string
-	EntraJWKSURL     string
-	EntraTLSInsecure bool
+	EntraIssuer string
+	// The service's own credentials, used to answer a Key Vault Bearer
+	// challenge. This family has no IMDS, so a managed identity is emulated by
+	// authenticating to the authority the challenge names.
+	IdentityClientID     string
+	IdentityClientSecret string
+	EntraJWKSURL         string
+	EntraTLSInsecure     bool
+	// The vault leg. Every emulator in this family serves a self-signed
+	// certificate, so talking to a sibling needs the same opt-out entra already
+	// has. Backends keep their own per-backend validateCertificateChain.
+	KeyVaultTLSInsecure bool
 }
 
 // FromEnvPartial reads configuration without validating it.
 func FromEnvPartial() *Config {
 	return &Config{
-		Addr:             envOr("APIM_ADDR", ":8445"),
-		DataDir:          envDefault("APIM_DATA_DIR", DefaultDataDir),
-		DefaultService:   envOr("APIM_DEFAULT_SERVICE", "emulator"),
-		Location:         envOr("APIM_LOCATION", "local"),
-		DisableTLS:       boolEnv("APIM_DISABLE_TLS"),
-		DisableAuth:      boolEnv("APIM_DISABLE_AUTH"),
-		StrictPolicies:   boolEnv("APIM_STRICT_POLICIES"),
-		EnforceRBAC:      boolEnv("APIM_ENFORCE_RBAC"),
-		EnforceTiers:     boolEnv("APIM_ENFORCE_TIERS"),
-		RBACOwner:        os.Getenv("APIM_RBAC_OWNER"),
-		EntraIssuer:      os.Getenv("APIM_ENTRA_ISSUER"),
-		EntraJWKSURL:     os.Getenv("APIM_ENTRA_JWKS_URL"),
-		EntraTLSInsecure: boolEnv("APIM_ENTRA_TLS_INSECURE"),
+		Addr:                 envOr("APIM_ADDR", ":8445"),
+		DataDir:              envDefault("APIM_DATA_DIR", DefaultDataDir),
+		DefaultService:       envOr("APIM_DEFAULT_SERVICE", "emulator"),
+		Location:             envOr("APIM_LOCATION", "local"),
+		DisableTLS:           boolEnv("APIM_DISABLE_TLS"),
+		DisableAuth:          boolEnv("APIM_DISABLE_AUTH"),
+		StrictPolicies:       boolEnv("APIM_STRICT_POLICIES"),
+		EnforceRBAC:          boolEnv("APIM_ENFORCE_RBAC"),
+		EnforceTiers:         boolEnv("APIM_ENFORCE_TIERS"),
+		RBACOwner:            os.Getenv("APIM_RBAC_OWNER"),
+		EntraIssuer:          os.Getenv("APIM_ENTRA_ISSUER"),
+		IdentityClientID:     os.Getenv("APIM_IDENTITY_CLIENT_ID"),
+		IdentityClientSecret: os.Getenv("APIM_IDENTITY_CLIENT_SECRET"),
+		EntraJWKSURL:         os.Getenv("APIM_ENTRA_JWKS_URL"),
+		EntraTLSInsecure:     boolEnv("APIM_ENTRA_TLS_INSECURE"),
+		KeyVaultTLSInsecure:  boolEnv("APIM_KEYVAULT_TLS_INSECURE"),
 	}
 }
 
