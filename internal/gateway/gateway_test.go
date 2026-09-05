@@ -10,6 +10,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -2429,5 +2430,142 @@ func TestPostponedIncrementDependsOnTheResponse(t *testing.T) {
 	}
 	if code := call(); code != http.StatusTooManyRequests {
 		t.Fatalf("call after the allowance was consumed = %d, want 429", code)
+	}
+}
+
+// rawWebSocketBackend answers one handshake with a canned 101 and records the
+// request it was sent. Raw rather than a websocket library on purpose: the
+// defect these tests exist for was invisible precisely because both ends spoke
+// x/net/websocket, which is lax about the subprotocol on both sides.
+func rawWebSocketBackend(t *testing.T, answer string, seen chan<- string) string {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+	go func() {
+		conn, acceptErr := listener.Accept()
+		if acceptErr != nil {
+			return
+		}
+		defer func() { _ = conn.Close() }()
+		reader := bufio.NewReader(conn)
+		request, readErr := http.ReadRequest(reader)
+		if readErr != nil {
+			seen <- "«unreadable request»"
+			return
+		}
+		seen <- request.Header.Get("Sec-WebSocket-Protocol")
+		response := "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
+		if answer != "" {
+			response += "Sec-WebSocket-Protocol: " + answer + "\r\n"
+		}
+		_, _ = conn.Write([]byte(response + "\r\n"))
+		// Hold the connection open long enough for the client to read.
+		time.Sleep(50 * time.Millisecond)
+	}()
+	return "http://" + listener.Addr().String()
+}
+
+func TestWebSocketSubprotocolIsTheBackendsChoice(t *testing.T) {
+	// The gateway must not answer a subprotocol on the backend's behalf. Before
+	// the tunnel it reflected the CLIENT's request, so `refused` connected
+	// anyway and `two offered` was answered with both, which names no single
+	// selection. Both were green under the x/net-on-both-ends tests.
+	for _, testCase := range []struct {
+		name    string
+		offer   string
+		answer  string
+		want    string
+		wantSaw string
+	}{
+		{"the backend refuses, so the client is told nothing", "binary", "", "", "binary"},
+		{"the backend picks the second of two", "binary, chosen", "chosen", "chosen", "binary, chosen"},
+		{"the backend picks the only one offered", "binary", "binary", "binary", "binary"},
+		{"a subprotocol that is not the literal binary still reaches the backend", "graphql-ws", "graphql-ws", "graphql-ws", "graphql-ws"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			seen := make(chan string, 1)
+			backendURL := rawWebSocketBackend(t, testCase.answer, seen)
+			runtime := New("emulator", nil)
+			route := &Route{
+				API:        model.API{Name: "socket", Path: "socket", ServiceURL: backendURL},
+				Operations: []model.Operation{{Method: http.MethodGet, URLTemplate: "/"}},
+			}
+			runtime.current.Store(&Snapshot{Services: map[string]*Service{"emulator": {Name: "emulator", Routes: []*Route{route}}}})
+			front := httptest.NewServer(runtime)
+			defer front.Close()
+
+			conn, err := net.Dial("tcp", strings.TrimPrefix(front.URL, "http://"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = conn.Close() }()
+			// Generated rather than pasted. A real client sends 16 fresh random
+			// bytes, and a base64 literal of that shape is indistinguishable
+			// from a credential to a secret scanner, which is what it looked
+			// like to gitleaks the first time this was written.
+			nonce := make([]byte, 16)
+			if _, err := rand.Read(nonce); err != nil {
+				t.Fatal(err)
+			}
+			handshake := "GET /socket HTTP/1.1\r\nHost: gateway.test\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n" +
+				"Sec-WebSocket-Key: " + base64.StdEncoding.EncodeToString(nonce) + "\r\nSec-WebSocket-Version: 13\r\n" +
+				"Sec-WebSocket-Protocol: " + testCase.offer + "\r\n\r\n"
+			if _, err := conn.Write([]byte(handshake)); err != nil {
+				t.Fatal(err)
+			}
+			_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+			response, err := http.ReadResponse(bufio.NewReader(conn), nil)
+			if err != nil {
+				t.Fatalf("reading the handshake response: %v", err)
+			}
+			defer func() { _ = response.Body.Close() }()
+			if response.StatusCode != http.StatusSwitchingProtocols {
+				t.Fatalf("status = %d, want 101", response.StatusCode)
+			}
+			if got := response.Header.Get("Sec-WebSocket-Protocol"); got != testCase.want {
+				t.Errorf("client was told the subprotocol is %q, but the backend answered %q", got, testCase.want)
+			}
+			select {
+			case saw := <-seen:
+				// The backend must receive the offer the client made, verbatim.
+				// The old code forwarded only the literal `binary`.
+				if saw != testCase.wantSaw {
+					t.Errorf("the backend was offered %q, but the client offered %q", saw, testCase.wantSaw)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("the backend never saw a handshake")
+			}
+		})
+	}
+}
+
+func TestWebSocketBackendUnreachableIsAGatewayError(t *testing.T) {
+	// A closed port. The dial happens BEFORE the hijack precisely so this can
+	// still be an ARM-shaped body rather than a dead socket.
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	address := listener.Addr().String()
+	_ = listener.Close()
+	runtime := New("emulator", nil)
+	route := &Route{
+		API:        model.API{Name: "socket", Path: "socket", ServiceURL: "http://" + address},
+		Operations: []model.Operation{{Method: http.MethodGet, URLTemplate: "/"}},
+	}
+	runtime.current.Store(&Snapshot{Services: map[string]*Service{"emulator": {Name: "emulator", Routes: []*Route{route}}}})
+	request := httptest.NewRequest(http.MethodGet, "/socket", nil)
+	request.Header.Set("Upgrade", "websocket")
+	request.Header.Set("Connection", "Upgrade")
+	recorder := httptest.NewRecorder()
+	runtime.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502", recorder.Code)
+	}
+	if !strings.Contains(recorder.Body.String(), "BackendConnectionFailure") {
+		t.Errorf("body = %s, want a BackendConnectionFailure envelope", recorder.Body.String())
 	}
 }
