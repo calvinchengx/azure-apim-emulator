@@ -11,7 +11,7 @@ endif
 
 COMPOSE = docker compose -f compose.yaml
 
-.PHONY: build docs-build docs-serve test test-coverage test-differential test-sdks setup-sdks \
+.PHONY: build docs-build docs-serve setup-websocket test-websocket test test-coverage test-differential test-sdks setup-sdks \
         test-operation-inventory setup-graphql test-graphql setup-grpc test-grpc setup-soap test-soap setup-credential test-credential setup-openai test-openai setup-mcp test-mcp setup-openid test-openid verify \
         check-inventory up down clean status doctor ps logs
 
@@ -52,6 +52,15 @@ test-arm-documents:
 # The GraphQL witness needs only Go and pnpm, so it runs as its own job rather
 # than behind setup-sdks' dotnet and python installs. Keeping it separate also
 # means a break in one of those suites cannot hide a GraphQL regression.
+# The WebSocket/SSE witness needs only Go and pnpm. Its own job for the usual
+# reason: a streaming regression must not hide inside a suite that also covers
+# GraphQL or gRPC.
+setup-websocket:
+	pnpm install --frozen-lockfile
+
+test-websocket:
+	APIM_RUN_EXTERNAL_SDK_TESTS=1 go test -count=1 -v -run 'TestOfficialManagementSDKs/websocket' ./e2e/sdk
+
 setup-graphql:
 	pnpm install --frozen-lockfile
 

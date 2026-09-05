@@ -159,6 +159,7 @@
       "sdk:TestGoManagementSDKConfiguresProtectedGateway/authorization-server"
     ],
     "canonical documentation ARM documents": [
+      "ci:arm-documents-witness",
       "go:TestDocumentationLifecycle",
       "go:TestDocumentationBranches"
     ],
@@ -190,6 +191,7 @@
       "go:TestControlAndDispatchEndpoints"
     ],
     "WebSocket/SSE": [
+      "ci:websocket-witness",
       "go:TestWebSocketGatewayTunnel",
       "go:TestWebSocketRequestDetection",
       "go:TestWriteGatewayBodyFlushesSSE"

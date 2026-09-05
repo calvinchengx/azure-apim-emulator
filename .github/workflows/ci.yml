@@ -228,6 +228,28 @@ jobs:
       - run: make setup-graphql
       - run: make test-graphql
 
+  websocket-witness:
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
+    name: WebSocket/SSE witness (ws server, undici client, measured flushing)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: make setup-websocket
+      - run: make test-websocket
+
   grpc-witness:
     needs: changes
     if: needs.changes.outputs.docs_only != 'true'
