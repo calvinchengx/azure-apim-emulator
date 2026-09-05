@@ -10,6 +10,7 @@ packages:
   - e2e/mcp
   - e2e/openid
   - e2e/websocket
+  - e2e/keyvault
 
 # pnpm 10 blocks dependency build scripts by default; allow the ones Astro
 # needs to compile native/optimized assets.

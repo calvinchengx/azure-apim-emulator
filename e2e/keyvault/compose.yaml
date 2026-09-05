@@ -1,0 +1,142 @@
+# The Key Vault witness stack: four emulators, none of which is a stub.
+#
+# EVERY MEMBER IS HERE BECAUSE THE FLOW NEEDS IT, not for realism's sake:
+#
+#   entra-emulator     issues the token, and is the authority the vault's 401
+#                      challenge advertises
+#   arm-emulator       holds the vault resource and the role assignment; the
+#                      vault polls ARM to decide who may read a secret
+#   arm-seed           creates both, and grants Key Vault Secrets Officer to the
+#                      seeded daemon app
+#   keyvault-emulator  the vault: it really does answer 401 WWW-Authenticate and
+#                      validate the token against entra's JWKS at the vault
+#                      audience
+#
+# APIM RUNS IN A CONTAINER rather than in-process, which every other witness in
+# this repo does. It has to: the vault's challenge names `entra-emulator:8443`,
+# a Docker network name, and a host process cannot resolve it. Pointing the
+# vault at localhost instead would break the vault's own JWKS fetch, since
+# localhost inside that container is the vault. Putting apim on the network is
+# the only arrangement where both legs resolve the same names a deployment does.
+services:
+  entra-emulator:
+    image: ghcr.io/calvinchengx/entra-emulator:${ENTRA_EMULATOR_VERSION:-0.9.0}
+    environment:
+      ORIGIN_MODE: compat
+      PUBLIC_ORIGIN: "https://entra-emulator:8443"
+    ports:
+      - "${ENTRA_PORT:-8443}:8443"
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/entra-emulator", "healthcheck"]
+      interval: 5s
+      timeout: 2s
+      retries: 10
+
+  arm-emulator:
+    image: ghcr.io/calvinchengx/arm-emulator:${ARM_EMULATOR_VERSION:-0.4.1}
+    depends_on:
+      entra-emulator:
+        condition: service_healthy
+    environment:
+      ARM_ENTRA_ISSUER: "https://entra-emulator:8443/6f89cf12-978b-4d23-ac18-9ef0c127cf87/v2.0"
+      ARM_ENTRA_TLS_INSECURE: "true"
+      ARM_DATA_DIR: ""
+    ports:
+      - "${ARM_PORT:-8445}:8445"
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/arm-emulator", "healthcheck"]
+      interval: 5s
+      timeout: 2s
+      retries: 10
+
+  arm-seed:
+    image: python:3.12-alpine
+    restart: "no"
+    depends_on:
+      arm-emulator:
+        condition: service_healthy
+    environment:
+      SEED_ENTRA_URL: "https://entra-emulator:8443"
+      SEED_ARM_URL: "https://arm-emulator:8445"
+      SEED_TENANT_ID: "6f89cf12-978b-4d23-ac18-9ef0c127cf87"
+      SEED_SUBSCRIPTION_ID: "6082bfda-63d0-46f4-8272-ae9195139feb"
+      SEED_RESOURCE_GROUP: "emulator-rg"
+      SEED_VAULT_NAME: "emulator"
+      SEED_CLIENT_ID: "00d88624-f0d7-46f6-a641-6232c2608928"
+      SEED_CLIENT_SECRET: "daemon-app-secret"
+    volumes:
+      - ./seed-arm.py:/seed.py:ro
+    command: ["python3", "/seed.py"]
+
+  keyvault-emulator:
+    image: ghcr.io/calvinchengx/azure-keyvault-emulator:${KEYVAULT_EMULATOR_VERSION:-0.7.0}
+    depends_on:
+      arm-seed:
+        condition: service_completed_successfully
+    environment:
+      KV_ENTRA_ISSUER: "https://entra-emulator:8443/6f89cf12-978b-4d23-ac18-9ef0c127cf87/v2.0"
+      KV_ENTRA_TLS_INSECURE: "true"
+      KV_ARM_URL: "https://arm-emulator:8445"
+      KV_ARM_RESOURCE_GROUP: "emulator-rg"
+      KV_DATA_DIR: ""
+    ports:
+      - "${KV_PORT:-8444}:8444"
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/azure-keyvault-emulator", "healthcheck"]
+      interval: 5s
+      timeout: 2s
+      retries: 10
+
+  azure-apim-emulator:
+    build:
+      context: ../..
+    depends_on:
+      keyvault-emulator:
+        condition: service_healthy
+    environment:
+      APIM_ENTRA_ISSUER: "https://entra-emulator:8443/6f89cf12-978b-4d23-ac18-9ef0c127cf87/v2.0"
+      APIM_ENTRA_JWKS_URL: "https://entra-emulator:8443/6f89cf12-978b-4d23-ac18-9ef0c127cf87/discovery/v2.0/keys"
+      APIM_ENTRA_TLS_INSECURE: "true"
+      APIM_DISABLE_AUTH: "true" # the witness drives ARM directly; auth is not what this proves
+      APIM_DEFAULT_SERVICE: emulator
+      APIM_DATA_DIR: ""
+      # The service's own credentials. This is what answers the vault's
+      # challenge, and the whole reason this witness can exist.
+      # Sibling emulators serve self-signed certificates.
+      APIM_KEYVAULT_TLS_INSECURE: "true"
+      APIM_IDENTITY_CLIENT_ID: "00d88624-f0d7-46f6-a641-6232c2608928"
+      APIM_IDENTITY_CLIENT_SECRET: "daemon-app-secret"
+    ports:
+      - "${APIM_PORT:-8446}:8445"
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/azure-apim-emulator", "healthcheck"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # THE WITNESS RUNS ON THE NETWORK TOO, and that is not incidental. Driven from
+  # the host, @azure/identity fetches entra's discovery document over a
+  # published port, reads endpoints that name `entra-emulator:8443`, and fails
+  # to resolve them. Every participant addressing the same names is the only
+  # arrangement where the secret identifier apim is given is the one a
+  # deployment would use.
+  witness:
+    image: node:22-alpine
+    profiles: [witness]
+    depends_on:
+      azure-apim-emulator:
+        condition: service_healthy
+    environment:
+      ENTRA_URL: "https://entra-emulator:8443"
+      KV_URL: "https://keyvault-emulator:8444"
+      APIM_URL: "https://azure-apim-emulator:8445"
+      # Self-signed certificates are what a local stack is. The witness proves
+      # the protocol, not the PKI.
+      NODE_TLS_REJECT_UNAUTHORIZED: "0"
+    # The REPO ROOT, not just this directory: pnpm links every dependency into
+    # ../../node_modules/.pnpm, so mounting the leaf alone gives a tree of
+    # symlinks pointing at nothing.
+    working_dir: /repo/e2e/keyvault
+    volumes:
+      - ../..:/repo:ro
+    command: ["node", "witness.js"]

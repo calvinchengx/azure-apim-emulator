@@ -11,7 +11,7 @@ endif
 
 COMPOSE = docker compose -f compose.yaml
 
-.PHONY: build docs-build docs-serve setup-websocket test-websocket test test-coverage test-differential test-sdks setup-sdks \
+.PHONY: build docs-build docs-serve setup-websocket test-websocket setup-keyvault test-keyvault clean-keyvault test test-coverage test-differential test-sdks setup-sdks \
         test-operation-inventory setup-graphql test-graphql setup-grpc test-grpc setup-soap test-soap setup-credential test-credential setup-openai test-openai setup-mcp test-mcp setup-openid test-openid verify \
         check-inventory up down clean status doctor ps logs
 
@@ -55,6 +55,19 @@ test-arm-documents:
 # The WebSocket/SSE witness needs only Go and pnpm. Its own job for the usual
 # reason: a streaming regression must not hide inside a suite that also covers
 # GraphQL or gRPC.
+# The Key Vault witness needs DOCKER, unlike every other witness here, because
+# the vault's 401 challenge names container hostnames and both apim and the
+# witness have to resolve them. See e2e/keyvault/compose.yaml.
+setup-keyvault:
+	pnpm install --frozen-lockfile
+	docker compose -f e2e/keyvault/compose.yaml up -d --build --wait
+
+test-keyvault:
+	docker compose -f e2e/keyvault/compose.yaml --profile witness run --rm witness
+
+clean-keyvault:
+	docker compose -f e2e/keyvault/compose.yaml --profile witness down -v
+
 setup-websocket:
 	pnpm install --frozen-lockfile
 

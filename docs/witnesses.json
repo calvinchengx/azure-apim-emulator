@@ -170,6 +170,7 @@
       "sdk:TestGoManagementSDKConfiguresProtectedGateway/certificate"
     ],
     "Key Vault secret retrieval": [
+      "ci:keyvault-witness",
       "go:TestKeyVaultRetrieval",
       "go:TestHTTPGetSecret"
     ],

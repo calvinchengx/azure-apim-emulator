@@ -2,11 +2,13 @@
 package server
 
 import (
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"log"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/calvinchengx/azure-apim-emulator/internal/arm"
 	"github.com/calvinchengx/azure-apim-emulator/internal/auth"
@@ -47,6 +49,20 @@ type Server struct {
 }
 
 // New wires a server. Overrides are intended for in-process tests.
+// keyVaultClient is nil unless the vault leg needs to accept a sibling
+// emulator's self-signed certificate, in which case ImportClient is left alone.
+func keyVaultClient(cfg *config.Config) *http.Client {
+	if !cfg.KeyVaultTLSInsecure {
+		return nil
+	}
+	return &http.Client{
+		Timeout: 10 * time.Second,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS12}, //nolint:gosec // opt-in, for sibling emulators
+		},
+	}
+}
+
 func New(cfg *config.Config, validator auth.RequestValidator, backendClient, jwksClient *http.Client) (*Server, error) {
 	ck := clock.New()
 	st, err := store.Open(cfg.DataDir, ck)
@@ -79,8 +95,11 @@ func New(cfg *config.Config, validator auth.RequestValidator, backendClient, jwk
 		ConfirmConsent: func(providerID, authorizationID, code string) error {
 			return runtime.CredentialConfirmConsent(st, providerID, authorizationID, code)
 		},
-		ImportClient: backendClient,
-		ExportKey:    []byte(store.NewOpaqueID()),
+		ImportClient:         backendClient,
+		KeyVaultClient:       keyVaultClient(cfg),
+		IdentityClientID:     cfg.IdentityClientID,
+		IdentityClientSecret: cfg.IdentityClientSecret,
+		ExportKey:            []byte(store.NewOpaqueID()),
 	}
 	seed := model.Service{SubscriptionID: defaultSubscription, ResourceGroup: defaultResourceGroup, Name: cfg.DefaultService, Location: cfg.Location, SKUName: "Developer", SKUCapacity: 1, PublisherName: "Local Emulator", PublisherEmail: "local@azure-apim-emulator.test"}
 	if _, err := st.GetService(seed.ID()); errors.Is(err, store.ErrNotFound) {

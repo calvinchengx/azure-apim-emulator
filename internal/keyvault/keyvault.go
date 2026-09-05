@@ -58,6 +58,11 @@ func Classify(err error) (code, message string) {
 type HTTP struct {
 	Client       *http.Client
 	AcquireToken func(context.Context, string, string) (string, error)
+	// ClientID and ClientSecret are the service's own credentials, used to
+	// answer a vault's Bearer challenge. See acquireClientCredentialsToken for
+	// why this exists rather than an IMDS probe.
+	ClientID     string
+	ClientSecret string
 }
 
 // GetSecret GETs a versioned or versionless secret identifier.
@@ -139,7 +144,106 @@ func (h HTTP) acquire(ctx context.Context, resource, authorization string) (stri
 		}
 		return token, nil
 	}
+	if h.ClientID != "" {
+		return h.acquireClientCredentialsToken(ctx, resource, authorization)
+	}
 	return acquireManagedIdentityToken(ctx, h.Client, resource, authorization)
+}
+
+// acquireClientCredentialsToken answers the challenge against the authority
+// that issued it.
+//
+// WHY THIS EXISTS RATHER THAN THE IMDS PROBE BELOW. Azure APIM holds a managed
+// identity and asks IMDS at 169.254.169.254 for a token. There is no IMDS in
+// this family, and `acquireManagedIdentityToken` approximates one by rewriting
+// the challenge authority's PATH to /metadata/identity/oauth2/token while
+// keeping its host. Pointed at entra-emulator that resolves to the operator
+// portal's catch-all, which answers 200 with `<!doctype html>`, and the
+// retrieval fails with "invalid character '<'". Measured, against
+// azure-keyvault-emulator, which docs/00-charter-and-parity.md names as this
+// row's reference.
+//
+// The challenge already names the authority that issued it and the resource it
+// wants a token for, so the honest emulation is to authenticate to THAT
+// authority with the service's own credentials. fabric-emulator resolves Key
+// Vault secrets the same way (internal/entra MintServicePrincipalToken), and
+// for the same reason.
+//
+// The IMDS path stays for anyone pointing this at a real IMDS; it is used only
+// when no credentials are configured.
+func (h HTTP) acquireClientCredentialsToken(ctx context.Context, resource, authorization string) (string, error) {
+	endpoint, err := clientCredentialsTokenURL(authorization)
+	if err != nil {
+		return "", err
+	}
+	form := url.Values{
+		"grant_type":    {"client_credentials"},
+		"client_id":     {h.ClientID},
+		"client_secret": {h.ClientSecret},
+		"scope":         {defaultScope(resource)},
+	}
+	client := h.Client
+	if client == nil {
+		client = http.DefaultClient
+	}
+	request, err := newHTTPRequest(ctx, http.MethodPost, endpoint, strings.NewReader(form.Encode()))
+	if err != nil {
+		return "", err
+	}
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	response, err := client.Do(request)
+	if err != nil {
+		return "", err
+	}
+	defer response.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+	if err != nil {
+		return "", err
+	}
+	if response.StatusCode != http.StatusOK {
+		// Named as the AUTHORITY, not the vault. Reusing the Key Vault message
+		// here produced "Key Vault returned HTTP 401" for a refusal by the STS,
+		// which sends the reader to the wrong service.
+		return "", &StatusError{
+			Code:    "Unauthorized",
+			Message: fmt.Sprintf("the authority refused the service's credentials (HTTP %d): %s", response.StatusCode, strings.TrimSpace(string(body))),
+			Status:  http.StatusUnauthorized,
+		}
+	}
+	var document struct {
+		AccessToken string `json:"access_token"`
+	}
+	if err := json.Unmarshal(body, &document); err != nil {
+		return "", &StatusError{Code: "Unauthorized", Message: "the token endpoint did not return JSON: " + err.Error(), Status: http.StatusUnauthorized}
+	}
+	if strings.TrimSpace(document.AccessToken) == "" {
+		return "", &StatusError{Code: "Unauthorized", Message: "the token endpoint returned no access_token.", Status: http.StatusUnauthorized}
+	}
+	return document.AccessToken, nil
+}
+
+// clientCredentialsTokenURL turns a challenge authority into its token
+// endpoint. The authority carries the tenant, so nothing else needs configuring.
+func clientCredentialsTokenURL(authorization string) (string, error) {
+	parsed, err := url.Parse(strings.TrimSpace(authorization))
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return "", &StatusError{Code: "Unauthorized", Message: "Key Vault challenge authorization must be an absolute URL.", Status: http.StatusUnauthorized}
+	}
+	if !strings.Contains(strings.ToLower(parsed.Path), "oauth2/") {
+		parsed.Path = strings.TrimRight(parsed.Path, "/") + "/oauth2/v2.0/token"
+	}
+	return parsed.String(), nil
+}
+
+// defaultScope converts the challenge's resource into a v2.0 scope. A vault
+// advertises `https://vault.azure.net`; the token endpoint wants
+// `https://vault.azure.net/.default`.
+func defaultScope(resource string) string {
+	trimmed := strings.TrimSpace(resource)
+	if trimmed == "" || strings.HasSuffix(trimmed, "/.default") {
+		return trimmed
+	}
+	return strings.TrimRight(trimmed, "/") + "/.default"
 }
 
 func acquireManagedIdentityToken(ctx context.Context, client *http.Client, resource, authorization string) (string, error) {
