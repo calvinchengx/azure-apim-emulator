@@ -28,9 +28,9 @@
   ],
   "summary": {
     "total": 611,
-    "routed": 367,
-    "absent": 124,
-    "unmeasured": 120
+    "routed": 373,
+    "absent": 115,
+    "unmeasured": 123
   },
   "byGroup": {
     "AllPolicies": {
@@ -259,9 +259,9 @@
       "unmeasured": 2
     },
     "GlobalSchema": {
-      "routed": 0,
-      "absent": 5,
-      "unmeasured": 0
+      "routed": 3,
+      "absent": 0,
+      "unmeasured": 2
     },
     "GraphQLApiResolver": {
       "routed": 6,
@@ -614,9 +614,9 @@
       "unmeasured": 3
     },
     "WorkspaceGlobalSchema": {
-      "routed": 0,
-      "absent": 4,
-      "unmeasured": 1
+      "routed": 3,
+      "absent": 0,
+      "unmeasured": 2
     },
     "WorkspaceGroup": {
       "routed": 6,
@@ -2122,36 +2122,36 @@
     {
       "operationId": "GlobalSchema_CreateOrUpdate",
       "method": "PUT",
-      "verdict": "absent",
-      "status": 404
+      "verdict": "routed",
+      "status": 400
     },
     {
       "operationId": "GlobalSchema_Delete",
       "method": "DELETE",
-      "verdict": "absent",
-      "status": 404,
-      "setupStatus": 404
+      "verdict": "routed",
+      "status": 204,
+      "setupStatus": 400
     },
     {
       "operationId": "GlobalSchema_Get",
       "method": "GET",
-      "verdict": "absent",
+      "verdict": "unmeasured",
       "status": 404,
-      "setupStatus": 404
+      "setupStatus": 400
     },
     {
       "operationId": "GlobalSchema_GetEntityTag",
       "method": "HEAD",
-      "verdict": "absent",
+      "verdict": "unmeasured",
       "status": 404,
-      "setupStatus": 404
+      "setupStatus": 400
     },
     {
       "operationId": "GlobalSchema_ListByService",
       "method": "GET",
-      "verdict": "absent",
-      "status": 404,
-      "setupStatus": 404
+      "verdict": "routed",
+      "status": 200,
+      "setupStatus": 405
     },
     {
       "operationId": "GraphQLApiResolverPolicy_CreateOrUpdate",
@@ -4188,36 +4188,36 @@
     {
       "operationId": "WorkspaceGlobalSchema_CreateOrUpdate",
       "method": "PUT",
-      "verdict": "absent",
-      "status": 404
+      "verdict": "routed",
+      "status": 400
     },
     {
       "operationId": "WorkspaceGlobalSchema_Delete",
       "method": "DELETE",
-      "verdict": "absent",
-      "status": 404,
-      "setupStatus": 404
+      "verdict": "routed",
+      "status": 204,
+      "setupStatus": 400
     },
     {
       "operationId": "WorkspaceGlobalSchema_Get",
       "method": "GET",
-      "verdict": "absent",
+      "verdict": "unmeasured",
       "status": 404,
-      "setupStatus": 404
+      "setupStatus": 400
     },
     {
       "operationId": "WorkspaceGlobalSchema_GetEntityTag",
       "method": "HEAD",
-      "verdict": "absent",
+      "verdict": "unmeasured",
       "status": 404,
-      "setupStatus": 404
+      "setupStatus": 400
     },
     {
       "operationId": "WorkspaceGlobalSchema_ListByService",
       "method": "GET",
-      "verdict": "unmeasured",
-      "status": 404,
-      "setupStatus": 404
+      "verdict": "routed",
+      "status": 200,
+      "setupStatus": 405
     },
     {
       "operationId": "WorkspaceGroupUser_CheckEntityExists",
