@@ -248,6 +248,23 @@ const families = [
     check: (doc) => doc.loggerType === "applicationInsights",
   },
   {
+    // The last family still resting on `go:` witnesses alone, i.e. on the
+    // emulator agreeing with its own client. `documentation` is a first-class
+    // operation group in the packaged SDK, so there was never a reason for it
+    // to be the exception; it was simply missed when the other nineteen moved.
+    family: "documentations",
+    type: "Microsoft.ApiManagement/service/documentations",
+    name: "js-documentation",
+    create: (id) => client.documentation.createOrUpdate(resourceGroup, serviceName, id, {
+      title: "Packaged client documentation",
+      content: "# Written by the packaged client",
+    }),
+    get: (id) => client.documentation.get(resourceGroup, serviceName, id),
+    list: () => client.documentation.listByService(resourceGroup, serviceName),
+    check: (doc) => doc.title === "Packaged client documentation"
+      && (doc.content ?? "").startsWith("# Written by"),
+  },
+  {
     family: "diagnostics",
     type: "Microsoft.ApiManagement/service/diagnostics",
     name: "applicationinsights",
