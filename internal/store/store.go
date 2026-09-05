@@ -304,6 +304,11 @@ CREATE TABLE IF NOT EXISTS global_schemas (
   value TEXT NOT NULL, schema_json TEXT NOT NULL,
   document_json TEXT NOT NULL, etag TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS policy_restrictions (
+  id TEXT PRIMARY KEY, service_id TEXT NOT NULL REFERENCES scopes(id) ON DELETE CASCADE,
+  name TEXT NOT NULL, scope TEXT NOT NULL, require_base TEXT NOT NULL,
+  document_json TEXT NOT NULL, etag TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS tenant_access (
   id TEXT PRIMARY KEY, service_id TEXT NOT NULL REFERENCES scopes(id) ON DELETE CASCADE,
   name TEXT NOT NULL, principal_id TEXT NOT NULL,
@@ -2350,6 +2355,66 @@ func scanGlobalSchemas(rows *sql.Rows, err error) ([]model.GlobalSchema, error) 
 // DeleteGlobalSchema removes one global schema.
 func (s *Store) DeleteGlobalSchema(id string) error {
 	return deleteScopedResource(s.db, "global_schemas", id)
+}
+
+// UpsertPolicyRestriction creates or replaces a policy restriction, preserving
+// its ARM document.
+func (s *Store) UpsertPolicyRestriction(v model.PolicyRestriction) (model.PolicyRestriction, error) {
+	v.ETag = newETag()
+	document, err := json.Marshal(v.Document)
+	if err != nil {
+		return v, err
+	}
+	_, err = s.db.Exec(`INSERT INTO policy_restrictions (id, service_id, name, scope, require_base, document_json, etag)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET scope=excluded.scope, require_base=excluded.require_base,
+        document_json=excluded.document_json, etag=excluded.etag`,
+		v.ID(), v.ServiceID, v.Name, v.Scope, v.RequireBase, document, v.ETag)
+	return v, err
+}
+
+// GetPolicyRestriction finds one policy restriction by ARM ID.
+func (s *Store) GetPolicyRestriction(id string) (model.PolicyRestriction, error) {
+	values, err := scanPolicyRestrictions(s.db.Query(`SELECT service_id, name, scope, require_base, document_json, etag
+      FROM policy_restrictions WHERE lower(id)=lower(?)`, id))
+	if err != nil {
+		return model.PolicyRestriction{}, err
+	}
+	if len(values) == 0 {
+		return model.PolicyRestriction{}, ErrNotFound
+	}
+	return values[0], nil
+}
+
+// ListPolicyRestrictions returns a service's policy restrictions in stable ID order.
+func (s *Store) ListPolicyRestrictions(serviceID string) ([]model.PolicyRestriction, error) {
+	return scanPolicyRestrictions(s.db.Query(`SELECT service_id, name, scope, require_base, document_json, etag
+      FROM policy_restrictions WHERE lower(service_id)=lower(?) ORDER BY id`, serviceID))
+}
+
+func scanPolicyRestrictions(rows *sql.Rows, err error) ([]model.PolicyRestriction, error) {
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	values := make([]model.PolicyRestriction, 0)
+	for rows.Next() {
+		var v model.PolicyRestriction
+		var document string
+		if err := rows.Scan(&v.ServiceID, &v.Name, &v.Scope, &v.RequireBase, &document, &v.ETag); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal([]byte(document), &v.Document); err != nil {
+			return nil, err
+		}
+		values = append(values, v)
+	}
+	return values, rows.Err()
+}
+
+// DeletePolicyRestriction removes one policy restriction.
+func (s *Store) DeletePolicyRestriction(id string) error {
+	return deleteScopedResource(s.db, "policy_restrictions", id)
 }
 
 // UpsertTenantAccess replaces one tenant access configuration.

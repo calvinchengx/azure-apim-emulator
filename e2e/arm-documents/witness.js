@@ -530,3 +530,109 @@ if (settingsList.length !== 1 || settingsList[0].name !== "public") {
   throw new Error(`settings listing = ${JSON.stringify(settingsList.map((s) => s.name))}, want one public entry`);
 }
 console.log("arm-documents witness: tenant access is a seeded singleton pair whose keys leave only through listSecrets, If-Match is enforced on both writes, each regeneration moves exactly one key, and the public settings deserialize");
+
+// ---------------------------------------------------------------------------
+// POLICY RESTRICTIONS, AND THE THREE SERVICE-LEVEL OPERATIONS
+//
+// PolicyRestriction is ordinary CRUD, so most of it could ride the family loop
+// above. It is here instead because the two things worth witnessing are things
+// the loop does not look at: the CREATE/REPLACE status distinction, and a field
+// whose TYPE is the trap.
+//
+// `requireBase` is Microsoft's `PolicyRestrictionRequireBase`, an enum whose
+// members are the STRINGS "true" and "false", mapped by the generated client as
+// a String. Emitting a JSON boolean is the obvious mistake and the SDK is the
+// only thing here that can be asked whether it survived the round trip.
+let createdStatus = 0;
+await client.policyRestriction.createOrUpdate(
+  resourceGroup, serviceName, "js-restriction",
+  { scope: "/apis", requireBase: "true" },
+  { onResponse: (raw) => { createdStatus = raw.status; } },
+);
+if (createdStatus !== 201) {
+  throw new Error(`a first policyRestriction PUT answered ${createdStatus}, want 201`);
+}
+let replacedStatus = 0;
+await client.policyRestriction.createOrUpdate(
+  resourceGroup, serviceName, "js-restriction",
+  { scope: "/apis", requireBase: "true" },
+  { onResponse: (raw) => { replacedStatus = raw.status; } },
+);
+if (replacedStatus !== 200) {
+  throw new Error(`a repeated policyRestriction PUT answered ${replacedStatus}, want 200`);
+}
+
+const restriction = await client.policyRestriction.get(resourceGroup, serviceName, "js-restriction");
+canonical(restriction, "policyRestrictions", "js-restriction", "Microsoft.ApiManagement/service/policyRestrictions");
+// `=== "true"` and not a truthiness check: a boolean `true` on the wire would
+// pass the latter and is a different value than the contract names.
+if (restriction.requireBase !== "true") {
+  throw new Error(`requireBase deserialized as ${JSON.stringify(restriction.requireBase)}, want the string "true"`);
+}
+if (restriction.scope !== "/apis") {
+  throw new Error(`scope = ${JSON.stringify(restriction.scope)}`);
+}
+
+// PATCH is a merge, and `ifMatch` is required on it.
+await client.policyRestriction.update(
+  resourceGroup, serviceName, "js-restriction", restriction.eTag, { scope: "/apis/two" },
+);
+const merged = await client.policyRestriction.get(resourceGroup, serviceName, "js-restriction");
+if (merged.scope !== "/apis/two" || merged.requireBase !== "true") {
+  throw new Error(`update did not merge: ${JSON.stringify(merged)}`);
+}
+const restrictions = await collect(client.policyRestriction.listByService(resourceGroup, serviceName));
+if (!restrictions.some((item) => item.name === "js-restriction")) {
+  throw new Error("a created restriction is absent from the collection");
+}
+await client.policyRestriction.delete(resourceGroup, serviceName, "js-restriction");
+let deleted;
+try {
+  await client.policyRestriction.get(resourceGroup, serviceName, "js-restriction");
+} catch (error) {
+  deleted = error;
+}
+if (!deleted || deleted.statusCode !== 404) {
+  throw new Error(`a deleted restriction still resolves: ${deleted?.statusCode ?? "no error"}`);
+}
+
+// checkNameAvailability answers for real rather than always saying yes, and
+// BOTH directions are asked. Only the pair rules out a stub.
+const taken = await client.apiManagementService.checkNameAvailability({ name: serviceName });
+if (taken.nameAvailable !== false || taken.reason !== "AlreadyExists") {
+  throw new Error(`the name of the service we just created came back as ${JSON.stringify(taken)}`);
+}
+const free = await client.apiManagementService.checkNameAvailability({ name: "a-name-nobody-took" });
+if (free.nameAvailable !== true || free.reason !== "Valid") {
+  throw new Error(`an unused name came back as ${JSON.stringify(free)}`);
+}
+const invalid = await client.apiManagementService.checkNameAvailability({ name: "-not-a-valid-name-" });
+if (invalid.nameAvailable !== false || invalid.reason !== "Invalid") {
+  throw new Error(`a name breaking Microsoft's own serviceName pattern came back as ${JSON.stringify(invalid)}`);
+}
+
+// The domain ownership identifier is published in a DNS TXT record and checked
+// later, so the same subscription must get the same value twice.
+const firstIdentifier = await client.apiManagementService.getDomainOwnershipIdentifier();
+const secondIdentifier = await client.apiManagementService.getDomainOwnershipIdentifier();
+if (!firstIdentifier.domainOwnershipIdentifier) {
+  throw new Error("no domain ownership identifier was returned");
+}
+if (firstIdentifier.domainOwnershipIdentifier !== secondIdentifier.domainOwnershipIdentifier) {
+  throw new Error("the domain ownership identifier moved between two calls");
+}
+
+// The SSO redirect must be a URI, and one pointing at the host that answered
+// rather than at an azure-api.net service that does not exist.
+const sso = await client.apiManagementService.getSsoToken(resourceGroup, serviceName);
+if (!sso.redirectUri) {
+  throw new Error("getSsoToken returned no redirectUri");
+}
+const redirect = new URL(sso.redirectUri);
+if (redirect.host !== new URL(process.env.APIM_ENDPOINT).host) {
+  throw new Error(`the SSO redirect points at ${redirect.host}, not at the emulator that issued it`);
+}
+if (!redirect.searchParams.get("token")) {
+  throw new Error(`the SSO redirect carries no token: ${sso.redirectUri}`);
+}
+console.log("arm-documents witness: policy restrictions create with 201 and replace with 200, requireBase survives as a string, update merges under If-Match, and checkNameAvailability/getDomainOwnershipIdentifier/getSsoToken all answer from real state");

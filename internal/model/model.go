@@ -234,6 +234,30 @@ type GlobalSchema struct {
 // ID returns the global schema ARM resource ID.
 func (v GlobalSchema) ID() string { return v.ServiceID + "/schemas/" + v.Name }
 
+// PolicyRestriction is a rule about what a policy document at some scope may
+// contain, at `/policyRestrictions/{id}`.
+//
+// `RequireBase` is a STRING, not a bool. Microsoft's `PolicyRestrictionRequireBase`
+// is an enum whose two members are the strings "true" and "false", and the
+// generated client maps the field as a String, so a JSON boolean here is a
+// different value on the wire than the one the contract names.
+//
+// The restriction is a stored configuration and nothing in this emulator
+// enforces it: `PolicyRestrictionValidations_ByService`, the operation that
+// checks a service's policies against these, is a separate group and is not
+// implemented.
+type PolicyRestriction struct {
+	ServiceID   string
+	Name        string
+	Scope       string
+	RequireBase string // "true" or "false"
+	Document    map[string]any
+	ETag        string
+}
+
+// ID returns the policy restriction ARM resource ID.
+func (v PolicyRestriction) ID() string { return v.ServiceID + "/policyRestrictions/" + v.Name }
+
 // TenantAccess is a service's direct-management access configuration, at
 // `/tenant/{accessName}`.
 //
