@@ -4,7 +4,7 @@ This is the live top-level ledger. Detailed generated operation, policy,
 portal-workflow, protocol and gateway matrices will be
 added as implementation inventories are generated.
 
-Snapshot date: 2026-08-19
+Snapshot date: 2026-09-05
 
 The date is when the grades were last **re-verified**, not merely edited: the
 Go suite green at 100% statement coverage, `go vet` clean, and
