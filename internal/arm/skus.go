@@ -335,3 +335,14 @@ func tiersWith(capability string) []string {
 	}
 	return names
 }
+
+// parseProviderSKUs recognises the subscription-scoped SKU catalogue,
+// `/subscriptions/{id}/providers/Microsoft.ApiManagement/skus`, and reports the
+// location to advertise them in.
+func parseProviderSKUs(parts []string) (string, bool) {
+	if len(parts) == 5 && equal(parts[0], "subscriptions") && equal(parts[2], "providers") &&
+		equal(parts[3], "Microsoft.ApiManagement") && equal(parts[4], "skus") {
+		return "local", true
+	}
+	return "", false
+}
