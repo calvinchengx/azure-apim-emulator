@@ -93,6 +93,12 @@ const (
 	// ActionInvalid stands in for a whole document that did not compile. See
 	// InvalidPlan.
 	ActionInvalid
+
+	// actionKindCount is one past the last kind, so a test can enumerate every
+	// declared kind and assert each has a dispatch entry. Keep it last: a new
+	// kind added below it is invisible to that check, which is the one thing
+	// the check exists to prevent.
+	actionKindCount
 )
 
 // Action is a compiled policy node.
@@ -2004,891 +2010,1099 @@ func Execute(actions []Action, state *State) error {
 	return nil
 }
 
+// actionHandlers is the action dispatch table: one entry per policy action
+// kind, pointing at the function that applies it.
+//
+// This replaced a single 886-line `switch` over 46 arms in executeActions,
+// which was the highest-complexity function in the repository by a factor of
+// four over the next worst. A table is not merely shorter: an arm used to be
+// unreachable from a test except by driving the whole loop, and adding a kind
+// meant editing a function nobody could hold in their head. An action kind with
+// no entry here is a no-op, exactly as an unmatched `case` was.
+//
+// Populated in init rather than as a literal because a handler may run nested
+// policy (choose, retry, send-request), which reaches executeActions and so
+// reads this map. Go rejects that as an initialization cycle in a package-level
+// literal, but not in an init body.
+var actionHandlers map[ActionKind]func(Action, *State) error
+
+func init() {
+	actionHandlers = map[ActionKind]func(Action, *State) error{
+		ActionSetHeader:                     applySetHeader,
+		ActionBase:                          applyBase,
+		ActionSetQueryParameter:             applySetQueryParameter,
+		ActionGetAuthorizationContext:       applyGetAuthorizationContext,
+		ActionSetVariable:                   applySetVariable,
+		ActionSetBody:                       applySetBody,
+		ActionCheckHeader:                   applyCheckHeader,
+		ActionValidateJWT:                   applyValidateJWT,
+		ActionIPFilter:                      applyIPFilter,
+		ActionSetMethod:                     applySetMethod,
+		ActionCORS:                          applyCORS,
+		ActionSendRequest:                   applySendRequest,
+		ActionSendOneWay:                    applySendRequest,
+		ActionRateLimit:                     applyRateLimit,
+		ActionLLMTokenLimit:                 applyLLMTokenLimit,
+		ActionLLMEmitTokenMetric:            applyLLMEmitTokenMetric,
+		ActionLimitConcurrency:              applyLimitConcurrency,
+		ActionCacheLookup:                   applyCacheLookup,
+		ActionCacheStore:                    applyCacheStore,
+		ActionValidateStatus:                applyValidateStatus,
+		ActionValidateContent:               applyValidateContent,
+		ActionValidateHeaders:               applyValidateHeaders,
+		ActionValidateParameters:            applyValidateParameters,
+		ActionValidateClientCertificate:     applyValidateClientCertificate,
+		ActionChoose:                        applyChoose,
+		ActionTrace:                         applyTrace,
+		ActionAuthenticationBasic:           applyAuthenticationBasic,
+		ActionAuthenticationManagedIdentity: applyAuthenticationManagedIdentity,
+		ActionAuthenticationOAuth2:          applyAuthenticationOAuth2,
+		ActionAuthenticationCertificate:     applyAuthenticationCertificate,
+		ActionFindReplace:                   applyFindReplace,
+		ActionJSONToXML:                     applyJSONToXML,
+		ActionXMLToJSON:                     applyXMLToJSON,
+		ActionJSONP:                         applyJSONP,
+		ActionCacheLookupValue:              applyCacheLookupValue,
+		ActionCacheStoreValue:               applyCacheStoreValue,
+		ActionCacheRemoveValue:              applyCacheRemoveValue,
+		ActionSetBackend:                    applySetBackend,
+		ActionRewriteURI:                    applyRewriteURI,
+		ActionForward:                       applyForward,
+		ActionReturnResponse:                applyReturnResponse,
+		ActionSetStatus:                     applySetStatus,
+		ActionRedirectContentURLs:           applyRedirectContentURLs,
+		ActionRetry:                         applyRetry,
+		ActionWait:                          applyWait,
+		ActionUnsupported:                   applyUnsupported,
+		ActionInvalid:                       applyInvalid,
+	}
+}
+
 func executeActions(actions []Action, state *State) error {
 	if state.Headers == nil {
 		state.Headers = make(http.Header)
 	}
 	for _, action := range actions {
-		switch action.Kind {
-		case ActionSetHeader:
-			value, err := evalValue(action.Value, state)
-			if err != nil {
-				return err
-			}
-			target := state.Headers
-			if state.Response == nil && state.Request != nil {
-				target = state.Request.Header
-			}
-			setHeader(target, Header{Name: action.Name, Value: value, Action: action.Action})
-		case ActionBase:
-			// Base markers are expanded by the gateway scope composer.
-		case ActionSetQueryParameter:
-			if state.Request == nil {
-				return fmt.Errorf("set-query-parameter requires a request")
-			}
-			value, err := evalValue(action.Value, state)
-			if err != nil {
-				return err
-			}
-			query := state.Request.URL.Query()
-			switch action.Action {
-			case "delete":
-				query.Del(action.Name)
-			case "skip":
-				if !query.Has(action.Name) {
-					query.Set(action.Name, value)
-				}
-			default:
-				query.Set(action.Name, value)
-			}
-			state.Request.URL.RawQuery = query.Encode()
-		case ActionGetAuthorizationContext:
-			if state.FetchCredential == nil {
-				return fmt.Errorf("get-authorization-context requires a configured credential store")
-			}
-			credential, err := state.FetchCredential(action.Name, action.Value)
-			if err != nil {
-				// ignore-error="true" is the documented way to let a request
-				// proceed uncredentialed, so the policy can decide what an
-				// unauthenticated call should do. Without it the failure stops
-				// the pipeline, which is the safe default: a backend call that
-				// silently loses its credential looks like an authorization
-				// bug in the backend.
-				if action.IgnoreCase {
-					continue
-				}
-				return err
-			}
-			if state.AuthorizationContexts == nil {
-				state.AuthorizationContexts = map[string]expr.AuthorizationContext{}
-			}
-			state.AuthorizationContexts[action.Variable] = credential
-		case ActionSetVariable:
-			value, err := evalRaw(action.Value, state)
-			if err != nil {
-				return err
-			}
-			if state.Variables == nil {
-				state.Variables = map[string]string{}
-			}
-			// The RENDERING goes in the text map either way, so every consumer
-			// that reads variables as text -- cache keys, headers, rate-limit
-			// keys -- keeps working exactly as before.
-			state.Variables[action.Variable] = value.String()
-			// An object is kept alongside it, because a rendering has no
-			// members and reading members is the point of storing one.
-			if value.Kind() == expr.KindObject {
-				if state.VariableObjects == nil {
-					state.VariableObjects = map[string]expr.Value{}
-				}
-				state.VariableObjects[action.Variable] = value
-			} else {
-				delete(state.VariableObjects, action.Variable)
-			}
-		case ActionSetBody:
-			body, err := evalValue(action.Body, state)
-			if err != nil {
-				return err
-			}
-			if state.Response == nil && state.Request != nil {
-				state.Request.Body = io.NopCloser(strings.NewReader(body))
-				state.Request.ContentLength = int64(len(body))
-				state.Request.GetBody = func() (io.ReadCloser, error) {
-					return io.NopCloser(strings.NewReader(body)), nil
-				}
-			} else {
-				state.Body, state.BodySet = body, true
-			}
-		case ActionCheckHeader:
-			if state.Request == nil {
-				return fmt.Errorf("check-header requires a request")
-			}
-			name, err := evalValue(action.Name, state)
-			if err != nil {
-				return err
-			}
-			values := make([]string, len(action.Values))
-			for i, allowed := range action.Values {
-				value, err := evalValue(allowed, state)
-				if err != nil {
-					return err
-				}
-				values[i] = value
-			}
-			message, err := evalValue(action.Value, state)
-			if err != nil {
-				return err
-			}
-			actual := state.Request.Header.Values(name)
-			matched := false
-			for _, candidate := range actual {
-				for _, allowed := range values {
-					if (action.IgnoreCase && strings.EqualFold(candidate, allowed)) || (!action.IgnoreCase && candidate == allowed) {
-						matched = true
-					}
-				}
-			}
-			if !matched {
-				state.Returned, state.StatusCode, state.Body = true, action.StatusCode, message
-				return nil
-			}
-		case ActionValidateJWT:
-			if state.Request == nil {
-				return fmt.Errorf("validate-jwt requires a request")
-			}
-			if action.Body != "" {
-				tenantID, err := evalValue(action.Body, state)
-				if err != nil {
-					return err
-				}
-				if strings.TrimSpace(tenantID) == "" {
-					return fmt.Errorf("validate-azure-ad-token requires a tenant-id")
-				}
-			}
-			headerName, err := evalValue(action.Name, state)
-			if err != nil {
-				return err
-			}
-			queryName, err := evalValue(action.Variable, state)
-			if err != nil {
-				return err
-			}
-			code := action.FailedCode
-			if action.Reason != "" {
-				evaluated, err := evalValue(action.Reason, state)
-				if err != nil {
-					return err
-				}
-				if _, err := fmt.Sscanf(evaluated, "%d", &code); err != nil || code < 100 || code > 599 {
-					return fmt.Errorf("invalid validate-azure-ad-token status")
-				}
-			}
-			message, err := evalValue(action.Value, state)
-			if err != nil {
-				return err
-			}
-			// require-scheme governs how the token is presented: "the policy
-			// will ensure that specified scheme is present in the Authorization
-			// header value".
-			scheme, err := evalValue(action.RequireScheme, state)
-			if err != nil {
-				return err
-			}
-			token, schemeOK := tokenFromRequest(state.Request, Action{Name: headerName, Variable: queryName}, scheme)
-			if !schemeOK {
-				state.Returned, state.StatusCode, state.Body = true, code, message
-				return nil
-			}
-			// require-signed-tokens defaults to true. A policy that turns it off
-			// is asking for the claims to be trusted unsigned, which is its
-			// choice to make and not one to make silently on its behalf.
-			mustBeSigned := true
-			if action.RequireSignedTokens != "" {
-				rendered, err := evalValue(action.RequireSignedTokens, state)
-				if err != nil {
-					return err
-				}
-				parsed, convErr := strconv.ParseBool(strings.TrimSpace(rendered))
-				if convErr != nil {
-					return fmt.Errorf("invalid require-signed-tokens %q", rendered)
-				}
-				mustBeSigned = parsed
-			}
-			// A validator is only needed when a signature is going to be
-			// checked, which is why these are here rather than at the top.
-			if mustBeSigned && len(action.OpenIDConfigs) == 0 && state.ValidateToken == nil {
-				return fmt.Errorf("validate-jwt requires a configured token validator")
-			}
-			if mustBeSigned && len(action.OpenIDConfigs) > 0 && state.ValidateTokenAgainst == nil {
-				return fmt.Errorf("validate-jwt openid-config requires a configured discovery fetcher")
-			}
-			var discovered []string
-			signatureOK := !mustBeSigned
-			if !mustBeSigned {
-				// Nothing to check the signature against, so nothing names an
-				// issuer either: an <issuers> the policy gave still applies.
-			} else if len(action.OpenIDConfigs) > 0 {
-				issuers, err := state.ValidateTokenAgainst(token, action.OpenIDConfigs)
-				signatureOK, discovered = err == nil, issuers
-			} else {
-				signatureOK = state.ValidateToken(token) == nil
-			}
-			claims, claimsErr := jwtPayload(token)
-			if !signatureOK || claimsErr != nil || !tokenIsCurrent(action, claims, state) || !enforceTokenConstraints(action, claims, discovered) {
-				state.Returned, state.StatusCode, state.Body = true, code, message
-				return nil
-			}
-			// "Name of context variable that will receive token value as an
-			// object of type Jwt upon successful token validation."
-			if action.OutputTokenVariable != "" {
-				value := expr.JwtValue(token)
-				if state.VariableObjects == nil {
-					state.VariableObjects = map[string]expr.Value{}
-				}
-				state.VariableObjects[action.OutputTokenVariable] = value
-
-			}
-		case ActionIPFilter:
-			if state.Request == nil {
-				return fmt.Errorf("ip-filter requires a request")
-			}
-			remote := state.Request.RemoteAddr
-			if host, _, err := net.SplitHostPort(remote); err == nil {
-				remote = host
-			}
-			matched := false
-			for _, value := range action.Values {
-				if ipMatches(remote, value) {
-					matched = true
-					break
-				}
-			}
-			failed := (action.FilterAction == "allow" && !matched) || (action.FilterAction == "forbid" && matched)
-			if failed {
-				state.Returned, state.StatusCode, state.Body = true, action.StatusCode, action.Value
-				return nil
-			}
-		case ActionSetMethod:
-			if state.Request == nil {
-				return fmt.Errorf("set-method requires a request")
-			}
-			value, err := evalValue(action.Value, state)
-			if err != nil {
-				return err
-			}
-			state.Request.Method = strings.ToUpper(value)
-		case ActionCORS:
-			if state.Request == nil {
-				return fmt.Errorf("cors requires a request")
-			}
-			origin := state.Request.Header.Get("Origin")
-			if origin == "" {
-				continue
-			}
-			allowOrigin, err := evalValue(action.AllowOrigin, state)
-			if err != nil {
-				return err
-			}
-			methods, err := evalValue(action.Methods, state)
-			if err != nil {
-				return err
-			}
-			allowHeaders, err := evalValue(action.AllowHeaders, state)
-			if err != nil {
-				return err
-			}
-			exposeHeaders, err := evalValue(action.ExposeHeaders, state)
-			if err != nil {
-				return err
-			}
-			maxAge, err := evalValue(action.MaxAge, state)
-			if err != nil {
-				return err
-			}
-			state.Headers.Set("Access-Control-Allow-Origin", allowOrigin)
-			if action.AllowCreds {
-				state.Headers.Set("Access-Control-Allow-Credentials", "true")
-			}
-			if methods != "" {
-				state.Headers.Set("Access-Control-Allow-Methods", methods)
-			}
-			if allowHeaders != "" {
-				state.Headers.Set("Access-Control-Allow-Headers", allowHeaders)
-			}
-			if exposeHeaders != "" {
-				state.Headers.Set("Access-Control-Expose-Headers", exposeHeaders)
-			}
-			if maxAge != "" {
-				state.Headers.Set("Access-Control-Max-Age", maxAge)
-			}
-			if state.Request.Method == http.MethodOptions {
-				state.Returned, state.StatusCode = true, http.StatusNoContent
-			}
-		case ActionSendRequest, ActionSendOneWay:
-			if state.SendRequest == nil {
-				if action.Kind == ActionSendOneWay {
-					return fmt.Errorf("send-one-way-request requires a configured transport")
-				}
-				return fmt.Errorf("send-request requires a configured transport")
-			}
-			if action.Kind == ActionSendOneWay {
-				mode, err := evalValue(action.Name, state)
-				if err != nil {
-					return err
-				}
-				if mode != "" && !strings.EqualFold(mode, "new") {
-					return fmt.Errorf("%w: <send-one-way-request>", ErrUnsupported)
-				}
-				if _, err := evalValue(action.MaxAge, state); err != nil {
-					return err
-				}
-			}
-			sendURL, err := evalValue(action.SendURL, state)
-			if err != nil {
-				return err
-			}
-			sendMethod, err := evalValue(action.SendMethod, state)
-			if err != nil {
-				return err
-			}
-			body, err := evalValue(action.Body, state)
-			if err != nil {
-				return err
-			}
-			request, err := http.NewRequest(strings.ToUpper(sendMethod), sendURL, strings.NewReader(body))
-			if err != nil {
-				return err
-			}
-			for _, header := range action.Headers {
-				value, err := evalValue(header.Value, state)
-				if err != nil {
-					return err
-				}
-				setHeader(request.Header, Header{Name: header.Name, Value: value, Action: header.Action})
-			}
-			response, err := state.SendRequest(request)
-			if action.Kind == ActionSendOneWay {
-				if response != nil && response.Body != nil {
-					_ = response.Body.Close()
-				}
-				continue
-			}
-			if err != nil {
-				return err
-			}
-			if response != nil {
-				if response.Body != nil {
-					_ = response.Body.Close()
-				}
-				if action.ResponseVar != "" {
-					if state.Variables == nil {
-						state.Variables = map[string]string{}
-					}
-					state.Variables[action.ResponseVar] = fmt.Sprintf("%d", response.StatusCode)
-				}
-			}
-		case ActionRateLimit:
-			if err := executeLimit(action, state); err != nil {
-				return err
-			}
-			if state.Returned {
-				return nil
-			}
-		case ActionLLMTokenLimit:
-			if err := executeLLMTokenLimit(action, state); err != nil {
-				return err
-			}
-			if state.Returned {
-				return nil
-			}
-		case ActionLLMEmitTokenMetric:
-			if err := executeLLMEmitTokenMetric(action, state); err != nil {
-				return err
-			}
-		case ActionLimitConcurrency:
-			if state.AcquireConcurrency == nil {
-				return fmt.Errorf("limit-concurrency requires a configured limiter")
-			}
-			key, err := evalValue(action.Value, state)
-			if err != nil {
-				return err
-			}
-			if key == "" && state.Request != nil {
-				key = state.Request.RemoteAddr
-			}
-			release := state.AcquireConcurrency(key, action.LimitCalls)
-			if release == nil {
-				state.Returned, state.StatusCode, state.Body = true, action.StatusCode, action.Body
-				return nil
-			}
-			state.ConcurrencyReleases = append(state.ConcurrencyReleases, release)
-			if err := Execute(action.Children, state); err != nil {
-				return err
-			}
-			if state.Returned {
-				return nil
-			}
-		case ActionCacheLookup:
-			if state.CacheGet == nil {
-				return fmt.Errorf("cache-lookup requires a configured cache")
-			}
-			if status, headers, body, ok := state.CacheGet(state.CacheKey); ok {
-				state.Headers = headers
-				state.Returned, state.StatusCode, state.Body = true, status, body
-				return nil
-			}
-		case ActionCacheStore:
-			if state.CacheSet == nil || state.Response == nil {
-				return fmt.Errorf("cache-store requires a response and configured cache")
-			}
-			body := state.Body
-			if !state.BodySet {
-				value, err := io.ReadAll(state.Response.Body)
-				if err != nil {
-					return err
-				}
-				body = string(value)
-				state.Response.Body = io.NopCloser(strings.NewReader(body))
-			}
-			state.CacheSet(state.CacheKey, state.Response.StatusCode, state.Response.Header.Clone(), body, action.CacheDuration)
-		case ActionValidateStatus:
-			if state.Response == nil {
-				return fmt.Errorf("validate-status-code requires a response")
-			}
-			valid := state.Response.StatusCode >= action.StatusMin && state.Response.StatusCode <= action.StatusMax
-			if !valid && action.Action != "ignore" {
-				state.Returned, state.StatusCode, state.Body = true, action.FailedCode, "response status code is outside the configured range"
-				if action.Value != "" {
-					if state.Variables == nil {
-						state.Variables = map[string]string{}
-					}
-					state.Variables[action.Value] = fmt.Sprintf("%d", state.Response.StatusCode)
-				}
-				return nil
-			}
-		case ActionValidateContent:
-			var headers http.Header
-			var body io.ReadCloser
-			if state.Response != nil {
-				headers, body = state.Response.Header, state.Response.Body
-			} else if state.Request != nil {
-				headers, body = state.Request.Header, state.Request.Body
-			} else {
-				return fmt.Errorf("validate-content requires a request or response")
-			}
-			value, err := io.ReadAll(body)
-			if err != nil {
-				return err
-			}
-			if state.Response != nil {
-				state.Response.Body = io.NopCloser(strings.NewReader(string(value)))
-			} else {
-				state.Request.Body = io.NopCloser(strings.NewReader(string(value)))
-				state.Request.ContentLength = int64(len(value))
-			}
-			failed := (action.ContentMax > 0 && int64(len(value)) > action.ContentMax)
-			if len(action.ContentTypes) > 0 {
-				contentType := strings.ToLower(strings.Split(headers.Get("Content-Type"), ";")[0])
-				matched := false
-				for _, allowed := range action.ContentTypes {
-					if contentType == allowed {
-						matched = true
-						break
-					}
-				}
-				failed = failed || !matched
-			}
-			if failed && action.ContentAction != "ignore" {
-				state.Returned, state.StatusCode, state.Body = true, action.FailedCode, "content validation failed"
-				return nil
-			}
-		case ActionValidateHeaders:
-			var headers http.Header
-			if state.Response != nil {
-				headers = state.Response.Header
-			} else if state.Request != nil {
-				headers = state.Request.Header
-			} else {
-				return fmt.Errorf("validate-headers requires a request or response")
-			}
-			rules := make(map[string]HeaderRule, len(action.HeaderRules))
-			for _, rule := range action.HeaderRules {
-				rules[strings.ToLower(rule.Name)] = rule
-			}
-			for name, values := range headers {
-				rule, specified := rules[strings.ToLower(name)]
-				if !specified {
-					if action.UnspecifiedHeaderAction == "prevent" {
-						state.Returned, state.StatusCode, state.Body = true, action.FailedCode, "header validation failed"
-						return nil
-					}
-					continue
-				}
-				if rule.Action == "ignore" || len(rule.Values) == 0 {
-					continue
-				}
-				matched := false
-				for _, actual := range values {
-					for _, expected := range rule.Values {
-						if actual == expected {
-							matched = true
-						}
-					}
-				}
-				if !matched {
-					state.Returned, state.StatusCode, state.Body = true, action.FailedCode, "header validation failed"
-					return nil
-				}
-			}
-			for _, rule := range rules {
-				if len(headers.Values(rule.Name)) == 0 && rule.Action == "prevent" {
-					state.Returned, state.StatusCode, state.Body = true, action.FailedCode, "header validation failed"
-					return nil
-				}
-			}
-		case ActionValidateParameters:
-			if state.Request == nil || state.Request.URL == nil {
-				return fmt.Errorf("validate-parameters requires a request")
-			}
-			query := state.Request.URL.Query()
-			rules := make(map[string]ParameterRule, len(action.ParameterRules))
-			for _, rule := range action.ParameterRules {
-				rules[rule.Name] = rule
-			}
-			for name, values := range query {
-				rule, specified := rules[name]
-				if !specified {
-					if action.UnspecifiedHeaderAction == "prevent" {
-						state.Returned, state.StatusCode, state.Body = true, action.FailedCode, "parameter validation failed"
-						return nil
-					}
-					continue
-				}
-				if rule.Action == "ignore" || len(rule.Values) == 0 {
-					continue
-				}
-				matched := false
-				for _, actual := range values {
-					for _, expected := range rule.Values {
-						if actual == expected {
-							matched = true
-						}
-					}
-				}
-				if !matched {
-					state.Returned, state.StatusCode, state.Body = true, action.FailedCode, "parameter validation failed"
-					return nil
-				}
-			}
-			for _, rule := range rules {
-				if _, present := query[rule.Name]; !present && rule.Action == "prevent" {
-					state.Returned, state.StatusCode, state.Body = true, action.FailedCode, "parameter validation failed"
-					return nil
-				}
-			}
-		case ActionValidateClientCertificate:
-			if state.Request == nil || state.Request.TLS == nil || len(state.Request.TLS.PeerCertificates) == 0 {
-				state.Returned, state.StatusCode, state.Body = true, action.FailedCode, "client certificate validation failed"
-				return nil
-			}
-			if len(action.CertificateThumbprints) > 0 {
-				matched := false
-				for _, certificate := range state.Request.TLS.PeerCertificates {
-					fingerprint := strings.ToUpper(fmt.Sprintf("%X", sha1.Sum(certificate.Raw)))
-					for _, expected := range action.CertificateThumbprints {
-						if fingerprint == expected {
-							matched = true
-						}
-					}
-				}
-				if !matched {
-					state.Returned, state.StatusCode, state.Body = true, action.FailedCode, "client certificate validation failed"
-					return nil
-				}
-			}
-		case ActionChoose:
-			selected := action.Otherwise
-			for _, branch := range action.Branches {
-				matched, err := evaluateCondition(branch.Condition, state)
-				if err != nil {
-					return err
-				}
-				if matched {
-					selected = branch.Actions
-					break
-				}
-			}
-			if err := Execute(selected, state); err != nil {
-				return err
-			}
-			if state.Returned {
-				return nil
-			}
-		case ActionTrace:
-			if state.Trace != nil {
-				state.Trace("policy", strings.TrimSpace(action.TraceSource+" "+action.TraceSeverity+" "+action.TraceMessage))
-			}
-		case ActionAuthenticationBasic:
-			if state.Request == nil {
-				return fmt.Errorf("authentication-basic requires a request")
-			}
-			username, err := evalValue(action.AuthUsername, state)
-			if err != nil {
-				return err
-			}
-			password, err := evalValue(action.AuthPassword, state)
-			if err != nil {
-				return err
-			}
-			state.Request.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte(username+":"+password)))
-		case ActionAuthenticationManagedIdentity:
-			if state.Request == nil {
-				return fmt.Errorf("authentication-managed-identity requires a request")
-			}
-			if state.AcquireToken == nil {
-				return fmt.Errorf("authentication-managed-identity requires a token provider")
-			}
-			resource, err := evalValue(action.AuthResource, state)
-			if err != nil {
-				return err
-			}
-			token, err := state.AcquireToken(resource)
-			if err != nil {
-				return err
-			}
-			state.Request.Header.Set("Authorization", "Bearer "+token)
-		case ActionAuthenticationOAuth2:
-			if state.Request == nil {
-				return fmt.Errorf("authentication-oauth2 requires a request")
-			}
-			if state.AcquireOAuth2Token == nil {
-				return fmt.Errorf("authentication-oauth2 requires a token provider")
-			}
-			clientID, err := evalValue(action.AuthClientID, state)
-			if err != nil {
-				return err
-			}
-			clientSecret, err := evalValue(action.AuthClientSecret, state)
-			if err != nil {
-				return err
-			}
-			endpoint, err := evalValue(action.AuthTokenEndpoint, state)
-			if err != nil {
-				return err
-			}
-			resource, err := evalValue(action.AuthResource, state)
-			if err != nil {
-				return err
-			}
-			token, err := state.AcquireOAuth2Token(clientID, clientSecret, endpoint, resource)
-			if err != nil {
-				return err
-			}
-			state.Request.Header.Set("Authorization", "Bearer "+token)
-		case ActionAuthenticationCertificate:
-			if state.Request == nil {
-				return fmt.Errorf("authentication-certificate requires a request")
-			}
-			if state.AttachClientCertificate == nil {
-				return fmt.Errorf("authentication-certificate requires a certificate provider")
-			}
-			certificateID, err := evalValue(action.AuthCertificateID, state)
-			if err != nil {
-				return err
-			}
-			if err := state.AttachClientCertificate(state.Request, certificateID); err != nil {
-				return err
-			}
-		case ActionFindReplace:
-			from, err := evalValue(action.ReplaceFrom, state)
-			if err != nil {
-				return err
-			}
-			to, err := evalValue(action.ReplaceTo, state)
-			if err != nil {
-				return err
-			}
-			var body io.ReadCloser
-			if state.Response != nil {
-				body = state.Response.Body
-			} else if state.Request != nil {
-				body = state.Request.Body
-			} else {
-				return fmt.Errorf("find-and-replace requires a request or response")
-			}
-			value, err := io.ReadAll(body)
-			if err != nil {
-				return err
-			}
-			replaced := strings.ReplaceAll(string(value), from, to)
-			if state.Response != nil {
-				state.Response.Body = io.NopCloser(strings.NewReader(replaced))
-			} else {
-				state.Request.Body = io.NopCloser(strings.NewReader(replaced))
-				state.Request.ContentLength = int64(len(replaced))
-				state.Request.GetBody = func() (io.ReadCloser, error) { return io.NopCloser(strings.NewReader(replaced)), nil }
-			}
-		case ActionJSONToXML:
-			if state.Response == nil {
-				return fmt.Errorf("json-to-xml requires a response")
-			}
-			root, err := evalValue(action.TransformRoot, state)
-			if err != nil {
-				return err
-			}
-			value, err := io.ReadAll(state.Response.Body)
-			if err != nil {
-				return err
-			}
-			var document any
-			if err := json.Unmarshal(value, &document); err != nil {
-				return err
-			}
-			xmlValue, err := jsonValueXML(root, document)
-			if err != nil {
-				return err
-			}
-			state.Response.Body = io.NopCloser(strings.NewReader(xmlValue))
-		case ActionXMLToJSON:
-			if state.Response == nil {
-				return fmt.Errorf("xml-to-json requires a response")
-			}
-			value, err := io.ReadAll(state.Response.Body)
-			if err != nil {
-				return err
-			}
-			var document node
-			if err := xml.Unmarshal(value, &document); err != nil {
-				return err
-			}
-			jsonValue, _ := json.Marshal(map[string]any{document.Name: xmlNodeJSON(document)})
-			state.Response.Body = io.NopCloser(strings.NewReader(string(jsonValue)))
-		case ActionJSONP:
-			if state.Response == nil || state.Request == nil || state.Request.URL == nil {
-				return fmt.Errorf("jsonp requires a request and response")
-			}
-			parameter, err := evalValue(action.JSONPParameter, state)
-			if err != nil {
-				return err
-			}
-			callback := state.Request.URL.Query().Get(parameter)
-			if callback == "" {
-				continue
-			}
-			value, err := io.ReadAll(state.Response.Body)
-			if err != nil {
-				return err
-			}
-			state.Response.Body = io.NopCloser(strings.NewReader(callback + "(" + string(value) + ");"))
-		case ActionCacheLookupValue:
-			if state.ValueCacheGet == nil {
-				return fmt.Errorf("cache-lookup-value requires a cache")
-			}
-			key, err := evalValue(action.ValueCacheKey, state)
-			if err != nil {
-				return err
-			}
-			variable, err := evalValue(action.Variable, state)
-			if err != nil {
-				return err
-			}
-			if variable == "" {
-				return fmt.Errorf("cache-lookup-value requires a variable-name")
-			}
-			value, ok := state.ValueCacheGet(key)
-			if ok {
-				if state.Variables == nil {
-					state.Variables = map[string]string{}
-				}
-				state.Variables[variable] = value
-			}
-		case ActionCacheStoreValue:
-			if state.ValueCacheSet == nil {
-				return fmt.Errorf("cache-store-value requires a cache")
-			}
-			key, err := evalValue(action.ValueCacheKey, state)
-			if err != nil {
-				return err
-			}
-			value, err := evalValue(action.ValueCacheValue, state)
-			if err != nil {
-				return err
-			}
-			state.ValueCacheSet(key, value, action.ValueCacheDuration)
-		case ActionCacheRemoveValue:
-			if state.ValueCacheRemove == nil {
-				return fmt.Errorf("cache-remove-value requires a cache")
-			}
-			key, err := evalValue(action.ValueCacheKey, state)
-			if err != nil {
-				return err
-			}
-			state.ValueCacheRemove(key)
-		case ActionSetBackend:
-			value, err := evalValue(action.Value, state)
-			if err != nil {
-				return err
-			}
-			backendID, err := evalValue(action.BackendID, state)
-			if err != nil {
-				return err
-			}
-			state.BackendURL = value
-			state.BackendID = backendID
-			if backend, ok := state.Backends[strings.ToLower(backendID)]; ok {
-				state.Backend = &backend
-			}
-		case ActionRewriteURI:
-			value, err := evalValue(action.Value, state)
-			if err != nil {
-				return err
-			}
-			state.Path = value
-		case ActionForward:
-			// Forwarding is performed by the gateway after the backend section.
-		case ActionReturnResponse:
-			code := action.StatusCode
-			if action.Value != "" {
-				evaluated, err := evalValue(action.Value, state)
-				if err != nil {
-					return err
-				}
-				if _, err := fmt.Sscanf(evaluated, "%d", &code); err != nil || code < 100 || code > 599 {
-					return fmt.Errorf("invalid mock-response status-code")
-				}
-			}
-			body, err := evalValue(action.Body, state)
-			if err != nil {
-				return err
-			}
-			state.Returned, state.StatusCode, state.Reason, state.Body = true, code, action.Reason, body
-			for _, header := range action.Headers {
-				value, err := evalValue(header.Value, state)
-				if err != nil {
-					return err
-				}
-				setHeader(state.Headers, Header{Name: header.Name, Value: value, Action: header.Action})
-			}
-			return nil
-		case ActionSetStatus:
-			code := action.StatusCode
-			if action.Value != "" {
-				evaluated, err := evalValue(action.Value, state)
-				if err != nil {
-					return err
-				}
-				if _, err := fmt.Sscanf(evaluated, "%d", &code); err != nil || code < 100 || code > 599 {
-					return fmt.Errorf("invalid set-status code")
-				}
-			}
-			reason, err := evalValue(action.Reason, state)
-			if err != nil {
-				return err
-			}
-			state.StatusCode = code
-			state.Reason = reason
-		case ActionRedirectContentURLs:
-			if state.Request == nil || state.BackendURL == "" {
-				return fmt.Errorf("redirect-content-urls requires a request and backend URL")
-			}
-			if err := replaceContentURLs(state, requestBaseURL(state.Request), strings.TrimRight(state.BackendURL, "/")); err != nil {
-				return err
-			}
-		case ActionRetry:
-			if err := Execute(action.Children, state); err != nil {
-				return err
-			}
-		case ActionWait:
-			if err := executeWait(action, state); err != nil {
-				return err
-			}
-		case ActionUnsupported:
-			return fmt.Errorf("%w: <%s>", ErrUnsupported, action.Source)
-		case ActionInvalid:
-			return fmt.Errorf("%w: %s", ErrInvalidDocument, action.Value)
+		apply, ok := actionHandlers[action.Kind]
+		if !ok {
+			continue
+		}
+		if err := apply(action, state); err != nil {
+			return err
 		}
 	}
 	return nil
+}
+
+func applySetHeader(action Action, state *State) error {
+	value, err := evalValue(action.Value, state)
+	if err != nil {
+		return err
+	}
+	target := state.Headers
+	if state.Response == nil && state.Request != nil {
+		target = state.Request.Header
+	}
+	setHeader(target, Header{Name: action.Name, Value: value, Action: action.Action})
+	return nil
+}
+
+func applyBase(action Action, state *State) error {
+	// Base markers are expanded by the gateway scope composer.
+	return nil
+}
+
+func applySetQueryParameter(action Action, state *State) error {
+	if state.Request == nil {
+		return fmt.Errorf("set-query-parameter requires a request")
+	}
+	value, err := evalValue(action.Value, state)
+	if err != nil {
+		return err
+	}
+	query := state.Request.URL.Query()
+	switch action.Action {
+	case "delete":
+		query.Del(action.Name)
+	case "skip":
+		if !query.Has(action.Name) {
+			query.Set(action.Name, value)
+		}
+	default:
+		query.Set(action.Name, value)
+	}
+	state.Request.URL.RawQuery = query.Encode()
+	return nil
+}
+
+func applyGetAuthorizationContext(action Action, state *State) error {
+	if state.FetchCredential == nil {
+		return fmt.Errorf("get-authorization-context requires a configured credential store")
+	}
+	credential, err := state.FetchCredential(action.Name, action.Value)
+	if err != nil {
+		// ignore-error="true" is the documented way to let a request
+		// proceed uncredentialed, so the policy can decide what an
+		// unauthenticated call should do. Without it the failure stops
+		// the pipeline, which is the safe default: a backend call that
+		// silently loses its credential looks like an authorization
+		// bug in the backend.
+		if action.IgnoreCase {
+			return nil
+		}
+		return err
+	}
+	if state.AuthorizationContexts == nil {
+		state.AuthorizationContexts = map[string]expr.AuthorizationContext{}
+	}
+	state.AuthorizationContexts[action.Variable] = credential
+	return nil
+}
+
+func applySetVariable(action Action, state *State) error {
+	value, err := evalRaw(action.Value, state)
+	if err != nil {
+		return err
+	}
+	if state.Variables == nil {
+		state.Variables = map[string]string{}
+	}
+	// The RENDERING goes in the text map either way, so every consumer
+	// that reads variables as text -- cache keys, headers, rate-limit
+	// keys -- keeps working exactly as before.
+	state.Variables[action.Variable] = value.String()
+	// An object is kept alongside it, because a rendering has no
+	// members and reading members is the point of storing one.
+	if value.Kind() == expr.KindObject {
+		if state.VariableObjects == nil {
+			state.VariableObjects = map[string]expr.Value{}
+		}
+		state.VariableObjects[action.Variable] = value
+	} else {
+		delete(state.VariableObjects, action.Variable)
+	}
+	return nil
+}
+
+func applySetBody(action Action, state *State) error {
+	body, err := evalValue(action.Body, state)
+	if err != nil {
+		return err
+	}
+	if state.Response == nil && state.Request != nil {
+		state.Request.Body = io.NopCloser(strings.NewReader(body))
+		state.Request.ContentLength = int64(len(body))
+		state.Request.GetBody = func() (io.ReadCloser, error) {
+			return io.NopCloser(strings.NewReader(body)), nil
+		}
+	} else {
+		state.Body, state.BodySet = body, true
+	}
+	return nil
+}
+
+func applyCheckHeader(action Action, state *State) error {
+	if state.Request == nil {
+		return fmt.Errorf("check-header requires a request")
+	}
+	name, err := evalValue(action.Name, state)
+	if err != nil {
+		return err
+	}
+	values := make([]string, len(action.Values))
+	for i, allowed := range action.Values {
+		value, err := evalValue(allowed, state)
+		if err != nil {
+			return err
+		}
+		values[i] = value
+	}
+	message, err := evalValue(action.Value, state)
+	if err != nil {
+		return err
+	}
+	actual := state.Request.Header.Values(name)
+	matched := false
+	for _, candidate := range actual {
+		for _, allowed := range values {
+			if (action.IgnoreCase && strings.EqualFold(candidate, allowed)) || (!action.IgnoreCase && candidate == allowed) {
+				matched = true
+			}
+		}
+	}
+	if !matched {
+		state.Returned, state.StatusCode, state.Body = true, action.StatusCode, message
+		return nil
+	}
+	return nil
+}
+
+func applyValidateJWT(action Action, state *State) error {
+	if state.Request == nil {
+		return fmt.Errorf("validate-jwt requires a request")
+	}
+	if action.Body != "" {
+		tenantID, err := evalValue(action.Body, state)
+		if err != nil {
+			return err
+		}
+		if strings.TrimSpace(tenantID) == "" {
+			return fmt.Errorf("validate-azure-ad-token requires a tenant-id")
+		}
+	}
+	headerName, err := evalValue(action.Name, state)
+	if err != nil {
+		return err
+	}
+	queryName, err := evalValue(action.Variable, state)
+	if err != nil {
+		return err
+	}
+	code := action.FailedCode
+	if action.Reason != "" {
+		evaluated, err := evalValue(action.Reason, state)
+		if err != nil {
+			return err
+		}
+		if _, err := fmt.Sscanf(evaluated, "%d", &code); err != nil || code < 100 || code > 599 {
+			return fmt.Errorf("invalid validate-azure-ad-token status")
+		}
+	}
+	message, err := evalValue(action.Value, state)
+	if err != nil {
+		return err
+	}
+	// require-scheme governs how the token is presented: "the policy
+	// will ensure that specified scheme is present in the Authorization
+	// header value".
+	scheme, err := evalValue(action.RequireScheme, state)
+	if err != nil {
+		return err
+	}
+	token, schemeOK := tokenFromRequest(state.Request, Action{Name: headerName, Variable: queryName}, scheme)
+	if !schemeOK {
+		state.Returned, state.StatusCode, state.Body = true, code, message
+		return nil
+	}
+	// require-signed-tokens defaults to true. A policy that turns it off
+	// is asking for the claims to be trusted unsigned, which is its
+	// choice to make and not one to make silently on its behalf.
+	mustBeSigned := true
+	if action.RequireSignedTokens != "" {
+		rendered, err := evalValue(action.RequireSignedTokens, state)
+		if err != nil {
+			return err
+		}
+		parsed, convErr := strconv.ParseBool(strings.TrimSpace(rendered))
+		if convErr != nil {
+			return fmt.Errorf("invalid require-signed-tokens %q", rendered)
+		}
+		mustBeSigned = parsed
+	}
+	// A validator is only needed when a signature is going to be
+	// checked, which is why these are here rather than at the top.
+	if mustBeSigned && len(action.OpenIDConfigs) == 0 && state.ValidateToken == nil {
+		return fmt.Errorf("validate-jwt requires a configured token validator")
+	}
+	if mustBeSigned && len(action.OpenIDConfigs) > 0 && state.ValidateTokenAgainst == nil {
+		return fmt.Errorf("validate-jwt openid-config requires a configured discovery fetcher")
+	}
+	var discovered []string
+	signatureOK := !mustBeSigned
+	if !mustBeSigned {
+		// Nothing to check the signature against, so nothing names an
+		// issuer either: an <issuers> the policy gave still applies.
+	} else if len(action.OpenIDConfigs) > 0 {
+		issuers, err := state.ValidateTokenAgainst(token, action.OpenIDConfigs)
+		signatureOK, discovered = err == nil, issuers
+	} else {
+		signatureOK = state.ValidateToken(token) == nil
+	}
+	claims, claimsErr := jwtPayload(token)
+	if !signatureOK || claimsErr != nil || !tokenIsCurrent(action, claims, state) || !enforceTokenConstraints(action, claims, discovered) {
+		state.Returned, state.StatusCode, state.Body = true, code, message
+		return nil
+	}
+	// "Name of context variable that will receive token value as an
+	// object of type Jwt upon successful token validation."
+	if action.OutputTokenVariable != "" {
+		value := expr.JwtValue(token)
+		if state.VariableObjects == nil {
+			state.VariableObjects = map[string]expr.Value{}
+		}
+		state.VariableObjects[action.OutputTokenVariable] = value
+
+	}
+	return nil
+}
+
+func applyIPFilter(action Action, state *State) error {
+	if state.Request == nil {
+		return fmt.Errorf("ip-filter requires a request")
+	}
+	remote := state.Request.RemoteAddr
+	if host, _, err := net.SplitHostPort(remote); err == nil {
+		remote = host
+	}
+	matched := false
+	for _, value := range action.Values {
+		if ipMatches(remote, value) {
+			matched = true
+			break
+		}
+	}
+	failed := (action.FilterAction == "allow" && !matched) || (action.FilterAction == "forbid" && matched)
+	if failed {
+		state.Returned, state.StatusCode, state.Body = true, action.StatusCode, action.Value
+		return nil
+	}
+	return nil
+}
+
+func applySetMethod(action Action, state *State) error {
+	if state.Request == nil {
+		return fmt.Errorf("set-method requires a request")
+	}
+	value, err := evalValue(action.Value, state)
+	if err != nil {
+		return err
+	}
+	state.Request.Method = strings.ToUpper(value)
+	return nil
+}
+
+func applyCORS(action Action, state *State) error {
+	if state.Request == nil {
+		return fmt.Errorf("cors requires a request")
+	}
+	origin := state.Request.Header.Get("Origin")
+	if origin == "" {
+		return nil
+	}
+	allowOrigin, err := evalValue(action.AllowOrigin, state)
+	if err != nil {
+		return err
+	}
+	methods, err := evalValue(action.Methods, state)
+	if err != nil {
+		return err
+	}
+	allowHeaders, err := evalValue(action.AllowHeaders, state)
+	if err != nil {
+		return err
+	}
+	exposeHeaders, err := evalValue(action.ExposeHeaders, state)
+	if err != nil {
+		return err
+	}
+	maxAge, err := evalValue(action.MaxAge, state)
+	if err != nil {
+		return err
+	}
+	state.Headers.Set("Access-Control-Allow-Origin", allowOrigin)
+	if action.AllowCreds {
+		state.Headers.Set("Access-Control-Allow-Credentials", "true")
+	}
+	if methods != "" {
+		state.Headers.Set("Access-Control-Allow-Methods", methods)
+	}
+	if allowHeaders != "" {
+		state.Headers.Set("Access-Control-Allow-Headers", allowHeaders)
+	}
+	if exposeHeaders != "" {
+		state.Headers.Set("Access-Control-Expose-Headers", exposeHeaders)
+	}
+	if maxAge != "" {
+		state.Headers.Set("Access-Control-Max-Age", maxAge)
+	}
+	if state.Request.Method == http.MethodOptions {
+		state.Returned, state.StatusCode = true, http.StatusNoContent
+	}
+	return nil
+}
+
+func applySendRequest(action Action, state *State) error {
+	if state.SendRequest == nil {
+		if action.Kind == ActionSendOneWay {
+			return fmt.Errorf("send-one-way-request requires a configured transport")
+		}
+		return fmt.Errorf("send-request requires a configured transport")
+	}
+	if action.Kind == ActionSendOneWay {
+		mode, err := evalValue(action.Name, state)
+		if err != nil {
+			return err
+		}
+		if mode != "" && !strings.EqualFold(mode, "new") {
+			return fmt.Errorf("%w: <send-one-way-request>", ErrUnsupported)
+		}
+		if _, err := evalValue(action.MaxAge, state); err != nil {
+			return err
+		}
+	}
+	sendURL, err := evalValue(action.SendURL, state)
+	if err != nil {
+		return err
+	}
+	sendMethod, err := evalValue(action.SendMethod, state)
+	if err != nil {
+		return err
+	}
+	body, err := evalValue(action.Body, state)
+	if err != nil {
+		return err
+	}
+	request, err := http.NewRequest(strings.ToUpper(sendMethod), sendURL, strings.NewReader(body))
+	if err != nil {
+		return err
+	}
+	for _, header := range action.Headers {
+		value, err := evalValue(header.Value, state)
+		if err != nil {
+			return err
+		}
+		setHeader(request.Header, Header{Name: header.Name, Value: value, Action: header.Action})
+	}
+	response, err := state.SendRequest(request)
+	if action.Kind == ActionSendOneWay {
+		if response != nil && response.Body != nil {
+			_ = response.Body.Close()
+		}
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if response != nil {
+		if response.Body != nil {
+			_ = response.Body.Close()
+		}
+		if action.ResponseVar != "" {
+			if state.Variables == nil {
+				state.Variables = map[string]string{}
+			}
+			state.Variables[action.ResponseVar] = fmt.Sprintf("%d", response.StatusCode)
+		}
+	}
+	return nil
+}
+
+func applyRateLimit(action Action, state *State) error {
+	if err := executeLimit(action, state); err != nil {
+		return err
+	}
+	if state.Returned {
+		return nil
+	}
+	return nil
+}
+
+func applyLLMTokenLimit(action Action, state *State) error {
+	if err := executeLLMTokenLimit(action, state); err != nil {
+		return err
+	}
+	if state.Returned {
+		return nil
+	}
+	return nil
+}
+
+func applyLLMEmitTokenMetric(action Action, state *State) error {
+	if err := executeLLMEmitTokenMetric(action, state); err != nil {
+		return err
+	}
+	return nil
+}
+
+func applyLimitConcurrency(action Action, state *State) error {
+	if state.AcquireConcurrency == nil {
+		return fmt.Errorf("limit-concurrency requires a configured limiter")
+	}
+	key, err := evalValue(action.Value, state)
+	if err != nil {
+		return err
+	}
+	if key == "" && state.Request != nil {
+		key = state.Request.RemoteAddr
+	}
+	release := state.AcquireConcurrency(key, action.LimitCalls)
+	if release == nil {
+		state.Returned, state.StatusCode, state.Body = true, action.StatusCode, action.Body
+		return nil
+	}
+	state.ConcurrencyReleases = append(state.ConcurrencyReleases, release)
+	if err := Execute(action.Children, state); err != nil {
+		return err
+	}
+	if state.Returned {
+		return nil
+	}
+	return nil
+}
+
+func applyCacheLookup(action Action, state *State) error {
+	if state.CacheGet == nil {
+		return fmt.Errorf("cache-lookup requires a configured cache")
+	}
+	if status, headers, body, ok := state.CacheGet(state.CacheKey); ok {
+		state.Headers = headers
+		state.Returned, state.StatusCode, state.Body = true, status, body
+		return nil
+	}
+	return nil
+}
+
+func applyCacheStore(action Action, state *State) error {
+	if state.CacheSet == nil || state.Response == nil {
+		return fmt.Errorf("cache-store requires a response and configured cache")
+	}
+	body := state.Body
+	if !state.BodySet {
+		value, err := io.ReadAll(state.Response.Body)
+		if err != nil {
+			return err
+		}
+		body = string(value)
+		state.Response.Body = io.NopCloser(strings.NewReader(body))
+	}
+	state.CacheSet(state.CacheKey, state.Response.StatusCode, state.Response.Header.Clone(), body, action.CacheDuration)
+	return nil
+}
+
+func applyValidateStatus(action Action, state *State) error {
+	if state.Response == nil {
+		return fmt.Errorf("validate-status-code requires a response")
+	}
+	valid := state.Response.StatusCode >= action.StatusMin && state.Response.StatusCode <= action.StatusMax
+	if !valid && action.Action != "ignore" {
+		state.Returned, state.StatusCode, state.Body = true, action.FailedCode, "response status code is outside the configured range"
+		if action.Value != "" {
+			if state.Variables == nil {
+				state.Variables = map[string]string{}
+			}
+			state.Variables[action.Value] = fmt.Sprintf("%d", state.Response.StatusCode)
+		}
+		return nil
+	}
+	return nil
+}
+
+func applyValidateContent(action Action, state *State) error {
+	var headers http.Header
+	var body io.ReadCloser
+	if state.Response != nil {
+		headers, body = state.Response.Header, state.Response.Body
+	} else if state.Request != nil {
+		headers, body = state.Request.Header, state.Request.Body
+	} else {
+		return fmt.Errorf("validate-content requires a request or response")
+	}
+	value, err := io.ReadAll(body)
+	if err != nil {
+		return err
+	}
+	if state.Response != nil {
+		state.Response.Body = io.NopCloser(strings.NewReader(string(value)))
+	} else {
+		state.Request.Body = io.NopCloser(strings.NewReader(string(value)))
+		state.Request.ContentLength = int64(len(value))
+	}
+	failed := (action.ContentMax > 0 && int64(len(value)) > action.ContentMax)
+	if len(action.ContentTypes) > 0 {
+		contentType := strings.ToLower(strings.Split(headers.Get("Content-Type"), ";")[0])
+		matched := false
+		for _, allowed := range action.ContentTypes {
+			if contentType == allowed {
+				matched = true
+				break
+			}
+		}
+		failed = failed || !matched
+	}
+	if failed && action.ContentAction != "ignore" {
+		state.Returned, state.StatusCode, state.Body = true, action.FailedCode, "content validation failed"
+		return nil
+	}
+	return nil
+}
+
+func applyValidateHeaders(action Action, state *State) error {
+	var headers http.Header
+	if state.Response != nil {
+		headers = state.Response.Header
+	} else if state.Request != nil {
+		headers = state.Request.Header
+	} else {
+		return fmt.Errorf("validate-headers requires a request or response")
+	}
+	rules := make(map[string]HeaderRule, len(action.HeaderRules))
+	for _, rule := range action.HeaderRules {
+		rules[strings.ToLower(rule.Name)] = rule
+	}
+	for name, values := range headers {
+		rule, specified := rules[strings.ToLower(name)]
+		if !specified {
+			if action.UnspecifiedHeaderAction == "prevent" {
+				state.Returned, state.StatusCode, state.Body = true, action.FailedCode, "header validation failed"
+				return nil
+			}
+			continue
+		}
+		if rule.Action == "ignore" || len(rule.Values) == 0 {
+			continue
+		}
+		matched := false
+		for _, actual := range values {
+			for _, expected := range rule.Values {
+				if actual == expected {
+					matched = true
+				}
+			}
+		}
+		if !matched {
+			state.Returned, state.StatusCode, state.Body = true, action.FailedCode, "header validation failed"
+			return nil
+		}
+	}
+	for _, rule := range rules {
+		if len(headers.Values(rule.Name)) == 0 && rule.Action == "prevent" {
+			state.Returned, state.StatusCode, state.Body = true, action.FailedCode, "header validation failed"
+			return nil
+		}
+	}
+	return nil
+}
+
+func applyValidateParameters(action Action, state *State) error {
+	if state.Request == nil || state.Request.URL == nil {
+		return fmt.Errorf("validate-parameters requires a request")
+	}
+	query := state.Request.URL.Query()
+	rules := make(map[string]ParameterRule, len(action.ParameterRules))
+	for _, rule := range action.ParameterRules {
+		rules[rule.Name] = rule
+	}
+	for name, values := range query {
+		rule, specified := rules[name]
+		if !specified {
+			if action.UnspecifiedHeaderAction == "prevent" {
+				state.Returned, state.StatusCode, state.Body = true, action.FailedCode, "parameter validation failed"
+				return nil
+			}
+			continue
+		}
+		if rule.Action == "ignore" || len(rule.Values) == 0 {
+			continue
+		}
+		matched := false
+		for _, actual := range values {
+			for _, expected := range rule.Values {
+				if actual == expected {
+					matched = true
+				}
+			}
+		}
+		if !matched {
+			state.Returned, state.StatusCode, state.Body = true, action.FailedCode, "parameter validation failed"
+			return nil
+		}
+	}
+	for _, rule := range rules {
+		if _, present := query[rule.Name]; !present && rule.Action == "prevent" {
+			state.Returned, state.StatusCode, state.Body = true, action.FailedCode, "parameter validation failed"
+			return nil
+		}
+	}
+	return nil
+}
+
+func applyValidateClientCertificate(action Action, state *State) error {
+	if state.Request == nil || state.Request.TLS == nil || len(state.Request.TLS.PeerCertificates) == 0 {
+		state.Returned, state.StatusCode, state.Body = true, action.FailedCode, "client certificate validation failed"
+		return nil
+	}
+	if len(action.CertificateThumbprints) > 0 {
+		matched := false
+		for _, certificate := range state.Request.TLS.PeerCertificates {
+			fingerprint := strings.ToUpper(fmt.Sprintf("%X", sha1.Sum(certificate.Raw)))
+			for _, expected := range action.CertificateThumbprints {
+				if fingerprint == expected {
+					matched = true
+				}
+			}
+		}
+		if !matched {
+			state.Returned, state.StatusCode, state.Body = true, action.FailedCode, "client certificate validation failed"
+			return nil
+		}
+	}
+	return nil
+}
+
+func applyChoose(action Action, state *State) error {
+	selected := action.Otherwise
+	for _, branch := range action.Branches {
+		matched, err := evaluateCondition(branch.Condition, state)
+		if err != nil {
+			return err
+		}
+		if matched {
+			selected = branch.Actions
+			break
+		}
+	}
+	if err := Execute(selected, state); err != nil {
+		return err
+	}
+	if state.Returned {
+		return nil
+	}
+	return nil
+}
+
+func applyTrace(action Action, state *State) error {
+	if state.Trace != nil {
+		state.Trace("policy", strings.TrimSpace(action.TraceSource+" "+action.TraceSeverity+" "+action.TraceMessage))
+	}
+	return nil
+}
+
+func applyAuthenticationBasic(action Action, state *State) error {
+	if state.Request == nil {
+		return fmt.Errorf("authentication-basic requires a request")
+	}
+	username, err := evalValue(action.AuthUsername, state)
+	if err != nil {
+		return err
+	}
+	password, err := evalValue(action.AuthPassword, state)
+	if err != nil {
+		return err
+	}
+	state.Request.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte(username+":"+password)))
+	return nil
+}
+
+func applyAuthenticationManagedIdentity(action Action, state *State) error {
+	if state.Request == nil {
+		return fmt.Errorf("authentication-managed-identity requires a request")
+	}
+	if state.AcquireToken == nil {
+		return fmt.Errorf("authentication-managed-identity requires a token provider")
+	}
+	resource, err := evalValue(action.AuthResource, state)
+	if err != nil {
+		return err
+	}
+	token, err := state.AcquireToken(resource)
+	if err != nil {
+		return err
+	}
+	state.Request.Header.Set("Authorization", "Bearer "+token)
+	return nil
+}
+
+func applyAuthenticationOAuth2(action Action, state *State) error {
+	if state.Request == nil {
+		return fmt.Errorf("authentication-oauth2 requires a request")
+	}
+	if state.AcquireOAuth2Token == nil {
+		return fmt.Errorf("authentication-oauth2 requires a token provider")
+	}
+	clientID, err := evalValue(action.AuthClientID, state)
+	if err != nil {
+		return err
+	}
+	clientSecret, err := evalValue(action.AuthClientSecret, state)
+	if err != nil {
+		return err
+	}
+	endpoint, err := evalValue(action.AuthTokenEndpoint, state)
+	if err != nil {
+		return err
+	}
+	resource, err := evalValue(action.AuthResource, state)
+	if err != nil {
+		return err
+	}
+	token, err := state.AcquireOAuth2Token(clientID, clientSecret, endpoint, resource)
+	if err != nil {
+		return err
+	}
+	state.Request.Header.Set("Authorization", "Bearer "+token)
+	return nil
+}
+
+func applyAuthenticationCertificate(action Action, state *State) error {
+	if state.Request == nil {
+		return fmt.Errorf("authentication-certificate requires a request")
+	}
+	if state.AttachClientCertificate == nil {
+		return fmt.Errorf("authentication-certificate requires a certificate provider")
+	}
+	certificateID, err := evalValue(action.AuthCertificateID, state)
+	if err != nil {
+		return err
+	}
+	if err := state.AttachClientCertificate(state.Request, certificateID); err != nil {
+		return err
+	}
+	return nil
+}
+
+func applyFindReplace(action Action, state *State) error {
+	from, err := evalValue(action.ReplaceFrom, state)
+	if err != nil {
+		return err
+	}
+	to, err := evalValue(action.ReplaceTo, state)
+	if err != nil {
+		return err
+	}
+	var body io.ReadCloser
+	if state.Response != nil {
+		body = state.Response.Body
+	} else if state.Request != nil {
+		body = state.Request.Body
+	} else {
+		return fmt.Errorf("find-and-replace requires a request or response")
+	}
+	value, err := io.ReadAll(body)
+	if err != nil {
+		return err
+	}
+	replaced := strings.ReplaceAll(string(value), from, to)
+	if state.Response != nil {
+		state.Response.Body = io.NopCloser(strings.NewReader(replaced))
+	} else {
+		state.Request.Body = io.NopCloser(strings.NewReader(replaced))
+		state.Request.ContentLength = int64(len(replaced))
+		state.Request.GetBody = func() (io.ReadCloser, error) { return io.NopCloser(strings.NewReader(replaced)), nil }
+	}
+	return nil
+}
+
+func applyJSONToXML(action Action, state *State) error {
+	if state.Response == nil {
+		return fmt.Errorf("json-to-xml requires a response")
+	}
+	root, err := evalValue(action.TransformRoot, state)
+	if err != nil {
+		return err
+	}
+	value, err := io.ReadAll(state.Response.Body)
+	if err != nil {
+		return err
+	}
+	var document any
+	if err := json.Unmarshal(value, &document); err != nil {
+		return err
+	}
+	xmlValue, err := jsonValueXML(root, document)
+	if err != nil {
+		return err
+	}
+	state.Response.Body = io.NopCloser(strings.NewReader(xmlValue))
+	return nil
+}
+
+func applyXMLToJSON(action Action, state *State) error {
+	if state.Response == nil {
+		return fmt.Errorf("xml-to-json requires a response")
+	}
+	value, err := io.ReadAll(state.Response.Body)
+	if err != nil {
+		return err
+	}
+	var document node
+	if err := xml.Unmarshal(value, &document); err != nil {
+		return err
+	}
+	jsonValue, _ := json.Marshal(map[string]any{document.Name: xmlNodeJSON(document)})
+	state.Response.Body = io.NopCloser(strings.NewReader(string(jsonValue)))
+	return nil
+}
+
+func applyJSONP(action Action, state *State) error {
+	if state.Response == nil || state.Request == nil || state.Request.URL == nil {
+		return fmt.Errorf("jsonp requires a request and response")
+	}
+	parameter, err := evalValue(action.JSONPParameter, state)
+	if err != nil {
+		return err
+	}
+	callback := state.Request.URL.Query().Get(parameter)
+	if callback == "" {
+		return nil
+	}
+	value, err := io.ReadAll(state.Response.Body)
+	if err != nil {
+		return err
+	}
+	state.Response.Body = io.NopCloser(strings.NewReader(callback + "(" + string(value) + ");"))
+	return nil
+}
+
+func applyCacheLookupValue(action Action, state *State) error {
+	if state.ValueCacheGet == nil {
+		return fmt.Errorf("cache-lookup-value requires a cache")
+	}
+	key, err := evalValue(action.ValueCacheKey, state)
+	if err != nil {
+		return err
+	}
+	variable, err := evalValue(action.Variable, state)
+	if err != nil {
+		return err
+	}
+	if variable == "" {
+		return fmt.Errorf("cache-lookup-value requires a variable-name")
+	}
+	value, ok := state.ValueCacheGet(key)
+	if ok {
+		if state.Variables == nil {
+			state.Variables = map[string]string{}
+		}
+		state.Variables[variable] = value
+	}
+	return nil
+}
+
+func applyCacheStoreValue(action Action, state *State) error {
+	if state.ValueCacheSet == nil {
+		return fmt.Errorf("cache-store-value requires a cache")
+	}
+	key, err := evalValue(action.ValueCacheKey, state)
+	if err != nil {
+		return err
+	}
+	value, err := evalValue(action.ValueCacheValue, state)
+	if err != nil {
+		return err
+	}
+	state.ValueCacheSet(key, value, action.ValueCacheDuration)
+	return nil
+}
+
+func applyCacheRemoveValue(action Action, state *State) error {
+	if state.ValueCacheRemove == nil {
+		return fmt.Errorf("cache-remove-value requires a cache")
+	}
+	key, err := evalValue(action.ValueCacheKey, state)
+	if err != nil {
+		return err
+	}
+	state.ValueCacheRemove(key)
+	return nil
+}
+
+func applySetBackend(action Action, state *State) error {
+	value, err := evalValue(action.Value, state)
+	if err != nil {
+		return err
+	}
+	backendID, err := evalValue(action.BackendID, state)
+	if err != nil {
+		return err
+	}
+	state.BackendURL = value
+	state.BackendID = backendID
+	if backend, ok := state.Backends[strings.ToLower(backendID)]; ok {
+		state.Backend = &backend
+	}
+	return nil
+}
+
+func applyRewriteURI(action Action, state *State) error {
+	value, err := evalValue(action.Value, state)
+	if err != nil {
+		return err
+	}
+	state.Path = value
+	return nil
+}
+
+func applyForward(action Action, state *State) error {
+	// Forwarding is performed by the gateway after the backend section.
+	return nil
+}
+
+func applyReturnResponse(action Action, state *State) error {
+	code := action.StatusCode
+	if action.Value != "" {
+		evaluated, err := evalValue(action.Value, state)
+		if err != nil {
+			return err
+		}
+		if _, err := fmt.Sscanf(evaluated, "%d", &code); err != nil || code < 100 || code > 599 {
+			return fmt.Errorf("invalid mock-response status-code")
+		}
+	}
+	body, err := evalValue(action.Body, state)
+	if err != nil {
+		return err
+	}
+	state.Returned, state.StatusCode, state.Reason, state.Body = true, code, action.Reason, body
+	for _, header := range action.Headers {
+		value, err := evalValue(header.Value, state)
+		if err != nil {
+			return err
+		}
+		setHeader(state.Headers, Header{Name: header.Name, Value: value, Action: header.Action})
+	}
+	return nil
+}
+
+func applySetStatus(action Action, state *State) error {
+	code := action.StatusCode
+	if action.Value != "" {
+		evaluated, err := evalValue(action.Value, state)
+		if err != nil {
+			return err
+		}
+		if _, err := fmt.Sscanf(evaluated, "%d", &code); err != nil || code < 100 || code > 599 {
+			return fmt.Errorf("invalid set-status code")
+		}
+	}
+	reason, err := evalValue(action.Reason, state)
+	if err != nil {
+		return err
+	}
+	state.StatusCode = code
+	state.Reason = reason
+	return nil
+}
+
+func applyRedirectContentURLs(action Action, state *State) error {
+	if state.Request == nil || state.BackendURL == "" {
+		return fmt.Errorf("redirect-content-urls requires a request and backend URL")
+	}
+	if err := replaceContentURLs(state, requestBaseURL(state.Request), strings.TrimRight(state.BackendURL, "/")); err != nil {
+		return err
+	}
+	return nil
+}
+
+func applyRetry(action Action, state *State) error {
+	if err := Execute(action.Children, state); err != nil {
+		return err
+	}
+	return nil
+}
+
+func applyWait(action Action, state *State) error {
+	if err := executeWait(action, state); err != nil {
+		return err
+	}
+	return nil
+}
+
+func applyUnsupported(action Action, state *State) error {
+	return fmt.Errorf("%w: <%s>", ErrUnsupported, action.Source)
+}
+
+func applyInvalid(action Action, state *State) error {
+	return fmt.Errorf("%w: %s", ErrInvalidDocument, action.Value)
 }
 
 func executeLimit(action Action, state *State) error {

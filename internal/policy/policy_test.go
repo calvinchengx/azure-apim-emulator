@@ -3864,3 +3864,36 @@ func TestTraceFromStateLabelsTheSource(t *testing.T) {
 		t.Error("traceFromState returned a closure for a state that does not trace")
 	}
 }
+
+// TestEveryActionKindIsDispatched pins the two halves of the dispatch table's
+// contract, and the second half is the one a table makes easy to get wrong.
+//
+// A kind with no entry is IGNORED. That was the old switch's behaviour for free
+// (an unmatched `case` fell through to the end of the loop body) and it is the
+// behaviour a table has to state on purpose, because the alternative -- calling
+// a nil function -- panics. `ActionKind` is an `int`, so a build can be handed a
+// value it does not know: a plan compiled by a newer emulator, or a zero value
+// from an uninitialised struct.
+//
+// The first half is what stops that leniency from hiding a real hole: every
+// kind this build DECLARES must have an entry, so "unknown kinds are ignored"
+// can never quietly become "this action does nothing".
+func TestEveryActionKindIsDispatched(t *testing.T) {
+	for kind := ActionSetHeader; kind < actionKindCount; kind++ {
+		if _, ok := actionHandlers[kind]; !ok {
+			t.Errorf("ActionKind %d has no dispatch entry, so it would be silently ignored; "+
+				"see the const block in policy.go for which kind that is", int(kind))
+		}
+	}
+	unknown := actionKindCount + 1
+	if _, ok := actionHandlers[unknown]; ok {
+		t.Fatalf("kind %d was meant to be unregistered", int(unknown))
+	}
+	state := &State{Request: httptest.NewRequest(http.MethodGet, "/", nil)}
+	if err := Execute([]Action{{Kind: unknown}}, state); err != nil {
+		t.Fatalf("an unknown action kind must be ignored, got %v", err)
+	}
+	if state.Returned || state.StatusCode != 0 {
+		t.Fatalf("an unknown action kind must not touch state, got %+v", state)
+	}
+}
