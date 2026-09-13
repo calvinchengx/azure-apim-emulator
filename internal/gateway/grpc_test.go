@@ -383,13 +383,17 @@ func TestGRPCClientReusesAConfiguredTLSConfig(t *testing.T) {
 	// A cleartext backend needs the h2c prior-knowledge handshake, which the
 	// default transport will not do.
 	plain := grpcClient(&http.Client{}, "http://backend.test")
-	transport, ok := plain.Transport.(*http2.Transport)
-	if !ok || !transport.AllowHTTP || transport.DialTLSContext == nil {
-		t.Fatalf("a cleartext backend needs AllowHTTP and a plain dialer, got %+v", plain.Transport)
+	transport, ok := plain.Transport.(*http.Transport)
+	if !ok || transport.Protocols == nil || !transport.Protocols.UnencryptedHTTP2() || transport.Protocols.HTTP1() {
+		t.Fatalf("a cleartext backend needs h2c prior knowledge and no HTTP/1.1 fallback, got %+v", plain.Transport)
 	}
+	// The TLS leg must speak HTTP/2 and nothing else. Allowing HTTP/1.1 here
+	// would let a backend that negotiates down produce the malformed-response
+	// failure grpcClient exists to prevent.
 	secure := grpcClient(&http.Client{Transport: &http.Transport{}}, "https://backend.test")
-	if transport, ok := secure.Transport.(*http2.Transport); !ok || transport.AllowHTTP {
-		t.Fatal("a TLS backend must not use the cleartext handshake")
+	if transport, ok := secure.Transport.(*http.Transport); !ok || transport.Protocols == nil ||
+		transport.Protocols.UnencryptedHTTP2() || !transport.Protocols.HTTP2() || transport.Protocols.HTTP1() {
+		t.Fatal("a TLS backend must speak HTTP/2 over TLS only: no cleartext handshake, no HTTP/1.1")
 	}
 }
 
@@ -481,7 +485,7 @@ func (f writerFunc) Write(p []byte) (int, error) { return f(p) }
 func TestGRPCClientCarriesAConfiguredTLSConfig(t *testing.T) {
 	base := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{ServerName: "backend.test", MinVersion: tls.VersionTLS12}}}
 	client := grpcClient(base, "https://backend.test")
-	transport, ok := client.Transport.(*http2.Transport)
+	transport, ok := client.Transport.(*http.Transport)
 	if !ok || transport.TLSClientConfig == nil {
 		t.Fatalf("transport = %+v; a configured TLS config must be carried onto the HTTP/2 transport", client.Transport)
 	}
