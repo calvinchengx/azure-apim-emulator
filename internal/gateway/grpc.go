@@ -1,11 +1,8 @@
 package gateway
 
 import (
-	"context"
-	"crypto/tls"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"sort"
 	"strings"
@@ -14,7 +11,6 @@ import (
 	"github.com/calvinchengx/azure-apim-emulator/internal/model"
 	"github.com/calvinchengx/azure-apim-emulator/internal/policy"
 	"github.com/calvinchengx/azure-apim-emulator/internal/store"
-	"golang.org/x/net/http2"
 )
 
 // GRPCSchemaContentType is the content type Azure gives a protobuf schema
@@ -285,20 +281,26 @@ func grpcPercentEncode(message string) string {
 // CA) is preserved: its TLS config is carried onto the HTTP/2 transport rather
 // than replaced, so a backend requiring mutual TLS still works over gRPC.
 func grpcClient(base *http.Client, backend string) *http.Client {
-	transport := &http2.Transport{}
+	transport := &http.Transport{}
 	if existing, ok := base.Transport.(*http.Transport); ok && existing.TLSClientConfig != nil {
 		transport.TLSClientConfig = existing.TLSClientConfig.Clone()
 	}
+	// HTTP/2 ONLY, and never HTTP/1.1 as a fallback: a gRPC backend answers an
+	// HTTP/1.1 request with HTTP/2 frames that the transport then reports as a
+	// malformed response, so a silent downgrade fails confusingly downstream.
+	//
+	// net/http speaks h2c prior knowledge natively since Go 1.24. This used to
+	// be golang.org/x/net/http2.Transport with AllowHTTP plus a DialTLSContext
+	// that dialled PLAIN TCP -- the field was consulted for every connection,
+	// so leaving it nil attempted TLS against a cleartext port. x/net
+	// deprecated that transport; Protocols says the same thing without the
+	// dialer workaround.
+	protocols := new(http.Protocols)
 	if strings.HasPrefix(strings.ToLower(backend), "http://") {
-		// AllowHTTP lets the transport use the h2c prior-knowledge handshake,
-		// and DialTLSContext must then make a PLAIN connection: the field is
-		// consulted for every dial, so leaving it nil would attempt TLS
-		// against a cleartext port.
-		transport.AllowHTTP = true
-		transport.DialTLSContext = func(ctx context.Context, network, addr string, _ *tls.Config) (net.Conn, error) {
-			var dialer net.Dialer
-			return dialer.DialContext(ctx, network, addr)
-		}
+		protocols.SetUnencryptedHTTP2(true)
+	} else {
+		protocols.SetHTTP2(true)
 	}
+	transport.Protocols = protocols
 	return &http.Client{Transport: transport, Timeout: base.Timeout}
 }
