@@ -50,7 +50,7 @@ services:
       retries: 10
 
   arm-seed:
-    image: python:3.12-alpine
+    image: mirror.gcr.io/library/python:3.12-alpine
     restart: "no"
     depends_on:
       arm-emulator:
@@ -121,7 +121,7 @@ services:
   # arrangement where the secret identifier apim is given is the one a
   # deployment would use.
   witness:
-    image: node:22-alpine
+    image: mirror.gcr.io/library/node:22-alpine
     profiles: [witness]
     depends_on:
       azure-apim-emulator:

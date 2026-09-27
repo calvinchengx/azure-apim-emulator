@@ -3,7 +3,7 @@ ARG GO_VERSION=1.26.6
 # release it is. Without it the image reports `dev` while the tarball from the
 # same tag reports its number, which is two answers to one question.
 ARG VERSION=dev
-FROM golang:${GO_VERSION}-bookworm AS build
+FROM mirror.gcr.io/library/golang:${GO_VERSION}-bookworm AS build
 ARG VERSION
 WORKDIR /src
 COPY go.mod go.sum ./
