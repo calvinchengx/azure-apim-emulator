@@ -10,5 +10,10 @@
     "preinstall": "npx only-allow pnpm",
     "docs:dev": "pnpm --filter azure-apim-emulator-docs dev",
     "docs:build": "pnpm --filter azure-apim-emulator-docs build"
+  },
+  "pnpm": {
+    "overrides": {
+      "ip-address@<=10.5.0": "^10.5.1"
+    }
   }
 }
