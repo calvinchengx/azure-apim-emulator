@@ -7,7 +7,7 @@
     "test": "node witness.js"
   },
   "dependencies": {
-    "@grpc/grpc-js": "1.12.7",
+    "@grpc/grpc-js": "1.13.6",
     "@grpc/proto-loader": "0.7.13"
   }
 }
