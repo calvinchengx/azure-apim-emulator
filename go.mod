@@ -1,6 +1,6 @@
 module github.com/calvinchengx/azure-apim-emulator
 
-go 1.26.6
+go 1.27.2
 
 require (
 	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.23.2
@@ -9,7 +9,7 @@ require (
 	github.com/bufbuild/protocompile v0.14.1
 	github.com/calvinchengx/entra-emulator v0.9.0
 	github.com/vektah/gqlparser/v2 v2.5.58
-	golang.org/x/net v0.59.0
+	golang.org/x/net v0.60.0
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.60.1
 	software.sslmate.com/src/go-pkcs12 v0.7.3

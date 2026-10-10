@@ -1,4 +1,4 @@
-ARG GO_VERSION=1.26.6
+ARG GO_VERSION=1.27.2
 # VERSION is stamped into the binary so a running container can say which
 # release it is. Without it the image reports `dev` while the tarball from the
 # same tag reports its number, which is two answers to one question.
