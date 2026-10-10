@@ -22,15 +22,18 @@ updates:
         patterns: ['*']
         exclude-patterns: ['github.com/Azure/azure-sdk-for-go/*']
 
-  # The JavaScript witness suite: one PR moves every @azure/* client together,
-  # so CI proves the emulator against a self-consistent SDK set.
+  # The npm workspace: one entry at the ROOT, because every member (website,
+  # e2e/*) shares the one pnpm-lock.yaml. A per-directory entry updates that
+  # member's package.json but not the lockfile, and the result fails
+  # `pnpm install --frozen-lockfile`, which reds the whole suite. Dependabot
+  # has to see the workspace root to rewrite the lockfile it depends on.
   - package-ecosystem: npm
-    directory: /e2e/javascript
+    directory: /
     schedule:
       interval: weekly
     open-pull-requests-limit: 3
     groups:
-      e2e-js:
+      npm:
         patterns: ['*']
 
   # The Python witness suite.
