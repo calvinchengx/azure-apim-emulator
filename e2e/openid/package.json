@@ -7,7 +7,7 @@
     "test": "node witness.js"
   },
   "dependencies": {
-    "jose": "5.9.6",
-    "oidc-provider": "9.11.3"
+    "jose": "6.2.12",
+    "oidc-provider": "9.12.2"
   }
 }
