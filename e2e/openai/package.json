@@ -8,6 +8,6 @@
   },
   "dependencies": {
     "@azure/arm-apimanagement": "10.0.0",
-    "openai": "4.77.0"
+    "openai": "7.30.0"
   }
 }
