@@ -48,7 +48,7 @@ jobs:
     outputs:
       docs_only: ${{ steps.classify.outputs.docs_only }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
       - run: python3 scripts/docs_only_change.py --self-test
@@ -96,7 +96,7 @@ jobs:
             build-mode: none
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # Pin the EXACT patch, not the minor. CodeQL runs with
       # GOTOOLCHAIN=local, so it cannot fetch what go.mod asks for: a
@@ -105,16 +105,16 @@ jobs:
       # old `1.25` spec had the same latent fault and only worked by
       # luck of the cache.
       - if: matrix.language == 'go'
-        uses: actions/setup-go@v7
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@v4.38.2
+        uses: github/codeql-action/init@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
         with:
           languages: ${{ matrix.language }}
           build-mode: ${{ matrix.build-mode }}
 
       - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@v4.38.2
+        uses: github/codeql-action/analyze@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
         with:
           category: '/language:${{ matrix.language }}'
