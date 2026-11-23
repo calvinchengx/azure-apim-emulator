@@ -1016,11 +1016,9 @@ func TestTheStartupLogNamesTheScopeAndNotTheDocument(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	// API-scoped, not service-scoped. gateway.serviceIDFromScope looks for
-	// "/subscriptions/" to strip a subscription-scoped id, and every ARM id
-	// begins with it, so a SERVICE id truncates to "" and its document resolves
-	// no named values at all. That is a separate defect from anything here; this
-	// test would just fail on it instead of on what it means to assert.
+	// API-scoped, which is the narrower case: service scope resolves named
+	// values too (see gateway.TestActivateResolvesNamedValuesInServiceScopedPolicy),
+	// and either scope reaches the substitution this test is about.
 	api, err := st.UpsertAPI(model.API{
 		ServiceID: service.ID(), Name: "echo", DisplayName: "Echo",
 		Path: "echo", ServiceURL: "https://backend.invalid", IsCurrent: true,

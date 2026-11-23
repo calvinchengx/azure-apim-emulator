@@ -792,15 +792,31 @@ func TestNamedValueResolution(t *testing.T) {
 	if got, err := resolveNamedValues("{{xml}}", map[string]string{"xml": `a&<"`}); err != nil || got != "a&amp;&lt;&#34;" {
 		t.Fatalf("XML-safe named value = %q, %v", got, err)
 	}
+}
+
+// The ids are the store's own, not shorthand, because the shape that broke this
+// helper only exists in a real one: EVERY ARM id begins with "/subscriptions/",
+// so a scan of the whole string finds that leading segment before it finds a
+// subscription-scoped policy's own, and truncates a service id to "".
+func TestServiceIDFromScope(t *testing.T) {
+	service := model.Service{SubscriptionID: "0000", ResourceGroup: "rg", Name: "emulator"}.ID()
 	for scope, want := range map[string]string{
-		"/service/s":                   "/service/s",
-		"/service/s/apis/a":            "/service/s",
-		"/service/s/products/p":        "/service/s",
-		"/service/s/subscriptions/key": "/service/s",
-		"/service/s/namedValues/value": "/service/s",
+		service:                          service,
+		service + "/apis/echo":           service,
+		service + "/products/starter":    service,
+		service + "/subscriptions/key":   service,
+		service + "/namedValues/token":   service,
+		service + "/apis/echo/schemas/s": service,
+		// An id that names no service at all is its own owner, rather than an
+		// offset computed from a -1.
+		"/subscriptions/0000/resourceGroups/rg": "/subscriptions/0000/resourceGroups/rg",
+		// A workspace is its OWN scope, not a child of the service the way an
+		// api or a product is, so nothing is stripped and the lookup that
+		// follows misses rather than borrowing the service's named values.
+		service + "/workspaces/w": service + "/workspaces/w",
 	} {
 		if got := serviceIDFromScope(scope); got != want {
-			t.Errorf("serviceIDFromScope(%q) = %q", scope, got)
+			t.Errorf("serviceIDFromScope(%q) = %q, want %q", scope, got, want)
 		}
 	}
 }
@@ -844,6 +860,46 @@ func TestActivateResolvesNamedValuesInPolicies(t *testing.T) {
 	if err := runtime.Activate(st, false); err == nil {
 		t.Fatal("missing named value should reject activation")
 	}
+}
+
+// A SERVICE-scoped policy is what Azure calls global, and the user-visible half
+// of the same defect: its scope id IS the service id, so the helper that finds
+// the owning service had nothing to strip and returned "" instead, leaving the
+// document to resolve against no named values at all. The value is secret
+// because that is what docs/parity.md claims for this scope.
+func TestActivateResolvesNamedValuesInServiceScopedPolicy(t *testing.T) {
+	st, err := store.Open("", clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = st.Close() }()
+	service, err := st.UpsertService(model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "emulator"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	api, err := st.UpsertAPI(model.API{ServiceID: service.ID(), Name: "global", DisplayName: "Global", Path: "global", ServiceURL: "https://backend.test", Protocols: []string{"https"}, IsCurrent: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.UpsertOperation(model.Operation{APIID: api.ID(), Name: "get", DisplayName: "Get", Method: http.MethodGet, URLTemplate: "/"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.UpsertNamedValue(model.NamedValue{ServiceID: service.ID(), Name: "header", DisplayName: "header", Value: "from-service-named-value", Secret: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.UpsertPolicy(model.Policy{ScopeID: service.ID(), Format: "xml", Value: `<policies><inbound><set-header name="X-Named" exists-action="override"><value>{{header}}</value></set-header></inbound><backend><base /></backend><outbound /><on-error /></policies>`}); err != nil {
+		t.Fatal(err)
+	}
+	runtime := New("emulator", &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		if request.Header.Get("X-Named") != "from-service-named-value" {
+			t.Errorf("named header = %q", request.Header.Get("X-Named"))
+		}
+		return &http.Response{StatusCode: http.StatusNoContent, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(""))}, nil
+	})})
+	if err := runtime.Activate(st, false); err != nil {
+		t.Fatalf("service-scoped policy should activate: %v", err)
+	}
+	assertGatewayStatus(t, runtime, httptest.NewRequest(http.MethodGet, "/global", nil), http.StatusNoContent)
 }
 
 func TestActivateInheritsServicePolicyWhenAPIHasNone(t *testing.T) {

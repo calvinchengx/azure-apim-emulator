@@ -811,11 +811,30 @@ func resolveNamedValues(source string, values map[string]string) (string, error)
 	return resolved, resolveErr
 }
 
+// serviceIDFromScope returns the id of the service that owns a scoped id: the
+// id itself for a service, and the ancestor for anything scoped beneath one.
+//
+// The search starts AFTER the "/service/<name>" segment rather than at the head
+// of the string, because every ARM id begins with "/subscriptions/" -- the one
+// that owns the resource group. Scanning the whole id matched that at index 0
+// and returned "" for every service id, so a service-scoped (global) policy
+// resolved against no named values, backends or fragments at all.
 func serviceIDFromScope(id string) string {
 	lower := strings.ToLower(id)
+	marker := strings.Index(lower, "/service/")
+	if marker < 0 {
+		return id
+	}
+	// Past the service's own name, where a child scope's segment begins.
+	offset := marker + len("/service/")
+	next := strings.Index(lower[offset:], "/")
+	if next < 0 {
+		return id
+	}
+	offset += next
 	for _, child := range []string{"/apis/", "/products/", "/subscriptions/", "/namedvalues/"} {
-		if index := strings.Index(lower, child); index >= 0 {
-			return id[:index]
+		if index := strings.Index(lower[offset:], child); index >= 0 {
+			return id[:offset+index]
 		}
 	}
 	return id
