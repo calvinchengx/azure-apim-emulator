@@ -862,6 +862,35 @@ func TestActivateResolvesNamedValuesInPolicies(t *testing.T) {
 	}
 }
 
+// A workspace is its own scope, so a policy inside one names the WORKSPACE's
+// named values. The activation maps were keyed by service alone, so the
+// lookup missed and the document was rejected for naming a value that exists.
+func TestActivateResolvesNamedValuesInWorkspaceScopedPolicy(t *testing.T) {
+	st, err := store.Open("", clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = st.Close() }()
+	service, err := st.UpsertService(model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "emulator"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspace, err := st.UpsertWorkspace(model.Workspace{ServiceID: service.ID(), Name: "team", DisplayName: "Team"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.UpsertNamedValue(model.NamedValue{ServiceID: workspace.ID(), Name: "header", DisplayName: "header", Value: "from-workspace"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.UpsertPolicy(model.Policy{ScopeID: workspace.ID(), Format: "xml", Value: `<policies><inbound><set-header name="X-Named" exists-action="override"><value>{{header}}</value></set-header></inbound><backend><base /></backend><outbound /><on-error /></policies>`}); err != nil {
+		t.Fatal(err)
+	}
+	runtime := New("emulator", &http.Client{})
+	if err := runtime.Activate(st, false); err != nil {
+		t.Fatalf("workspace-scoped policy should activate: %v", err)
+	}
+}
+
 // A SERVICE-scoped policy is what Azure calls global, and the user-visible half
 // of the same defect: its scope id IS the service id, so the helper that finds
 // the owning service had nothing to strip and returned "" instead, leaving the
@@ -1685,6 +1714,31 @@ func TestActivateVersionSets(t *testing.T) {
 			t.Fatal("missing version-set table activated")
 		}
 	})
+}
+
+func TestActivateWorkspaceStoreFailure(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(dir, clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = st.Close() }()
+	if _, err := st.UpsertService(model.Service{SubscriptionID: "sub", ResourceGroup: "rg", Name: "emulator"}); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", filepath.Join(dir, "azure-apim-emulator.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`DROP TABLE workspaces`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := New("emulator", nil).Activate(st, false); err == nil {
+		t.Fatal("activation should fail when workspaces cannot be read")
+	}
 }
 
 func TestActivateNamedValueStoreFailure(t *testing.T) {
