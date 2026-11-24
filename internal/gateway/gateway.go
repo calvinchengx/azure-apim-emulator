@@ -501,41 +501,53 @@ func (r *Runtime) activate(st *store.Store, strict, rejectNew bool) ([]PolicyFai
 			value := values[index]
 			versionSets[strings.ToLower(value.ID())] = &value
 		}
-		serviceValues, err := st.ListNamedValues(service.ID())
+		owners := []string{service.ID()}
+		workspaces, err := st.ListWorkspaces(service.ID())
 		if err != nil {
 			return nil, err
 		}
-		namedValues[strings.ToLower(service.ID())] = map[string]string{}
-		for _, value := range serviceValues {
-			namedValues[strings.ToLower(service.ID())][strings.ToLower(value.DisplayName)] = value.Value
+		for _, workspace := range workspaces {
+			owners = append(owners, workspace.ID())
 		}
-		serviceBackends, err := st.ListBackends(service.ID())
-		if err != nil {
-			return nil, err
-		}
-		backends[strings.ToLower(service.ID())] = map[string]model.Backend{}
-		for _, value := range serviceBackends {
-			backends[strings.ToLower(service.ID())][strings.ToLower(value.Name)] = value
-		}
-		serviceCertificates, err := st.ListCertificates(service.ID())
-		if err != nil {
-			return nil, err
-		}
-		certificates[strings.ToLower(service.ID())] = map[string]model.Certificate{}
-		for _, value := range serviceCertificates {
-			certificates[strings.ToLower(service.ID())][strings.ToLower(value.ID())] = value
-			certificates[strings.ToLower(service.ID())][strings.ToLower(value.Name)] = value
-		}
-		if err := validateBackendCertificates(backends[strings.ToLower(service.ID())], certificates[strings.ToLower(service.ID())]); err != nil {
-			return nil, err
-		}
-		serviceFragments, err := st.ListPolicyFragments(service.ID())
-		if err != nil {
-			return nil, err
-		}
-		fragments[strings.ToLower(service.ID())] = map[string]string{}
-		for _, value := range serviceFragments {
-			fragments[strings.ToLower(service.ID())][strings.ToLower(value.Name)] = value.Value
+		// A workspace owns named values, backends, certificates and fragments of
+		// its own, so a policy inside one resolves against those, not the service's.
+		for _, owner := range owners {
+			serviceValues, err := st.ListNamedValues(owner)
+			if err != nil {
+				return nil, err
+			}
+			namedValues[strings.ToLower(owner)] = map[string]string{}
+			for _, value := range serviceValues {
+				namedValues[strings.ToLower(owner)][strings.ToLower(value.DisplayName)] = value.Value
+			}
+			serviceBackends, err := st.ListBackends(owner)
+			if err != nil {
+				return nil, err
+			}
+			backends[strings.ToLower(owner)] = map[string]model.Backend{}
+			for _, value := range serviceBackends {
+				backends[strings.ToLower(owner)][strings.ToLower(value.Name)] = value
+			}
+			serviceCertificates, err := st.ListCertificates(owner)
+			if err != nil {
+				return nil, err
+			}
+			certificates[strings.ToLower(owner)] = map[string]model.Certificate{}
+			for _, value := range serviceCertificates {
+				certificates[strings.ToLower(owner)][strings.ToLower(value.ID())] = value
+				certificates[strings.ToLower(owner)][strings.ToLower(value.Name)] = value
+			}
+			if err := validateBackendCertificates(backends[strings.ToLower(owner)], certificates[strings.ToLower(owner)]); err != nil {
+				return nil, err
+			}
+			serviceFragments, err := st.ListPolicyFragments(owner)
+			if err != nil {
+				return nil, err
+			}
+			fragments[strings.ToLower(owner)] = map[string]string{}
+			for _, value := range serviceFragments {
+				fragments[strings.ToLower(owner)][strings.ToLower(value.Name)] = value.Value
+			}
 		}
 		serviceDiagnostics, err := st.ListServiceDiagnostics(service.ID())
 		if err != nil {
